@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,6 +29,7 @@ type AssetConfig struct {
 	DestinationConnection string        `yaml:"destination_connection,omitempty"`
 	SourceConnection      string        `yaml:"source_connection,omitempty"`
 	Checks                []CheckConfig `yaml:"checks,omitempty"`
+	Pool                  string        `yaml:"pool,omitempty"`
 	Layer                 string        `yaml:"layer,omitempty"`
 	Grain                 string        `yaml:"grain,omitempty"`
 	DefaultChecks         *bool         `yaml:"default_checks,omitempty"`
@@ -53,12 +55,19 @@ var validLayers = map[string]bool{
 	"report":       true,
 }
 
+type PoolConfig struct {
+	Slots      int    `yaml:"slots"`
+	Timeout    string `yaml:"timeout,omitempty"`
+	DefaultFor string `yaml:"default_for,omitempty"`
+}
+
 type PipelineConfig struct {
 	Pipeline     string                       `yaml:"pipeline"`
 	Schedule     string                       `yaml:"schedule,omitempty"`
 	MaxParallel  int                          `yaml:"max_parallel"`
 	Connections  map[string]*ConnectionConfig `yaml:"connections,omitempty"`
 	Datasets     map[string]string            `yaml:"datasets,omitempty"`
+	Pools        map[string]PoolConfig        `yaml:"pools,omitempty"`
 	Assets       []AssetConfig                `yaml:"assets"`
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
 	Prefix       string                       `yaml:"-"`
@@ -179,7 +188,52 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		}
 	}
 
+	// Validate pools
+	for name, pc := range cfg.Pools {
+		if pc.Slots <= 0 {
+			return nil, fmt.Errorf("pool %q: slots must be > 0", name)
+		}
+		if pc.Timeout != "" {
+			if _, err := time.ParseDuration(pc.Timeout); err != nil {
+				return nil, fmt.Errorf("pool %q: invalid timeout %q: %w", name, pc.Timeout, err)
+			}
+		}
+	}
+
+	// Validate pool references on assets
+	for _, a := range cfg.Assets {
+		if a.Pool != "" && a.Pool != "none" {
+			if _, ok := cfg.Pools[a.Pool]; !ok {
+				return nil, fmt.Errorf("asset %q references non-existent pool %q", a.Name, a.Pool)
+			}
+		}
+	}
+
 	return &cfg, nil
+}
+
+func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connections map[string]*ConnectionConfig) string {
+	if asset.Pool == "none" {
+		return ""
+	}
+	if asset.Pool != "" {
+		return asset.Pool
+	}
+	// Auto-assign based on default_for matching connection type
+	connName := asset.DestinationConnection
+	if connName == "" {
+		return ""
+	}
+	conn, ok := connections[connName]
+	if !ok {
+		return ""
+	}
+	for poolName, pc := range pools {
+		if pc.DefaultFor == conn.Type {
+			return poolName
+		}
+	}
+	return ""
 }
 
 func ValidateConnections(cfg *PipelineConfig) error {

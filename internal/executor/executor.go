@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/pool"
 	"github.com/analytehealth/granicus/internal/state"
 )
 
@@ -38,6 +41,8 @@ type RunConfig struct {
 	TestEnd      string
 	KeepTestData bool
 	TestDataset  string // set by test mode setup (the created dataset name)
+	PoolManager  *pool.PoolManager
+	AssetPools   map[string]string // asset name -> pool name
 }
 
 type RunnerFunc func(asset *graph.Asset, projectRoot string, runID string) NodeResult
@@ -115,6 +120,25 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		go func() {
 			defer func() { <-sem }()
 			asset := g.Assets[name]
+
+			// Acquire pool slot if configured
+			if cfg.PoolManager != nil && cfg.AssetPools != nil {
+				if poolName, ok := cfg.AssetPools[name]; ok && poolName != "" {
+					if err := cfg.PoolManager.Acquire(context.Background(), poolName); err != nil {
+						log.Printf("pool acquire failed for %s: %v", name, err)
+						done <- NodeResult{
+							AssetName: name,
+							Status:    "failed",
+							StartTime: time.Now(),
+							EndTime:   time.Now(),
+							Error:     fmt.Sprintf("pool slot acquisition failed: %v", err),
+							ExitCode:  -1,
+						}
+						return
+					}
+					defer cfg.PoolManager.Release(poolName)
+				}
+			}
 
 			if asset.TimeColumn != "" && cfg.StateStore != nil {
 				result := executeIncremental(asset, cfg, runner, &dedupMu, dedupResults)

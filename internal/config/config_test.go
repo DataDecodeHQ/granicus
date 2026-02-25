@@ -431,3 +431,132 @@ assets:
 		t.Errorf("analytics dataset: %q", cfg.Datasets["analytics"])
 	}
 }
+
+func TestParseConfig_PoolValidation(t *testing.T) {
+	// Valid pool config
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+pools:
+  bq_pool:
+    slots: 4
+    timeout: 5m
+    default_for: bigquery
+assets:
+  - name: x
+    type: sql
+    source: x.sql
+    destination_connection: bq
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pools["bq_pool"].Slots != 4 {
+		t.Errorf("slots: %d", cfg.Pools["bq_pool"].Slots)
+	}
+	if cfg.Pools["bq_pool"].Timeout != "5m" {
+		t.Errorf("timeout: %q", cfg.Pools["bq_pool"].Timeout)
+	}
+	if cfg.Pools["bq_pool"].DefaultFor != "bigquery" {
+		t.Errorf("default_for: %q", cfg.Pools["bq_pool"].DefaultFor)
+	}
+}
+
+func TestParseConfig_PoolSlotsZero(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+pools:
+  bad:
+    slots: 0
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+`))
+	if err == nil {
+		t.Error("expected error for pool slots=0")
+	}
+}
+
+func TestParseConfig_PoolBadTimeout(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+pools:
+  bad:
+    slots: 1
+    timeout: not-a-duration
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+`))
+	if err == nil {
+		t.Error("expected error for invalid pool timeout")
+	}
+}
+
+func TestParseConfig_PoolReference(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    pool: nonexistent
+`))
+	if err == nil {
+		t.Error("expected error for non-existent pool reference")
+	}
+}
+
+func TestParseConfig_PoolNone(t *testing.T) {
+	// pool: none should not require the pool to exist
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    pool: none
+`))
+	if err != nil {
+		t.Fatalf("pool=none should be valid: %v", err)
+	}
+}
+
+func TestResolveAssetPool(t *testing.T) {
+	pools := map[string]PoolConfig{
+		"bq_pool": {Slots: 4, DefaultFor: "bigquery"},
+		"pg_pool": {Slots: 2, DefaultFor: "postgres"},
+	}
+	conns := map[string]*ConnectionConfig{
+		"bq":  {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "d"}},
+		"pg":  {Name: "pg", Type: "postgres", Properties: map[string]string{"host": "h", "database": "db"}},
+	}
+
+	tests := []struct {
+		name     string
+		asset    AssetConfig
+		expected string
+	}{
+		{"explicit pool", AssetConfig{Pool: "bq_pool"}, "bq_pool"},
+		{"pool none", AssetConfig{Pool: "none"}, ""},
+		{"auto from bq connection", AssetConfig{DestinationConnection: "bq"}, "bq_pool"},
+		{"auto from pg connection", AssetConfig{DestinationConnection: "pg"}, "pg_pool"},
+		{"no connection no pool", AssetConfig{}, ""},
+		{"unknown connection", AssetConfig{DestinationConnection: "unknown"}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveAssetPool(tt.asset, pools, conns)
+			if got != tt.expected {
+				t.Errorf("ResolveAssetPool() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

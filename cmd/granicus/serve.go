@@ -20,6 +20,7 @@ import (
 	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/pool"
 	"github.com/analytehealth/granicus/internal/runner"
 	"github.com/analytehealth/granicus/internal/scheduler"
 	"github.com/analytehealth/granicus/internal/server"
@@ -216,7 +217,8 @@ func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName st
 
 	runID := events.GenerateRunID()
 	log.Printf("scheduled run: %s (run_id=%s)", cfg.Pipeline, runID)
-	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled")
+	poolMgr, assetPools := buildPoolManager(cfg)
+	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools)
 }
 
 func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest) {
@@ -236,10 +238,11 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 		Details:  map[string]any{"assets": req.Assets, "from_date": req.FromDate, "to_date": req.ToDate},
 	})
 
-	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook")
+	poolMgr, assetPools := buildPoolManager(cfg)
+	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools)
 }
 
-func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string) {
+func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string) {
 	start := time.Now()
 
 	_ = eventStore.Emit(events.Event{
@@ -390,6 +393,8 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		FromDate:    fromDate,
 		ToDate:      toDate,
 		StateStore:  stateStore,
+		PoolManager: poolMgr,
+		AssetPools:  assetPools,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)

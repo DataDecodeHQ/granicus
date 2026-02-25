@@ -19,6 +19,7 @@ import (
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/gc"
 	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/pool"
 	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
 	"github.com/analytehealth/granicus/internal/state"
@@ -509,6 +510,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Build pool manager and asset-pool mappings
+	poolMgr, assetPools := buildPoolManager(cfg)
+
 	runCfg := executor.RunConfig{
 		MaxParallel:  cfg.MaxParallel,
 		Assets:       assetFilter,
@@ -522,6 +526,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		TestStart:    testStart,
 		TestEnd:      testEnd,
 		KeepTestData: keepTestData,
+		PoolManager:  poolMgr,
+		AssetPools:   assetPools,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
@@ -1040,6 +1046,34 @@ func runModels(cmd *cobra.Command, args []string) error {
 		fmt.Printf("v%-7d %-10s %-20s %-32s %s\n", h.Version, hash, activated, h.ActivatedRun, replaced)
 	}
 	return nil
+}
+
+func buildPoolManager(cfg *config.PipelineConfig) (*pool.PoolManager, map[string]string) {
+	if len(cfg.Pools) == 0 {
+		return nil, nil
+	}
+
+	poolConfigs := make(map[string]pool.PoolConfig, len(cfg.Pools))
+	for name, pc := range cfg.Pools {
+		var timeout time.Duration
+		if pc.Timeout != "" {
+			timeout, _ = time.ParseDuration(pc.Timeout) // already validated in LoadConfig
+		}
+		poolConfigs[name] = pool.PoolConfig{
+			Slots:         pc.Slots,
+			ParsedTimeout: timeout,
+			DefaultFor:    pc.DefaultFor,
+		}
+	}
+
+	assetPools := make(map[string]string, len(cfg.Assets))
+	for _, a := range cfg.Assets {
+		if p := config.ResolveAssetPool(a, cfg.Pools, cfg.Connections); p != "" {
+			assetPools[a.Name] = p
+		}
+	}
+
+	return pool.NewPoolManager(poolConfigs), assetPools
 }
 
 func parseDuration(s string) (time.Duration, error) {
