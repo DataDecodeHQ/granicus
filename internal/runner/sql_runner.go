@@ -21,6 +21,7 @@ import (
 type SQLRunner struct {
 	Timeout    time.Duration
 	Connection *config.ConnectionConfig
+	FuncMap    template.FuncMap
 }
 
 func NewSQLRunner(conn *config.ConnectionConfig) *SQLRunner {
@@ -53,7 +54,11 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
-	tmpl, err := template.New("sql").Parse(string(rawSQL))
+	tmpl := template.New("sql")
+	if r.FuncMap != nil {
+		tmpl = tmpl.Funcs(r.FuncMap)
+	}
+	tmpl, err = tmpl.Parse(string(rawSQL))
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -191,6 +196,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 type SQLCheckRunner struct {
 	Connection *config.ConnectionConfig
 	Timeout    time.Duration
+	FuncMap    template.FuncMap
 }
 
 func NewSQLCheckRunner(conn *config.ConnectionConfig) *SQLCheckRunner {
@@ -216,12 +222,16 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
-	tmpl, err := template.New("check").Parse(string(rawSQL))
-	if err != nil {
+	tmpl := template.New("check")
+	if r.FuncMap != nil {
+		tmpl = tmpl.Funcs(r.FuncMap)
+	}
+	tmpl, parseErr := tmpl.Parse(string(rawSQL))
+	if parseErr != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
 			EndTime: time.Now(), Duration: time.Since(start),
-			Error: fmt.Sprintf("parsing check template: %v", err), ExitCode: -1,
+			Error: fmt.Sprintf("parsing check template: %v", parseErr), ExitCode: -1,
 		}
 	}
 

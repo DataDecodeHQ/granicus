@@ -53,12 +53,13 @@ var validLayers = map[string]bool{
 }
 
 type PipelineConfig struct {
-	Pipeline    string                       `yaml:"pipeline"`
-	Schedule    string                       `yaml:"schedule,omitempty"`
-	MaxParallel int                          `yaml:"max_parallel"`
-	Connections map[string]*ConnectionConfig `yaml:"connections,omitempty"`
-	Assets      []AssetConfig                `yaml:"assets"`
-	Prefix      string                       `yaml:"-"`
+	Pipeline     string                       `yaml:"pipeline"`
+	Schedule     string                       `yaml:"schedule,omitempty"`
+	MaxParallel  int                          `yaml:"max_parallel"`
+	Connections  map[string]*ConnectionConfig `yaml:"connections,omitempty"`
+	Assets       []AssetConfig                `yaml:"assets"`
+	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
+	Prefix       string                       `yaml:"-"`
 }
 
 var connectionRequirements = map[string][]string{

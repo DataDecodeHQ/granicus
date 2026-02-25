@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,16 +176,35 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 	return cfg, g, missingFiles, nil
 }
 
-func buildRegistry(cfg *config.PipelineConfig) *runner.RunnerRegistry {
+func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.RunnerRegistry {
 	reg := runner.NewRunnerRegistry(cfg.Connections)
+
+	// Load template functions
+	funcMap := runner.BuiltinFuncMap()
+	if cfg.FunctionsDir != "" {
+		funcDir := cfg.FunctionsDir
+		if !filepath.IsAbs(funcDir) {
+			funcDir = filepath.Join(projectRoot, funcDir)
+		}
+		userFuncs, err := runner.LoadFunctions(funcDir)
+		if err != nil {
+			log.Printf("warning: loading functions from %s: %v", funcDir, err)
+		} else {
+			funcMap = runner.MergeFuncMaps(funcMap, userFuncs)
+		}
+	}
 
 	// Register runners per connection type
 	if cfg.Connections != nil {
 		for _, conn := range cfg.Connections {
 			switch conn.Type {
 			case "bigquery":
-				reg.Register("sql", runner.NewSQLRunner(conn))
-				reg.Register("sql_check", runner.NewSQLCheckRunner(conn))
+				sqlR := runner.NewSQLRunner(conn)
+				sqlR.FuncMap = funcMap
+				reg.Register("sql", sqlR)
+				checkR := runner.NewSQLCheckRunner(conn)
+				checkR.FuncMap = funcMap
+				reg.Register("sql_check", checkR)
 			case "gcs":
 				reg.Register("gcs", runner.NewGCSRunner(conn))
 			case "s3":
@@ -266,7 +286,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	runID := logging.GenerateRunID()
 	store := logging.NewStore(projectRoot)
-	registry := buildRegistry(cfg)
+	registry := buildRegistry(cfg, projectRoot)
 
 	// Initialize state store
 	stateDBName := "state.db"
@@ -292,7 +312,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			}
 		}
 		// Rebuild registry with updated connection properties
-		registry = buildRegistry(cfg)
+		registry = buildRegistry(cfg, projectRoot)
 	}
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
@@ -488,6 +508,29 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("  %s No duplicate asset names\n", greenCheck)
+
+		// Report functions
+		funcMap := runner.BuiltinFuncMap()
+		if cfg.FunctionsDir != "" {
+			funcDir := cfg.FunctionsDir
+			if !filepath.IsAbs(funcDir) {
+				funcDir = filepath.Join(projectRoot, funcDir)
+			}
+			userFuncs, fErr := runner.LoadFunctions(funcDir)
+			if fErr != nil {
+				fmt.Printf("  %s Functions dir error: %v\n", redCross, fErr)
+				hasErrors = true
+			} else {
+				funcMap = runner.MergeFuncMaps(funcMap, userFuncs)
+			}
+		}
+		funcNames := make([]string, 0, len(funcMap))
+		for name := range funcMap {
+			funcNames = append(funcNames, name)
+		}
+		if len(funcNames) > 0 {
+			fmt.Printf("  %s Functions: %d (%s)\n", greenCheck, len(funcNames), strings.Join(funcNames, ", "))
+		}
 	}
 
 	if hasErrors {

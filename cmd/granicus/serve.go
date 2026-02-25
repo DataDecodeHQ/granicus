@@ -275,7 +275,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, logS
 	}
 	defer stateStore.Close()
 
-	registry := buildRegistry(cfg)
+	registry := buildRegistry(cfg, projectRoot)
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
 		ra := &runner.Asset{
