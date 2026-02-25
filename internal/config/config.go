@@ -48,6 +48,7 @@ var validLayers = map[string]bool{
 	"":             true,
 	"staging":      true,
 	"intermediate": true,
+	"analytics":    true,
 	"entity":       true,
 	"report":       true,
 }
