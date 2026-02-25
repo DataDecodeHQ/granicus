@@ -13,6 +13,14 @@ type Asset struct {
 	DependedOnBy          []string
 	DestinationConnection string
 	SourceConnection      string
+	TimeColumn            string
+	IntervalUnit          string
+	Lookback              int
+	StartDate             string
+	BatchSize             int
+	SourceAsset           string // back-reference for multi-output nodes
+	IntervalStart         string // set by executor at runtime
+	IntervalEnd           string // set by executor at runtime
 }
 
 type Graph struct {
@@ -35,6 +43,12 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			Source:                a.Source,
 			DestinationConnection: a.DestinationConnection,
 			SourceConnection:      a.SourceConnection,
+			TimeColumn:            a.TimeColumn,
+			IntervalUnit:          a.IntervalUnit,
+			Lookback:              a.Lookback,
+			StartDate:             a.StartDate,
+			BatchSize:             a.BatchSize,
+			SourceAsset:           a.SourceAsset,
 		}
 	}
 
@@ -71,6 +85,12 @@ type AssetInput struct {
 	Source                string
 	DestinationConnection string
 	SourceConnection      string
+	TimeColumn            string
+	IntervalUnit          string
+	Lookback              int
+	StartDate             string
+	BatchSize             int
+	SourceAsset           string
 }
 
 const (

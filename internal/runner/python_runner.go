@@ -48,6 +48,11 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		"GRANICUS_METADATA_PATH=" + metadataPath,
 	}
 
+	if asset.IntervalStart != "" {
+		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
+		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
+	}
+
 	if r.DestinationConnection != nil {
 		connJSON, _ := json.Marshal(r.DestinationConnection)
 		env = append(env, "GRANICUS_DEST_CONNECTION="+string(connJSON))

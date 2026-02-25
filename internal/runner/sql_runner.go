@@ -10,6 +10,8 @@ import (
 	"text/template"
 	"time"
 
+	"strings"
+
 	"cloud.google.com/go/bigquery"
 	"github.com/analytehealth/granicus/internal/config"
 	"google.golang.org/api/iterator"
@@ -82,6 +84,9 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 	rendered = buf.Bytes()
+
+	// Second pass: replace @start/@end with interval boundaries
+	rendered = substituteIntervalVars(rendered, asset)
 
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -224,6 +229,8 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
+	checkSQL := substituteIntervalVars(buf.Bytes(), asset)
+
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = DefaultTimeout
@@ -247,7 +254,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 	defer client.Close()
 
-	q := client.Query(buf.String())
+	q := client.Query(string(checkSQL))
 	it, err := q.Read(ctx)
 	if err != nil {
 		return NodeResult{
@@ -290,4 +297,14 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		Stdout: stdout,
 		Metadata: map[string]string{"check_rows": strconv.Itoa(rowCount)},
 	}
+}
+
+func substituteIntervalVars(sql []byte, asset *Asset) []byte {
+	if asset.IntervalStart == "" {
+		return sql
+	}
+	s := string(sql)
+	s = strings.ReplaceAll(s, "@start", "'"+asset.IntervalStart+"'")
+	s = strings.ReplaceAll(s, "@end", "'"+asset.IntervalEnd+"'")
+	return []byte(s)
 }

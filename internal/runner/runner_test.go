@@ -85,6 +85,32 @@ func TestShellRunner_EnvVars(t *testing.T) {
 	}
 }
 
+func TestShellRunner_IntervalEnvVars(t *testing.T) {
+	dir := t.TempDir()
+	src := writeScript(t, dir, "iv.sh", `echo "START=$GRANICUS_INTERVAL_START END=$GRANICUS_INTERVAL_END"`)
+	r := NewShellRunner()
+
+	// With interval set
+	result := r.Run(&Asset{
+		Name: "iv", Type: "shell", Source: src,
+		IntervalStart: "2025-01-10", IntervalEnd: "2025-01-11",
+	}, dir, "run1")
+	if !strings.Contains(result.Stdout, "START=2025-01-10") {
+		t.Errorf("missing INTERVAL_START: %q", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "END=2025-01-11") {
+		t.Errorf("missing INTERVAL_END: %q", result.Stdout)
+	}
+
+	// Without interval (full refresh) — env vars should NOT be set
+	result2 := r.Run(&Asset{
+		Name: "iv", Type: "shell", Source: src,
+	}, dir, "run2")
+	if strings.Contains(result2.Stdout, "START=2025") {
+		t.Errorf("INTERVAL_START should not be set for full refresh: %q", result2.Stdout)
+	}
+}
+
 func TestShellRunner_LargeOutput(t *testing.T) {
 	dir := t.TempDir()
 	// Generate ~2MB of output

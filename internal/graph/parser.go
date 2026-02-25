@@ -15,6 +15,18 @@ var depPattern = regexp.MustCompile(`^\s*(?:--|#)\s*depends_on:\s*(\S+)\s*$`)
 const maxScanLines = 50
 
 func ParseDependencies(filePath string) ([]string, error) {
+	d, err := ParseDirectives(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if len(d.DependsOn) > 0 {
+		return d.DependsOn, nil
+	}
+	// Fall back to legacy regex format for old-style "-- depends_on: asset" comments
+	return parseLegacyDependencies(filePath)
+}
+
+func parseLegacyDependencies(filePath string) ([]string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -35,6 +47,16 @@ func ParseDependencies(filePath string) ([]string, error) {
 		}
 	}
 	return deps, scanner.Err()
+}
+
+type AssetDirectives struct {
+	DependsOn    []string
+	TimeColumn   string
+	IntervalUnit string
+	Lookback     int
+	StartDate    string
+	BatchSize    int
+	Produces     []string
 }
 
 func ParseAllDependencies(cfg *config.PipelineConfig, projectRoot string) (map[string][]string, error) {
@@ -61,6 +83,34 @@ func ParseAllDependencies(cfg *config.PipelineConfig, projectRoot string) (map[s
 	}
 
 	return result, nil
+}
+
+func ParseAllDirectives(cfg *config.PipelineConfig, projectRoot string) (map[string][]string, map[string]*Directives, error) {
+	deps := make(map[string][]string)
+	directives := make(map[string]*Directives)
+	var missing []string
+
+	for _, asset := range cfg.Assets {
+		path := filepath.Join(projectRoot, asset.Source)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			missing = append(missing, asset.Source)
+			continue
+		}
+		d, err := ParseDirectives(path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing %s: %w", asset.Source, err)
+		}
+		if len(d.DependsOn) > 0 {
+			deps[asset.Name] = d.DependsOn
+		}
+		directives[asset.Name] = &d
+	}
+
+	if len(missing) > 0 {
+		return nil, nil, fmt.Errorf("missing source files: %v", missing)
+	}
+
+	return deps, directives, nil
 }
 
 func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {

@@ -17,6 +17,7 @@ import (
 	"github.com/analytehealth/granicus/internal/logging"
 	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
+	"github.com/analytehealth/granicus/internal/state"
 )
 
 var version = "0.2.0"
@@ -45,6 +46,9 @@ func main() {
 	runCmd.Flags().String("assets", "", "Run only these assets and their dependencies (comma-separated)")
 	runCmd.Flags().String("project-root", ".", "Project root directory")
 	runCmd.Flags().String("from-failure", "", "Re-run from a failed run ID")
+	runCmd.Flags().String("from-date", "", "Override start_date for incremental assets (YYYY-MM-DD)")
+	runCmd.Flags().String("to-date", "", "Override end date for incremental assets (YYYY-MM-DD)")
+	runCmd.Flags().Bool("full-refresh", false, "Invalidate interval state and reprocess from start")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -148,6 +152,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
 	assetsFlag, _ := cmd.Flags().GetString("assets")
 	fromFailure, _ := cmd.Flags().GetString("from-failure")
+	fromDate, _ := cmd.Flags().GetString("from-date")
+	toDate, _ := cmd.Flags().GetString("to-date")
+	fullRefresh, _ := cmd.Flags().GetBool("full-refresh")
 
 	cfg, g, _, err := loadAndBuild(args[0], projectRoot)
 	if err != nil {
@@ -186,6 +193,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 	store := logging.NewStore(projectRoot)
 	registry := buildRegistry(cfg)
 
+	// Initialize state store
+	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
+	stateStore, err := state.New(stateDBPath)
+	if err != nil {
+		return fmt.Errorf("state store: %w", err)
+	}
+	defer stateStore.Close()
+
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
@@ -197,6 +212,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Source:                asset.Source,
 			DestinationConnection: asset.DestinationConnection,
 			SourceConnection:      asset.SourceConnection,
+			IntervalStart:         asset.IntervalStart,
+			IntervalEnd:           asset.IntervalEnd,
 		}
 
 		r := registry.Run(ra, pr, rid)
@@ -244,6 +261,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 		Assets:      assetFilter,
 		ProjectRoot: projectRoot,
 		RunID:       runID,
+		FromDate:    fromDate,
+		ToDate:      toDate,
+		FullRefresh: fullRefresh,
+		StateStore:  stateStore,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)

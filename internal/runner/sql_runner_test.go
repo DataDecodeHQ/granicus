@@ -55,6 +55,56 @@ func TestSQLRunner_MissingFile(t *testing.T) {
 	}
 }
 
+func TestSubstituteIntervalVars_DayInterval(t *testing.T) {
+	sql := []byte(`SELECT * FROM tbl WHERE dt >= @start AND dt < @end`)
+	asset := &Asset{IntervalStart: "2025-01-10", IntervalEnd: "2025-01-11"}
+
+	result := string(substituteIntervalVars(sql, asset))
+	if !strings.Contains(result, "'2025-01-10'") {
+		t.Errorf("@start not replaced: %s", result)
+	}
+	if !strings.Contains(result, "'2025-01-11'") {
+		t.Errorf("@end not replaced: %s", result)
+	}
+	if strings.Contains(result, "@start") || strings.Contains(result, "@end") {
+		t.Errorf("@ placeholders still present: %s", result)
+	}
+}
+
+func TestSubstituteIntervalVars_HourInterval(t *testing.T) {
+	sql := []byte(`WHERE ts >= @start AND ts < @end`)
+	asset := &Asset{IntervalStart: "2025-01-10T00:00:00", IntervalEnd: "2025-01-10T01:00:00"}
+
+	result := string(substituteIntervalVars(sql, asset))
+	if !strings.Contains(result, "'2025-01-10T00:00:00'") {
+		t.Errorf("@start not replaced: %s", result)
+	}
+}
+
+func TestSubstituteIntervalVars_NoInterval(t *testing.T) {
+	sql := []byte(`SELECT * FROM tbl WHERE dt >= @start AND dt < @end`)
+	asset := &Asset{}
+
+	result := string(substituteIntervalVars(sql, asset))
+	// With empty interval, @start/@end should pass through unchanged
+	if !strings.Contains(result, "@start") || !strings.Contains(result, "@end") {
+		t.Errorf("should pass through without interval: %s", result)
+	}
+}
+
+func TestSubstituteIntervalVars_MultipleOccurrences(t *testing.T) {
+	sql := []byte(`SELECT @start as s1, @start as s2, @end as e1, @end as e2`)
+	asset := &Asset{IntervalStart: "2025-01-10", IntervalEnd: "2025-01-11"}
+
+	result := string(substituteIntervalVars(sql, asset))
+	if strings.Count(result, "'2025-01-10'") != 2 {
+		t.Errorf("@start should be replaced twice: %s", result)
+	}
+	if strings.Count(result, "'2025-01-11'") != 2 {
+		t.Errorf("@end should be replaced twice: %s", result)
+	}
+}
+
 func TestSQLRunner_BadTemplate(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.sql"), []byte(`SELECT {{.Invalid`), 0644)

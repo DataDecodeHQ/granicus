@@ -20,6 +20,8 @@ type Asset struct {
 	Source                string
 	DestinationConnection string
 	SourceConnection      string
+	IntervalStart         string
+	IntervalEnd           string
 }
 
 type NodeResult struct {
@@ -70,6 +72,10 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		"GRANICUS_ASSET_NAME=" + asset.Name,
 		"GRANICUS_RUN_ID=" + runID,
 		"GRANICUS_PROJECT_ROOT=" + projectRoot,
+	}
+	if asset.IntervalStart != "" {
+		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
+		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
 	}
 
 	start := time.Now()
