@@ -2,10 +2,8 @@ package runner
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
 )
 
@@ -17,21 +15,24 @@ const (
 )
 
 type Asset struct {
-	Name   string
-	Type   string
-	Source string
+	Name                  string
+	Type                  string
+	Source                string
+	DestinationConnection string
+	SourceConnection      string
 }
 
 type NodeResult struct {
-	AssetName string        `json:"asset"`
-	Status    string        `json:"status"`
-	StartTime time.Time     `json:"start_time"`
-	EndTime   time.Time     `json:"end_time"`
-	Duration  time.Duration `json:"duration_ms"`
-	Error     string        `json:"error"`
-	Stdout    string        `json:"stdout"`
-	Stderr    string        `json:"stderr"`
-	ExitCode  int           `json:"exit_code"`
+	AssetName string            `json:"asset"`
+	Status    string            `json:"status"`
+	StartTime time.Time         `json:"start_time"`
+	EndTime   time.Time         `json:"end_time"`
+	Duration  time.Duration     `json:"duration_ms"`
+	Error     string            `json:"error"`
+	Stdout    string            `json:"stdout"`
+	Stderr    string            `json:"stderr"`
+	ExitCode  int               `json:"exit_code"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 type Runner interface {
@@ -56,8 +57,7 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		}
 	}
 
-	sourcePath := asset.Source
-	if err := makeExecutable(sourcePath, projectRoot); err != nil {
+	if err := makeExecutable(asset.Source, projectRoot); err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
 			Status:    "failed",
@@ -66,54 +66,36 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		}
 	}
 
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = DefaultTimeout
+	env := []string{
+		"GRANICUS_ASSET_NAME=" + asset.Name,
+		"GRANICUS_RUN_ID=" + runID,
+		"GRANICUS_PROJECT_ROOT=" + projectRoot,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "bash", sourcePath)
-	cmd.Dir = projectRoot
-	cmd.Env = append(os.Environ(),
-		"GRANICUS_ASSET_NAME="+asset.Name,
-		"GRANICUS_RUN_ID="+runID,
-		"GRANICUS_PROJECT_ROOT="+projectRoot,
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{buf: &stdout, limit: MaxCaptureBytes}
-	cmd.Stderr = &limitedWriter{buf: &stderr, limit: MaxCaptureBytes}
-
 	start := time.Now()
-	err := cmd.Run()
+	sub := RunSubprocess(SubprocessConfig{
+		Command: []string{"bash", asset.Source},
+		Env:     env,
+		WorkDir: projectRoot,
+		Timeout: r.Timeout,
+	})
 	end := time.Now()
 
 	result := NodeResult{
 		AssetName: asset.Name,
 		StartTime: start,
 		EndTime:   end,
-		Duration:  end.Sub(start),
-		Stdout:    truncateOutput(stdout.String()),
-		Stderr:    truncateOutput(stderr.String()),
+		Duration:  sub.Duration,
+		Stdout:    sub.Stdout,
+		Stderr:    sub.Stderr,
+		ExitCode:  sub.ExitCode,
 	}
 
-	if err != nil {
+	if sub.Error != "" {
 		result.Status = "failed"
-		if ctx.Err() == context.DeadlineExceeded {
-			result.Error = "timeout"
-		} else {
-			result.Error = err.Error()
-		}
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
-		} else {
-			result.ExitCode = -1
-		}
+		result.Error = sub.Error
 	} else {
 		result.Status = "success"
-		result.ExitCode = 0
 	}
 
 	return result
@@ -149,7 +131,7 @@ type limitedWriter struct {
 func (w *limitedWriter) Write(p []byte) (int, error) {
 	remaining := w.limit - w.buf.Len()
 	if remaining <= 0 {
-		return len(p), nil // discard but report success
+		return len(p), nil
 	}
 	if len(p) > remaining {
 		p = p[:remaining]

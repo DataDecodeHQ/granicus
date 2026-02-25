@@ -88,7 +88,8 @@ func TestShellRunner_EnvVars(t *testing.T) {
 func TestShellRunner_LargeOutput(t *testing.T) {
 	dir := t.TempDir()
 	// Generate ~2MB of output
-	src := writeScript(t, dir, "big.sh", `dd if=/dev/zero bs=1024 count=2048 2>/dev/null | tr '\0' 'A'`)
+	src := writeScript(t, dir, "big.sh", `python3 -c "import sys; sys.stdout.write('A' * 2097152)"`)
+
 	r := NewShellRunner()
 	result := r.Run(&Asset{Name: "big", Type: "shell", Source: src}, dir, "test-run")
 	if result.Status != "success" {

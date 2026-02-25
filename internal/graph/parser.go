@@ -67,9 +67,11 @@ func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 	inputs := make([]AssetInput, len(cfg.Assets))
 	for i, a := range cfg.Assets {
 		inputs[i] = AssetInput{
-			Name:   a.Name,
-			Type:   a.Type,
-			Source: a.Source,
+			Name:                  a.Name,
+			Type:                  a.Type,
+			Source:                a.Source,
+			DestinationConnection: a.DestinationConnection,
+			SourceConnection:      a.SourceConnection,
 		}
 	}
 	return inputs

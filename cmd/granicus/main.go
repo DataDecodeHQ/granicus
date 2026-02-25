@@ -10,14 +10,16 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/analytehealth/granicus/internal/checker"
 	"github.com/analytehealth/granicus/internal/config"
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/graph"
 	"github.com/analytehealth/granicus/internal/logging"
+	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 var (
 	greenCheck  = color.New(color.FgGreen).Sprint("\u2713")
@@ -42,6 +44,7 @@ func main() {
 	runCmd.Flags().Int("max-parallel", 0, "Override max_parallel from config")
 	runCmd.Flags().String("assets", "", "Run only these assets and their dependencies (comma-separated)")
 	runCmd.Flags().String("project-root", ".", "Project root directory")
+	runCmd.Flags().String("from-failure", "", "Re-run from a failed run ID")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -94,12 +97,19 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 	}
 
 	inputs := graph.ConfigToAssetInputs(cfg)
+
+	// Generate check nodes and merge into graph
+	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
+	inputs = append(inputs, checkNodes...)
+	for k, v := range checkDeps {
+		deps[k] = v
+	}
+
 	g, err := graph.BuildGraph(inputs, deps)
 	if err != nil {
 		return cfg, nil, nil, fmt.Errorf("graph: %w", err)
 	}
 
-	// Check for missing source files
 	var missingFiles []string
 	for _, a := range cfg.Assets {
 		path := filepath.Join(projectRoot, a.Source)
@@ -111,10 +121,33 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 	return cfg, g, missingFiles, nil
 }
 
+func buildRegistry(cfg *config.PipelineConfig) *runner.RunnerRegistry {
+	reg := runner.NewRunnerRegistry(cfg.Connections)
+
+	// Register SQL runner per connection
+	if cfg.Connections != nil {
+		for _, conn := range cfg.Connections {
+			if conn.Type == "bigquery" {
+				reg.Register("sql", runner.NewSQLRunner(conn))
+				reg.Register("sql_check", runner.NewSQLCheckRunner(conn))
+				break
+			}
+		}
+	}
+
+	// Register python/dlt runners
+	reg.Register("python", runner.NewPythonRunner(nil, nil))
+	reg.Register("python_check", runner.NewPythonCheckRunner(nil, nil))
+	reg.Register("dlt", runner.NewDLTRunner(nil, nil))
+
+	return reg
+}
+
 func runRun(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
 	assetsFlag, _ := cmd.Flags().GetString("assets")
+	fromFailure, _ := cmd.Flags().GetString("from-failure")
 
 	cfg, g, _, err := loadAndBuild(args[0], projectRoot)
 	if err != nil {
@@ -126,27 +159,47 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	var assetFilter []string
-	if assetsFlag != "" {
+	if fromFailure != "" && assetsFlag != "" {
+		return fmt.Errorf("--from-failure and --assets are mutually exclusive")
+	}
+
+	if fromFailure != "" {
+		store := logging.NewStore(projectRoot)
+		rerunAssets, warnings, err := rerun.ComputeRerunSet(store, fromFailure, g)
+		if err != nil {
+			return fmt.Errorf("from-failure: %w", err)
+		}
+		for _, w := range warnings {
+			fmt.Printf("Warning: %s\n", w)
+		}
+		assetFilter = rerunAssets
+		fmt.Printf("Re-running from failure %s: %d nodes\n\n", fromFailure, len(assetFilter))
+	} else if assetsFlag != "" {
 		assetFilter = strings.Split(assetsFlag, ",")
 	}
 
 	fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
-	fmt.Printf("Assets: %d (%d root nodes)\n", len(cfg.Assets), len(g.RootNodes))
+	fmt.Printf("Assets: %d (%d root nodes)\n", len(g.Assets), len(g.RootNodes))
 	fmt.Printf("Max parallel: %d\n\n", cfg.MaxParallel)
 
 	runID := logging.GenerateRunID()
 	store := logging.NewStore(projectRoot)
-	shellRunner := runner.NewShellRunner()
+	registry := buildRegistry(cfg)
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
 
-		r := shellRunner.Run(&runner.Asset{
-			Name:   asset.Name,
-			Type:   asset.Type,
-			Source: asset.Source,
-		}, pr, rid)
+		// Look up connection for this specific asset
+		ra := &runner.Asset{
+			Name:                  asset.Name,
+			Type:                  asset.Type,
+			Source:                asset.Source,
+			DestinationConnection: asset.DestinationConnection,
+			SourceConnection:      asset.SourceConnection,
+		}
+
+		r := registry.Run(ra, pr, rid)
 
 		entry := logging.NodeEntry{
 			Asset:       r.AssetName,
@@ -160,6 +213,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Stderr:      r.Stderr,
 			StdoutLines: logging.CountLines(r.Stdout),
 			StderrLines: logging.CountLines(r.Stderr),
+			Metadata:    r.Metadata,
 		}
 		_ = store.WriteNodeResult(runID, entry)
 
@@ -181,6 +235,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Stdout:    r.Stdout,
 			Stderr:    r.Stderr,
 			ExitCode:  r.ExitCode,
+			Metadata:  r.Metadata,
 		}
 	}
 
@@ -193,7 +248,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
 
-	// Print skipped nodes
 	for _, r := range rr.Results {
 		if r.Status == "skipped" {
 			ts := time.Now().Format("15:04:05")
@@ -209,7 +263,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Count results
 	var succeeded, failed, skipped int
 	for _, r := range rr.Results {
 		switch r.Status {

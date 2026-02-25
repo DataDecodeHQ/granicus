@@ -32,17 +32,18 @@ type RunConfig struct {
 }
 
 type NodeEntry struct {
-	Asset       string  `json:"asset"`
-	Status      string  `json:"status"`
-	StartTime   string  `json:"start_time"`
-	EndTime     string  `json:"end_time"`
-	DurationMs  int64   `json:"duration_ms"`
-	ExitCode    int     `json:"exit_code"`
-	Error       string  `json:"error"`
-	Stdout      string  `json:"stdout,omitempty"`
-	Stderr      string  `json:"stderr,omitempty"`
-	StdoutLines int     `json:"stdout_lines"`
-	StderrLines int     `json:"stderr_lines"`
+	Asset       string            `json:"asset"`
+	Status      string            `json:"status"`
+	StartTime   string            `json:"start_time"`
+	EndTime     string            `json:"end_time"`
+	DurationMs  int64             `json:"duration_ms"`
+	ExitCode    int               `json:"exit_code"`
+	Error       string            `json:"error"`
+	Stdout      string            `json:"stdout,omitempty"`
+	Stderr      string            `json:"stderr,omitempty"`
+	StdoutLines int               `json:"stdout_lines"`
+	StderrLines int               `json:"stderr_lines"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 const (

@@ -20,6 +20,11 @@ func TestParseConfig_ValidYAML(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: revenue_daily
 max_parallel: 5
+connections:
+  bq_main:
+    type: bigquery
+    project: my-project
+    dataset: my_dataset
 assets:
   - name: extract
     type: shell
@@ -27,6 +32,7 @@ assets:
   - name: transform
     type: sql
     source: sql/transform.sql
+    destination_connection: bq_main
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +51,14 @@ assets:
 	}
 	if cfg.Assets[1].Name != "transform" || cfg.Assets[1].Type != "sql" {
 		t.Errorf("asset 1: %+v", cfg.Assets[1])
+	}
+	if cfg.Assets[1].DestinationConnection != "bq_main" {
+		t.Errorf("asset 1 dest conn: %q", cfg.Assets[1].DestinationConnection)
+	}
+	if conn, ok := cfg.Connections["bq_main"]; !ok {
+		t.Error("missing bq_main connection")
+	} else if conn.Name != "bq_main" {
+		t.Errorf("connection name: %q", conn.Name)
 	}
 }
 
@@ -124,5 +138,82 @@ assets:
 `))
 	if err == nil {
 		t.Error("expected error for duplicate names")
+	}
+}
+
+func TestParseConfig_Phase0Compat(t *testing.T) {
+	// Phase 0 config with no connections still works
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: simple
+assets:
+  - name: hello
+    type: shell
+    source: hello.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pipeline != "simple" {
+		t.Errorf("got pipeline %q", cfg.Pipeline)
+	}
+	if cfg.Connections != nil && len(cfg.Connections) > 0 {
+		t.Error("expected no connections")
+	}
+}
+
+func TestParseConfig_NonExistentConnection(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    destination_connection: missing
+`))
+	if err == nil {
+		t.Error("expected error for non-existent connection")
+	}
+}
+
+func TestParseConfig_SQLRequiresDestConnection(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: sql
+    source: x.sql
+`))
+	if err == nil {
+		t.Error("expected error for sql without destination_connection")
+	}
+}
+
+func TestParseConfig_ConnectionProperties(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: my-project
+    dataset: my_ds
+    credentials: /path/to/creds.json
+assets:
+  - name: x
+    type: sql
+    source: x.sql
+    destination_connection: bq
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := cfg.Connections["bq"]
+	if conn.Type != "bigquery" {
+		t.Errorf("type: %q", conn.Type)
+	}
+	if conn.Properties["project"] != "my-project" {
+		t.Errorf("project: %q", conn.Properties["project"])
+	}
+	if conn.Properties["dataset"] != "my_ds" {
+		t.Errorf("dataset: %q", conn.Properties["dataset"])
 	}
 }

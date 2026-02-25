@@ -17,6 +17,7 @@ type NodeResult struct {
 	Stdout    string
 	Stderr    string
 	ExitCode  int
+	Metadata  map[string]string
 }
 
 type RunConfig struct {

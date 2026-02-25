@@ -6,11 +6,13 @@ import (
 )
 
 type Asset struct {
-	Name         string
-	Type         string
-	Source       string
-	DependsOn    []string
-	DependedOnBy []string
+	Name                  string
+	Type                  string
+	Source                string
+	DependsOn             []string
+	DependedOnBy          []string
+	DestinationConnection string
+	SourceConnection      string
 }
 
 type Graph struct {
@@ -28,9 +30,11 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			return nil, fmt.Errorf("duplicate asset name: %q", a.Name)
 		}
 		g.Assets[a.Name] = &Asset{
-			Name:   a.Name,
-			Type:   a.Type,
-			Source: a.Source,
+			Name:                  a.Name,
+			Type:                  a.Type,
+			Source:                a.Source,
+			DestinationConnection: a.DestinationConnection,
+			SourceConnection:      a.SourceConnection,
 		}
 	}
 
@@ -62,9 +66,11 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 }
 
 type AssetInput struct {
-	Name   string
-	Type   string
-	Source string
+	Name                  string
+	Type                  string
+	Source                string
+	DestinationConnection string
+	SourceConnection      string
 }
 
 const (
