@@ -32,9 +32,18 @@ type AssetConfig struct {
 
 type PipelineConfig struct {
 	Pipeline    string                       `yaml:"pipeline"`
+	Schedule    string                       `yaml:"schedule,omitempty"`
 	MaxParallel int                          `yaml:"max_parallel"`
 	Connections map[string]*ConnectionConfig `yaml:"connections,omitempty"`
 	Assets      []AssetConfig                `yaml:"assets"`
+	Prefix      string                       `yaml:"-"`
+}
+
+var connectionRequirements = map[string][]string{
+	"bigquery":   {"project", "dataset"},
+	"postgres":   {"host", "database"},
+	"mysql":      {"host", "database"},
+	"snowflake":  {"account", "database"},
 }
 
 var validTypes = map[string]bool{
@@ -95,6 +104,11 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		conn.Name = name
 	}
 
+	// Validate connection properties
+	if err := ValidateConnections(&cfg); err != nil {
+		return nil, err
+	}
+
 	// Validate connection references
 	for _, a := range cfg.Assets {
 		if a.DestinationConnection != "" {
@@ -113,4 +127,19 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+func ValidateConnections(cfg *PipelineConfig) error {
+	for name, conn := range cfg.Connections {
+		required, known := connectionRequirements[conn.Type]
+		if !known {
+			continue
+		}
+		for _, prop := range required {
+			if conn.Properties[prop] == "" {
+				return fmt.Errorf("connection %q (type %s): missing required property %q", name, conn.Type, prop)
+			}
+		}
+	}
+	return nil
 }

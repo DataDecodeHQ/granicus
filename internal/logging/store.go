@@ -60,6 +60,10 @@ func NewStore(baseDir string) *Store {
 	return &Store{baseDir: baseDir}
 }
 
+func (s *Store) BaseDir() string {
+	return s.baseDir
+}
+
 func GenerateRunID() string {
 	now := time.Now()
 	suffix := fmt.Sprintf("%04x", rand.Intn(0xFFFF))

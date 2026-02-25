@@ -188,6 +188,46 @@ assets:
 	}
 }
 
+func TestValidateConnections_MissingProperty(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: my-project
+assets:
+  - name: x
+    type: sql
+    source: x.sql
+    destination_connection: bq
+`))
+	if err == nil {
+		t.Error("expected error for missing dataset")
+	}
+}
+
+func TestValidateConnections_UnknownType(t *testing.T) {
+	// Unknown connection type should pass through without error
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  custom:
+    type: custom_db
+    host: localhost
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    destination_connection: custom
+`))
+	if err != nil {
+		t.Fatalf("unknown type should not error: %v", err)
+	}
+	if cfg.Connections["custom"].Type != "custom_db" {
+		t.Errorf("type: %q", cfg.Connections["custom"].Type)
+	}
+}
+
 func TestParseConfig_ConnectionProperties(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test

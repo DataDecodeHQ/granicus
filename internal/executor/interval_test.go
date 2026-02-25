@@ -563,8 +563,8 @@ func TestInterval_MultiOutputFailure(t *testing.T) {
 		"downstream": {Name: "downstream", Type: "shell", Source: "d.sh", DependsOn: []string{"out_a", "out_b"}},
 	})
 
-	// Fail when executing extract.py
-	failOn := map[string]bool{"out_a:": true}
+	// Fail when executing extract.py (either output may run first due to map ordering)
+	failOn := map[string]bool{"out_a:": true, "out_b:": true}
 
 	rr := Execute(g, RunConfig{
 		MaxParallel: 1, ProjectRoot: t.TempDir(), RunID: "r1",

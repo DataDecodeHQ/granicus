@@ -33,6 +33,7 @@ func NewSQLRunner(conn *config.ConnectionConfig) *SQLRunner {
 type templateData struct {
 	Project string
 	Dataset string
+	Prefix  string
 }
 
 func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {

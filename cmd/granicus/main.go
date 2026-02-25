@@ -82,7 +82,7 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd)
+	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
