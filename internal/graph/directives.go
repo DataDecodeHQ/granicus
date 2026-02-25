@@ -22,6 +22,17 @@ type directivesRoot struct {
 	Granicus Directives `yaml:"granicus"`
 }
 
+func ParseDirectivesWithBlock(filePath string) (bool, Directives, error) {
+	d, err := ParseDirectives(filePath)
+	if err != nil {
+		return false, d, err
+	}
+	// Check if any field is set (indicating a granicus block was found)
+	found := d.TimeColumn != "" || d.IntervalUnit != "" || d.StartDate != "" ||
+		d.BatchSize != 0 || d.Lookback != 0 || len(d.Produces) > 0 || d.DependsOn != nil
+	return found, d, nil
+}
+
 func ParseDirectives(filePath string) (Directives, error) {
 	f, err := os.Open(filePath)
 	if err != nil {

@@ -15,11 +15,11 @@ var depPattern = regexp.MustCompile(`^\s*(?:--|#)\s*depends_on:\s*(\S+)\s*$`)
 const maxScanLines = 50
 
 func ParseDependencies(filePath string) ([]string, error) {
-	d, err := ParseDirectives(filePath)
+	found, d, err := ParseDirectivesWithBlock(filePath)
 	if err != nil {
 		return nil, err
 	}
-	if len(d.DependsOn) > 0 {
+	if found {
 		return d.DependsOn, nil
 	}
 	// Fall back to legacy regex format for old-style "-- depends_on: asset" comments

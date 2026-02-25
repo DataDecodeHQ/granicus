@@ -95,12 +95,23 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 		return nil, nil, nil, fmt.Errorf("config: %w", err)
 	}
 
-	deps, err := graph.ParseAllDependencies(cfg, projectRoot)
+	deps, directives, err := graph.ParseAllDirectives(cfg, projectRoot)
 	if err != nil {
 		return cfg, nil, nil, fmt.Errorf("dependencies: %w", err)
 	}
 
 	inputs := graph.ConfigToAssetInputs(cfg)
+
+	// Apply directives (time_column, interval_unit, etc.) to asset inputs
+	for i := range inputs {
+		if d, ok := directives[inputs[i].Name]; ok {
+			inputs[i].TimeColumn = d.TimeColumn
+			inputs[i].IntervalUnit = d.IntervalUnit
+			inputs[i].Lookback = d.Lookback
+			inputs[i].StartDate = d.StartDate
+			inputs[i].BatchSize = d.BatchSize
+		}
+	}
 
 	// Generate check nodes and merge into graph
 	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)

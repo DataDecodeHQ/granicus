@@ -1,7 +1,9 @@
 package executor
 
 import (
+	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -250,7 +252,18 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 	for _, iv := range missing {
 		cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID)
 
-		result := executeWithDedup(asset, cfg, runner, dedupMu, dedupResults, iv.Start, iv.End)
+		var result NodeResult
+		maxRetries := 3
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			result = executeWithDedup(asset, cfg, runner, dedupMu, dedupResults, iv.Start, iv.End)
+			if result.Status == "success" || !isRetryableError(result.Error) || attempt == maxRetries {
+				break
+			}
+			backoff := time.Duration(1<<uint(attempt)) * 10 * time.Second
+			log.Printf("executor: retrying %s interval %s after %v (attempt %d/%d): %s",
+				asset.Name, iv.Start, backoff, attempt+1, maxRetries, result.Error)
+			time.Sleep(backoff)
+		}
 
 		if result.Status == "success" {
 			cfg.StateStore.MarkComplete(asset.Name, iv.Start, iv.End)
@@ -303,6 +316,12 @@ func executeWithDedup(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedu
 	}
 
 	return result
+}
+
+func isRetryableError(errMsg string) bool {
+	return strings.Contains(errMsg, "rate limit") ||
+		strings.Contains(errMsg, "Exceeded rate limits") ||
+		strings.Contains(errMsg, "rateLimitExceeded")
 }
 
 func mergeMetadata(base, extra map[string]string) map[string]string {
