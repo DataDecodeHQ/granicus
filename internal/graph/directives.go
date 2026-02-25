@@ -9,13 +9,19 @@ import (
 )
 
 type Directives struct {
-	DependsOn    []string `yaml:"depends_on"`
-	TimeColumn   string   `yaml:"time_column"`
-	IntervalUnit string   `yaml:"interval_unit"`
-	Lookback     int      `yaml:"lookback"`
-	StartDate    string   `yaml:"start_date"`
-	BatchSize    int      `yaml:"batch_size"`
-	Produces     []string `yaml:"produces"`
+	DependsOn     []string `yaml:"depends_on"`
+	TimeColumn    string   `yaml:"time_column"`
+	IntervalUnit  string   `yaml:"interval_unit"`
+	Lookback      int      `yaml:"lookback"`
+	StartDate     string   `yaml:"start_date"`
+	BatchSize     int      `yaml:"batch_size"`
+	Produces      []string `yaml:"produces"`
+	Layer         string   `yaml:"layer"`
+	Grain         string   `yaml:"grain"`
+	DefaultChecks *bool    `yaml:"default_checks"`
+	PartitionBy   string   `yaml:"partition_by"`
+	PartitionType string   `yaml:"partition_type"`
+	ClusterBy     []string `yaml:"cluster_by"`
 }
 
 type directivesRoot struct {
@@ -29,7 +35,8 @@ func ParseDirectivesWithBlock(filePath string) (bool, Directives, error) {
 	}
 	// Check if any field is set (indicating a granicus block was found)
 	found := d.TimeColumn != "" || d.IntervalUnit != "" || d.StartDate != "" ||
-		d.BatchSize != 0 || d.Lookback != 0 || len(d.Produces) > 0 || d.DependsOn != nil
+		d.BatchSize != 0 || d.Lookback != 0 || len(d.Produces) > 0 || d.DependsOn != nil ||
+		d.Layer != "" || d.Grain != "" || d.DefaultChecks != nil
 	return found, d, nil
 }
 

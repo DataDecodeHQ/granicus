@@ -105,6 +105,85 @@ func TestSubstituteIntervalVars_MultipleOccurrences(t *testing.T) {
 	}
 }
 
+func TestSubstituteTestVars(t *testing.T) {
+	sql := []byte(`WHERE created_at >= @test_start AND created_at < @test_end`)
+
+	// With values
+	result := string(SubstituteTestVars(sql, "2025-12-01", "2025-12-08"))
+	if !strings.Contains(result, "'2025-12-01'") {
+		t.Errorf("@test_start not replaced: %s", result)
+	}
+	if !strings.Contains(result, "'2025-12-08'") {
+		t.Errorf("@test_end not replaced: %s", result)
+	}
+
+	// With empty values (defaults)
+	result = string(SubstituteTestVars(sql, "", ""))
+	if !strings.Contains(result, "'1900-01-01'") {
+		t.Errorf("@test_start should default to 1900-01-01: %s", result)
+	}
+	if !strings.Contains(result, "'2099-12-31'") {
+		t.Errorf("@test_end should default to 2099-12-31: %s", result)
+	}
+}
+
+func TestParseTestWindow(t *testing.T) {
+	// Empty = no-op defaults
+	start, end, err := ParseTestWindow("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != "1900-01-01" || end != "2099-12-31" {
+		t.Errorf("empty window: %s to %s", start, end)
+	}
+
+	// Days
+	start, end, err = ParseTestWindow("7d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start == "" || end == "" {
+		t.Error("7d returned empty dates")
+	}
+	if start >= end {
+		t.Errorf("start %s should be before end %s", start, end)
+	}
+
+	// Weeks
+	start, _, err = ParseTestWindow("4w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start == "" {
+		t.Error("4w returned empty start")
+	}
+
+	// Months
+	start, _, err = ParseTestWindow("3m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start == "" {
+		t.Error("3m returned empty start")
+	}
+
+	// Invalid
+	_, _, err = ParseTestWindow("x")
+	if err == nil {
+		t.Error("expected error for 'x'")
+	}
+
+	_, _, err = ParseTestWindow("7x")
+	if err == nil {
+		t.Error("expected error for '7x'")
+	}
+
+	_, _, err = ParseTestWindow("0d")
+	if err == nil {
+		t.Error("expected error for '0d'")
+	}
+}
+
 func TestSQLRunner_BadTemplate(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.sql"), []byte(`SELECT {{.Invalid`), 0644)

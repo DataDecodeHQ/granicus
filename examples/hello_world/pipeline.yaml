@@ -1,0 +1,15 @@
+pipeline: hello_world
+max_parallel: 1
+
+assets:
+  - name: extract
+    type: shell
+    source: scripts/extract.sh
+
+  - name: transform
+    type: shell
+    source: scripts/transform.sh
+
+  - name: load
+    type: shell
+    source: scripts/load.sh

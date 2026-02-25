@@ -22,6 +22,10 @@ type Asset struct {
 	SourceConnection      string
 	IntervalStart         string
 	IntervalEnd           string
+	Prefix                string
+	InlineSQL             string
+	TestStart             string
+	TestEnd               string
 }
 
 type NodeResult struct {

@@ -1,0 +1,33 @@
+pipeline: bigquery_example
+max_parallel: 2
+schedule: "0 6 * * *"
+
+connections:
+  bq:
+    type: bigquery
+    project: my-gcp-project
+    dataset: analytics
+
+assets:
+  - name: stg_orders
+    type: sql
+    source: sql/stg_orders.sql
+    destination_connection: bq
+    layer: staging
+    partition_by: ordered_at
+    partition_type: DAY
+
+  - name: int_order_summary
+    type: sql
+    source: sql/int_order_summary.sql
+    destination_connection: bq
+    layer: intermediate
+
+  - name: entity_customers
+    type: sql
+    source: sql/entity_customers.sql
+    destination_connection: bq
+    layer: entity
+    grain: customer_id
+    cluster_by:
+      - customer_id

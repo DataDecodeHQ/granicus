@@ -69,6 +69,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	data := templateData{
 		Project: r.Connection.Properties["project"],
 		Dataset: r.Connection.Properties["dataset"],
+		Prefix:  asset.Prefix,
 	}
 
 	var rendered []byte
@@ -88,6 +89,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 
 	// Second pass: replace @start/@end with interval boundaries
 	rendered = substituteIntervalVars(rendered, asset)
+	rendered = SubstituteTestVars(rendered, asset.TestStart, asset.TestEnd)
 
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -198,13 +200,19 @@ func NewSQLCheckRunner(conn *config.ConnectionConfig) *SQLCheckRunner {
 func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
-	sourcePath := filepath.Join(projectRoot, asset.Source)
-	rawSQL, err := os.ReadFile(sourcePath)
-	if err != nil {
-		return NodeResult{
-			AssetName: asset.Name, Status: "failed", StartTime: start,
-			EndTime: time.Now(), Duration: time.Since(start),
-			Error: fmt.Sprintf("reading check SQL: %v", err), ExitCode: -1,
+	var rawSQL []byte
+	if asset.InlineSQL != "" {
+		rawSQL = []byte(asset.InlineSQL)
+	} else {
+		sourcePath := filepath.Join(projectRoot, asset.Source)
+		var err error
+		rawSQL, err = os.ReadFile(sourcePath)
+		if err != nil {
+			return NodeResult{
+				AssetName: asset.Name, Status: "failed", StartTime: start,
+				EndTime: time.Now(), Duration: time.Since(start),
+				Error: fmt.Sprintf("reading check SQL: %v", err), ExitCode: -1,
+			}
 		}
 	}
 
@@ -220,6 +228,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	data := templateData{
 		Project: r.Connection.Properties["project"],
 		Dataset: r.Connection.Properties["dataset"],
+		Prefix:  asset.Prefix,
 	}
 	buf := new(bytes.Buffer)
 	if err := tmpl.Execute(buf, data); err != nil {
@@ -231,6 +240,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 
 	checkSQL := substituteIntervalVars(buf.Bytes(), asset)
+	checkSQL = SubstituteTestVars(checkSQL, asset.TestStart, asset.TestEnd)
 
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -301,11 +311,63 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 }
 
 func substituteIntervalVars(sql []byte, asset *Asset) []byte {
-	if asset.IntervalStart == "" {
-		return sql
+	s := string(sql)
+	if asset.IntervalStart != "" {
+		s = strings.ReplaceAll(s, "@start", "'"+asset.IntervalStart+"'")
+		s = strings.ReplaceAll(s, "@end", "'"+asset.IntervalEnd+"'")
+	}
+	return []byte(s)
+}
+
+func SubstituteTestVars(sql []byte, testStart, testEnd string) []byte {
+	if testStart == "" {
+		testStart = "1900-01-01"
+	}
+	if testEnd == "" {
+		testEnd = "2099-12-31"
 	}
 	s := string(sql)
-	s = strings.ReplaceAll(s, "@start", "'"+asset.IntervalStart+"'")
-	s = strings.ReplaceAll(s, "@end", "'"+asset.IntervalEnd+"'")
+	s = strings.ReplaceAll(s, "@test_start", "'"+testStart+"'")
+	s = strings.ReplaceAll(s, "@test_end", "'"+testEnd+"'")
 	return []byte(s)
+}
+
+func ParseTestWindow(window string) (startDate, endDate string, err error) {
+	if window == "" {
+		return "1900-01-01", "2099-12-31", nil
+	}
+
+	if len(window) < 2 {
+		return "", "", fmt.Errorf("invalid test window format: %q (expected Nd, Nw, or Nm)", window)
+	}
+
+	numStr := window[:len(window)-1]
+	unit := window[len(window)-1]
+
+	num := 0
+	for _, c := range numStr {
+		if c < '0' || c > '9' {
+			return "", "", fmt.Errorf("invalid test window format: %q (expected Nd, Nw, or Nm)", window)
+		}
+		num = num*10 + int(c-'0')
+	}
+	if num == 0 {
+		return "", "", fmt.Errorf("invalid test window: duration must be > 0")
+	}
+
+	now := time.Now().UTC()
+	endDate = now.Format("2006-01-02")
+
+	switch unit {
+	case 'd':
+		startDate = now.AddDate(0, 0, -num).Format("2006-01-02")
+	case 'w':
+		startDate = now.AddDate(0, 0, -num*7).Format("2006-01-02")
+	case 'm':
+		startDate = now.AddDate(0, -num, 0).Format("2006-01-02")
+	default:
+		return "", "", fmt.Errorf("invalid test window unit %q (expected d, w, or m)", string(unit))
+	}
+
+	return startDate, endDate, nil
 }

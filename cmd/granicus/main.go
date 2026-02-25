@@ -10,14 +10,17 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/analytehealth/granicus/internal/backup"
 	"github.com/analytehealth/granicus/internal/checker"
 	"github.com/analytehealth/granicus/internal/config"
 	"github.com/analytehealth/granicus/internal/executor"
+	"github.com/analytehealth/granicus/internal/gc"
 	"github.com/analytehealth/granicus/internal/graph"
 	"github.com/analytehealth/granicus/internal/logging"
 	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
 	"github.com/analytehealth/granicus/internal/state"
+	"github.com/analytehealth/granicus/internal/testmode"
 )
 
 var version = "0.2.0"
@@ -49,6 +52,9 @@ func main() {
 	runCmd.Flags().String("from-date", "", "Override start_date for incremental assets (YYYY-MM-DD)")
 	runCmd.Flags().String("to-date", "", "Override end date for incremental assets (YYYY-MM-DD)")
 	runCmd.Flags().Bool("full-refresh", false, "Invalidate interval state and reprocess from start")
+	runCmd.Flags().Bool("test", false, "Run in test mode (creates temporary dataset)")
+	runCmd.Flags().String("test-window", "", "Test window duration (e.g., 7d, 4w, 3m)")
+	runCmd.Flags().Bool("keep-test-data", false, "Preserve test dataset after run")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -82,7 +88,24 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd())
+	gcCmd := &cobra.Command{
+		Use:   "gc",
+		Short: "Clean up old run logs and test artifacts",
+		RunE:  runGC,
+	}
+	gcCmd.Flags().Int("retention-days", 30, "Delete runs older than this many days")
+	gcCmd.Flags().String("project-root", ".", "Project root directory")
+
+	backupCmd := &cobra.Command{
+		Use:   "backup",
+		Short: "Backup the state store",
+		RunE:  runBackup,
+	}
+	backupCmd.Flags().String("project-root", ".", "Project root directory")
+	backupCmd.Flags().String("output", "", "Output path (default: alongside state.db)")
+	backupCmd.Flags().Int("keep", 7, "Number of backups to retain")
+
+	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -110,6 +133,15 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 			inputs[i].Lookback = d.Lookback
 			inputs[i].StartDate = d.StartDate
 			inputs[i].BatchSize = d.BatchSize
+			if d.Layer != "" {
+				inputs[i].Layer = d.Layer
+			}
+			if d.Grain != "" {
+				inputs[i].Grain = d.Grain
+			}
+			if d.DefaultChecks != nil {
+				inputs[i].DefaultChecks = d.DefaultChecks
+			}
 		}
 	}
 
@@ -117,6 +149,13 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
 	inputs = append(inputs, checkNodes...)
 	for k, v := range checkDeps {
+		deps[k] = v
+	}
+
+	// Generate default checks based on layer/grain
+	defaultNodes, defaultDeps := checker.GenerateDefaultCheckNodes(cfg)
+	inputs = append(inputs, defaultNodes...)
+	for k, v := range defaultDeps {
 		deps[k] = v
 	}
 
@@ -139,13 +178,19 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 func buildRegistry(cfg *config.PipelineConfig) *runner.RunnerRegistry {
 	reg := runner.NewRunnerRegistry(cfg.Connections)
 
-	// Register SQL runner per connection
+	// Register runners per connection type
 	if cfg.Connections != nil {
 		for _, conn := range cfg.Connections {
-			if conn.Type == "bigquery" {
+			switch conn.Type {
+			case "bigquery":
 				reg.Register("sql", runner.NewSQLRunner(conn))
 				reg.Register("sql_check", runner.NewSQLCheckRunner(conn))
-				break
+			case "gcs":
+				reg.Register("gcs", runner.NewGCSRunner(conn))
+			case "s3":
+				reg.Register("s3", runner.NewS3Runner(conn))
+			case "iceberg":
+				reg.Register("iceberg", runner.NewIcebergRunner(conn))
 			}
 		}
 	}
@@ -166,6 +211,25 @@ func runRun(cmd *cobra.Command, args []string) error {
 	fromDate, _ := cmd.Flags().GetString("from-date")
 	toDate, _ := cmd.Flags().GetString("to-date")
 	fullRefresh, _ := cmd.Flags().GetBool("full-refresh")
+	testMode, _ := cmd.Flags().GetBool("test")
+	testWindow, _ := cmd.Flags().GetString("test-window")
+	keepTestData, _ := cmd.Flags().GetBool("keep-test-data")
+
+	if testWindow != "" && !testMode {
+		return fmt.Errorf("--test-window requires --test")
+	}
+	if keepTestData && !testMode {
+		return fmt.Errorf("--keep-test-data requires --test")
+	}
+
+	var testStart, testEnd string
+	if testMode {
+		var err error
+		testStart, testEnd, err = runner.ParseTestWindow(testWindow)
+		if err != nil {
+			return fmt.Errorf("test window: %w", err)
+		}
+	}
 
 	cfg, g, _, err := loadAndBuild(args[0], projectRoot)
 	if err != nil {
@@ -205,12 +269,31 @@ func runRun(cmd *cobra.Command, args []string) error {
 	registry := buildRegistry(cfg)
 
 	// Initialize state store
-	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
+	stateDBName := "state.db"
+	if testMode {
+		stateDBName = "test-state.db"
+	}
+	stateDBPath := filepath.Join(projectRoot, ".granicus", stateDBName)
 	stateStore, err := state.New(stateDBPath)
 	if err != nil {
 		return fmt.Errorf("state store: %w", err)
 	}
 	defer stateStore.Close()
+
+	// Test mode: create temporary dataset and override connection properties
+	if testMode {
+		for _, conn := range cfg.Connections {
+			if conn.Type == "bigquery" {
+				baseDataset := conn.Properties["dataset"]
+				testDatasetName := testmode.TestDatasetName(baseDataset, runID)
+				fmt.Printf("Test mode: using dataset %s\n", testDatasetName)
+				conn.Properties["dataset"] = testDatasetName
+				break
+			}
+		}
+		// Rebuild registry with updated connection properties
+		registry = buildRegistry(cfg)
+	}
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
 		ts := time.Now().Format("15:04:05")
@@ -225,6 +308,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 			SourceConnection:      asset.SourceConnection,
 			IntervalStart:         asset.IntervalStart,
 			IntervalEnd:           asset.IntervalEnd,
+			Prefix:                cfg.Prefix,
+			InlineSQL:             asset.InlineSQL,
+			TestStart:             asset.TestStart,
+			TestEnd:               asset.TestEnd,
 		}
 
 		r := registry.Run(ra, pr, rid)
@@ -268,14 +355,18 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	runCfg := executor.RunConfig{
-		MaxParallel: cfg.MaxParallel,
-		Assets:      assetFilter,
-		ProjectRoot: projectRoot,
-		RunID:       runID,
-		FromDate:    fromDate,
-		ToDate:      toDate,
-		FullRefresh: fullRefresh,
-		StateStore:  stateStore,
+		MaxParallel:  cfg.MaxParallel,
+		Assets:       assetFilter,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		FromDate:     fromDate,
+		ToDate:       toDate,
+		FullRefresh:  fullRefresh,
+		StateStore:   stateStore,
+		TestMode:     testMode,
+		TestStart:    testStart,
+		TestEnd:      testEnd,
+		KeepTestData: keepTestData,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
@@ -341,6 +432,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 
 	cfg, g, missingFiles, err := loadAndBuild(args[0], projectRoot)
+
+	if cfg == nil {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("failed to load config")
+	}
 
 	fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
 	fmt.Printf("Assets: %d\n", len(cfg.Assets))
@@ -486,6 +584,49 @@ func runHistory(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("%.0fs", r.DurationSeconds),
 			r.StartTime.Format("2006-01-02 15:04"),
 		)
+	}
+
+	return nil
+}
+
+func runGC(cmd *cobra.Command, args []string) error {
+	projectRoot, _ := cmd.Flags().GetString("project-root")
+	retentionDays, _ := cmd.Flags().GetInt("retention-days")
+
+	result, err := gc.Collect(projectRoot, retentionDays)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Deleted %d runs, freed %s\n", result.RunsDeleted, gc.FormatBytes(result.BytesFreed))
+	if result.TestCleanup > 0 {
+		fmt.Printf("Cleaned up %d test artifacts\n", result.TestCleanup)
+	}
+	return nil
+}
+
+func runBackup(cmd *cobra.Command, args []string) error {
+	projectRoot, _ := cmd.Flags().GetString("project-root")
+	output, _ := cmd.Flags().GetString("output")
+	keep, _ := cmd.Flags().GetInt("keep")
+
+	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
+
+	backupPath, err := backup.BackupStateDB(stateDBPath, output)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Backup created: %s\n", backupPath)
+
+	if keep > 0 {
+		pruned, err := backup.PruneBackups(filepath.Dir(backupPath), keep)
+		if err != nil {
+			return fmt.Errorf("pruning: %w", err)
+		}
+		if pruned > 0 {
+			fmt.Printf("Pruned %d old backups\n", pruned)
+		}
 	}
 
 	return nil

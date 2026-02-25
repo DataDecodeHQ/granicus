@@ -28,6 +28,28 @@ type AssetConfig struct {
 	DestinationConnection string        `yaml:"destination_connection,omitempty"`
 	SourceConnection      string        `yaml:"source_connection,omitempty"`
 	Checks                []CheckConfig `yaml:"checks,omitempty"`
+	Layer                 string        `yaml:"layer,omitempty"`
+	Grain                 string        `yaml:"grain,omitempty"`
+	DefaultChecks         *bool         `yaml:"default_checks,omitempty"`
+	PartitionBy           string        `yaml:"partition_by,omitempty"`
+	PartitionType         string        `yaml:"partition_type,omitempty"`
+	ClusterBy             []string      `yaml:"cluster_by,omitempty"`
+}
+
+var validPartitionTypes = map[string]bool{
+	"":      true,
+	"DAY":   true,
+	"HOUR":  true,
+	"MONTH": true,
+	"YEAR":  true,
+}
+
+var validLayers = map[string]bool{
+	"":             true,
+	"staging":      true,
+	"intermediate": true,
+	"entity":       true,
+	"report":       true,
 }
 
 type PipelineConfig struct {
@@ -91,6 +113,18 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 
 		if !validTypes[a.Type] {
 			return nil, fmt.Errorf("asset %q: invalid type %q (must be sql, python, shell, or dlt)", a.Name, a.Type)
+		}
+
+		if !validLayers[a.Layer] {
+			return nil, fmt.Errorf("asset %q: invalid layer %q (must be staging, intermediate, entity, or report)", a.Name, a.Layer)
+		}
+
+		if !validPartitionTypes[a.PartitionType] {
+			return nil, fmt.Errorf("asset %q: invalid partition_type %q (must be DAY, HOUR, MONTH, or YEAR)", a.Name, a.PartitionType)
+		}
+
+		if a.PartitionType != "" && a.PartitionBy == "" {
+			return nil, fmt.Errorf("asset %q: partition_type requires partition_by", a.Name)
 		}
 
 		if seen[a.Name] {

@@ -28,10 +28,6 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-type HealthResponse struct {
-	Status string `json:"status"`
-}
-
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string, runID string, req TriggerRequest)
 
 type Server struct {

@@ -195,6 +195,38 @@ func TestBuildGraph_Subgraph(t *testing.T) {
 	}
 }
 
+func TestBuildGraph_LayerGrainDefaultChecks(t *testing.T) {
+	dc := true
+	assets := []AssetInput{
+		{Name: "stg", Type: "sql", Source: "stg.sql", Layer: "staging", Grain: "order_id", DefaultChecks: &dc},
+		{Name: "ent", Type: "sql", Source: "ent.sql", Layer: "entity"},
+	}
+
+	g, err := BuildGraph(assets, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stg := g.Assets["stg"]
+	if stg.Layer != "staging" {
+		t.Errorf("expected layer=staging, got %q", stg.Layer)
+	}
+	if stg.Grain != "order_id" {
+		t.Errorf("expected grain=order_id, got %q", stg.Grain)
+	}
+	if stg.DefaultChecks == nil || *stg.DefaultChecks != true {
+		t.Errorf("expected default_checks=true, got %v", stg.DefaultChecks)
+	}
+
+	ent := g.Assets["ent"]
+	if ent.Layer != "entity" {
+		t.Errorf("expected layer=entity, got %q", ent.Layer)
+	}
+	if ent.DefaultChecks != nil {
+		t.Errorf("expected default_checks=nil, got %v", ent.DefaultChecks)
+	}
+}
+
 func TestTopologicalSort(t *testing.T) {
 	assets := []AssetInput{
 		{Name: "A", Type: "shell", Source: "a.sh"},

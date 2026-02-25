@@ -152,6 +152,43 @@ SELECT 1;
 	}
 }
 
+func TestParseDirectives_LayerGrainDefaultChecks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sql")
+	os.WriteFile(path, []byte(`-- granicus:
+--   layer: staging
+--   grain: order_id
+--   default_checks: false
+SELECT 1;
+`), 0644)
+
+	d, err := ParseDirectives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Layer != "staging" {
+		t.Errorf("layer: %q", d.Layer)
+	}
+	if d.Grain != "order_id" {
+		t.Errorf("grain: %q", d.Grain)
+	}
+	if d.DefaultChecks == nil || *d.DefaultChecks != false {
+		t.Errorf("default_checks: %v", d.DefaultChecks)
+	}
+
+	// Verify ParseDirectivesWithBlock detects these fields
+	found, d2, err := ParseDirectivesWithBlock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Error("expected found=true for layer/grain/default_checks")
+	}
+	if d2.Layer != "staging" {
+		t.Errorf("layer via WithBlock: %q", d2.Layer)
+	}
+}
+
 func TestParseDirectives_Beyond50Lines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.sql")

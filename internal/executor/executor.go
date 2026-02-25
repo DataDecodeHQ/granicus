@@ -25,14 +25,19 @@ type NodeResult struct {
 }
 
 type RunConfig struct {
-	MaxParallel int
-	Assets      []string
-	ProjectRoot string
-	RunID       string
-	FromDate    string
-	ToDate      string
-	FullRefresh bool
-	StateStore  *state.Store
+	MaxParallel  int
+	Assets       []string
+	ProjectRoot  string
+	RunID        string
+	FromDate     string
+	ToDate       string
+	FullRefresh  bool
+	StateStore   *state.Store
+	TestMode     bool
+	TestStart    string
+	TestEnd      string
+	KeepTestData bool
+	TestDataset  string // set by test mode setup (the created dataset name)
 }
 
 type RunnerFunc func(asset *graph.Asset, projectRoot string, runID string) NodeResult
@@ -237,6 +242,17 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 	missing := state.ComputeMissing(allIntervals, completed, asset.Lookback)
 	missing = state.ApplyBatchSize(missing, asset.BatchSize)
 
+	// In test mode, limit intervals to reduce BQ usage
+	if cfg.TestMode && len(missing) > 0 {
+		maxIntervals := asset.Lookback + 1
+		if maxIntervals < 3 {
+			maxIntervals = 3
+		}
+		if len(missing) > maxIntervals {
+			missing = missing[len(missing)-maxIntervals:]
+		}
+	}
+
 	if len(missing) == 0 {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -304,6 +320,8 @@ func executeWithDedup(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedu
 	modified := *asset
 	modified.IntervalStart = intervalStart
 	modified.IntervalEnd = intervalEnd
+	modified.TestStart = cfg.TestStart
+	modified.TestEnd = cfg.TestEnd
 
 	result := runner(&modified, cfg.ProjectRoot, cfg.RunID)
 

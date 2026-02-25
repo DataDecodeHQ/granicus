@@ -1,0 +1,26 @@
+pipeline: mixed_example
+max_parallel: 3
+
+connections:
+  bq:
+    type: bigquery
+    project: my-gcp-project
+    dataset: analytics
+
+assets:
+  - name: fetch_api_data
+    type: shell
+    source: scripts/fetch_api_data.sh
+
+  - name: clean_api_data
+    type: python
+    source: python/clean_api_data.py
+
+  - name: stg_api_events
+    type: sql
+    source: sql/stg_api_events.sql
+    destination_connection: bq
+    layer: staging
+    checks:
+      - name: row_count
+        source: sql/checks/stg_api_events_row_count.sql

@@ -257,3 +257,71 @@ assets:
 		t.Errorf("dataset: %q", conn.Properties["dataset"])
 	}
 }
+
+func TestParseConfig_LayerValidation(t *testing.T) {
+	// Valid layers should pass
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    layer: staging
+  - name: y
+    type: shell
+    source: y.sh
+    layer: entity
+`))
+	if err != nil {
+		t.Fatalf("valid layers should pass: %v", err)
+	}
+
+	// Invalid layer should fail
+	_, err = LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    layer: bogus
+`))
+	if err == nil {
+		t.Error("expected error for invalid layer")
+	}
+}
+
+func TestParseConfig_GrainAndDefaultChecks(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: stg
+    type: sql
+    source: stg.sql
+    destination_connection: bq
+    layer: staging
+    grain: order_id
+    default_checks: true
+  - name: ent
+    type: sql
+    source: ent.sql
+    destination_connection: bq
+    layer: entity
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].Grain != "order_id" {
+		t.Errorf("grain: %q", cfg.Assets[0].Grain)
+	}
+	if cfg.Assets[0].DefaultChecks == nil || *cfg.Assets[0].DefaultChecks != true {
+		t.Errorf("default_checks: %v", cfg.Assets[0].DefaultChecks)
+	}
+	if cfg.Assets[1].DefaultChecks != nil {
+		t.Errorf("expected nil default_checks for ent, got %v", cfg.Assets[1].DefaultChecks)
+	}
+}

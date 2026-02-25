@@ -21,6 +21,12 @@ type Asset struct {
 	SourceAsset           string // back-reference for multi-output nodes
 	IntervalStart         string // set by executor at runtime
 	IntervalEnd           string // set by executor at runtime
+	TestStart             string // set by executor for @test_start substitution
+	TestEnd               string // set by executor for @test_end substitution
+	Layer                 string
+	Grain                 string
+	DefaultChecks         *bool
+	InlineSQL             string
 }
 
 type Graph struct {
@@ -49,6 +55,10 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			StartDate:             a.StartDate,
 			BatchSize:             a.BatchSize,
 			SourceAsset:           a.SourceAsset,
+			Layer:                 a.Layer,
+			Grain:                 a.Grain,
+			DefaultChecks:         a.DefaultChecks,
+			InlineSQL:             a.InlineSQL,
 		}
 	}
 
@@ -91,6 +101,10 @@ type AssetInput struct {
 	StartDate             string
 	BatchSize             int
 	SourceAsset           string
+	Layer                 string
+	Grain                 string
+	DefaultChecks         *bool
+	InlineSQL             string
 }
 
 const (

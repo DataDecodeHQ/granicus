@@ -122,6 +122,9 @@ func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 			Source:                a.Source,
 			DestinationConnection: a.DestinationConnection,
 			SourceConnection:      a.SourceConnection,
+			Layer:                 a.Layer,
+			Grain:                 a.Grain,
+			DefaultChecks:         a.DefaultChecks,
 		}
 	}
 	return inputs
