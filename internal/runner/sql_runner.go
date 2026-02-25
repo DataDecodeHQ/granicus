@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"regexp"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -95,6 +96,9 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	// Second pass: replace @start/@end with interval boundaries
 	rendered = substituteIntervalVars(rendered, asset)
 	rendered = SubstituteTestVars(rendered, asset.TestStart, asset.TestEnd)
+
+	// Prepend DROP TABLE to avoid partition spec conflicts on CREATE OR REPLACE
+	rendered = prependDropForReplace(rendered)
 
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -318,6 +322,26 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		Stdout: stdout,
 		Metadata: map[string]string{"check_rows": strconv.Itoa(rowCount)},
 	}
+}
+
+// createOrReplaceRe matches CREATE OR REPLACE TABLE `project.dataset.table`
+var createOrReplaceRe = regexp.MustCompile("(?i)CREATE\\s+OR\\s+REPLACE\\s+TABLE\\s+`([^`]+)`")
+
+// prependDropForReplace detects CREATE OR REPLACE TABLE statements and prepends
+// a DROP TABLE IF EXISTS to avoid BigQuery errors when the existing table has a
+// different partitioning/clustering spec than the replacement.
+func prependDropForReplace(sql []byte) []byte {
+	m := createOrReplaceRe.Find(sql)
+	if m == nil {
+		return sql
+	}
+	sub := createOrReplaceRe.FindSubmatch(sql)
+	if sub == nil || len(sub) < 2 {
+		return sql
+	}
+	tableRef := string(sub[1])
+	drop := fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", tableRef)
+	return append([]byte(drop), sql...)
 }
 
 func substituteIntervalVars(sql []byte, asset *Asset) []byte {

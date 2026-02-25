@@ -184,6 +184,57 @@ func TestParseTestWindow(t *testing.T) {
 	}
 }
 
+func TestPrependDropForReplace(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantDrop bool
+		table    string
+	}{
+		{
+			name:     "standard CREATE OR REPLACE",
+			input:    "CREATE OR REPLACE TABLE `my-project.my_dataset.my_table` AS SELECT 1",
+			wantDrop: true,
+			table:    "my-project.my_dataset.my_table",
+		},
+		{
+			name:     "lowercase",
+			input:    "create or replace table `proj.ds.tbl` AS SELECT 1",
+			wantDrop: true,
+			table:    "proj.ds.tbl",
+		},
+		{
+			name:     "no CREATE OR REPLACE",
+			input:    "SELECT * FROM `my-project.ds.tbl`",
+			wantDrop: false,
+		},
+		{
+			name:     "plain CREATE TABLE (no REPLACE)",
+			input:    "CREATE TABLE `proj.ds.tbl` AS SELECT 1",
+			wantDrop: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := string(prependDropForReplace([]byte(tt.input)))
+			hasDrop := strings.Contains(result, "DROP TABLE IF EXISTS")
+			if hasDrop != tt.wantDrop {
+				t.Errorf("wantDrop=%v, got=%v\nresult: %s", tt.wantDrop, hasDrop, result)
+			}
+			if tt.wantDrop && !strings.Contains(result, tt.table) {
+				t.Errorf("expected table ref %q in drop statement: %s", tt.table, result)
+			}
+			if tt.wantDrop {
+				// Original SQL should still be present
+				if !strings.Contains(result, tt.input) {
+					t.Errorf("original SQL missing from result: %s", result)
+				}
+			}
+		})
+	}
+}
+
 func TestSQLRunner_BadTemplate(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.sql"), []byte(`SELECT {{.Invalid`), 0644)
