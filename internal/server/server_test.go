@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/logging"
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/scheduler"
 )
 
@@ -29,7 +28,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func setupServer(t *testing.T) (*Server, *logging.Store) {
+func setupServer(t *testing.T) (*Server, *events.Store) {
 	t.Helper()
 	db := newTestDB(t)
 	lockStore, err := scheduler.NewLockStore(db)
@@ -37,10 +36,14 @@ func setupServer(t *testing.T) (*Server, *logging.Store) {
 		t.Fatal(err)
 	}
 
-	projectRoot := t.TempDir()
-	logStore := logging.NewStore(projectRoot)
+	eventsDBPath := filepath.Join(t.TempDir(), "events.db")
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { eventStore.Close() })
 
-	srv := NewServer(8080, projectRoot, lockStore, logStore, func(cfg *config.PipelineConfig, pr string, runID string, req TriggerRequest) {
+	srv := NewServer(8080, t.TempDir(), lockStore, eventStore, func(cfg *config.PipelineConfig, pr string, runID string, req TriggerRequest) {
 		// no-op
 	})
 
@@ -52,7 +55,7 @@ func setupServer(t *testing.T) (*Server, *logging.Store) {
 		},
 	})
 
-	return srv, logStore
+	return srv, eventStore
 }
 
 func TestHealth_Returns200(t *testing.T) {
@@ -138,23 +141,22 @@ func TestTrigger_409WhenLocked(t *testing.T) {
 }
 
 func TestStatus_ReturnsRunData(t *testing.T) {
-	srv, logStore := setupServer(t)
+	srv, eventStore := setupServer(t)
 	handler := srv.Handler()
 
-	// Write a run summary
-	summary := logging.RunSummary{
-		RunID:     "run_test_123",
-		Pipeline:  "test_pipeline",
-		Status:    "success",
-		Succeeded: 3,
-		Failed:    0,
-		Skipped:   0,
-	}
-	// Ensure directory exists
-	os.MkdirAll(filepath.Join(logStore.BaseDir(), ".granicus", "runs", "run_test_123"), 0755)
-	if err := logStore.WriteRunSummary("run_test_123", summary); err != nil {
-		t.Fatal(err)
-	}
+	// Emit run events
+	eventStore.Emit(events.Event{
+		RunID: "run_test_123", Pipeline: "test_pipeline", EventType: "run_started",
+		Severity: "info", Summary: "started",
+	})
+	eventStore.Emit(events.Event{
+		RunID: "run_test_123", Pipeline: "test_pipeline", EventType: "run_completed",
+		Severity: "info", Summary: "completed",
+		Details: map[string]any{
+			"status": "success", "succeeded": 3, "failed": 0, "skipped": 0,
+			"total_nodes": 3, "duration_seconds": 10.0,
+		},
+	})
 
 	req := httptest.NewRequest("GET", "/api/v1/status/run_test_123", nil)
 	w := httptest.NewRecorder()
@@ -164,7 +166,7 @@ func TestStatus_ReturnsRunData(t *testing.T) {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp logging.RunSummary
+	var resp events.RunSummary
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.RunID != "run_test_123" {
 		t.Errorf("expected run_test_123, got %q", resp.RunID)

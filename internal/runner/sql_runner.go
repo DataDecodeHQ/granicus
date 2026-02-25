@@ -3,15 +3,15 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"text/template"
 	"time"
-
-	"regexp"
-	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/analytehealth/granicus/internal/config"
@@ -279,7 +279,8 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 	defer client.Close()
 
-	q := client.Query(string(checkSQL))
+	sqlStr := string(checkSQL)
+	q := client.Query(sqlStr)
 	it, err := q.Read(ctx)
 	if err != nil {
 		return NodeResult{
@@ -289,10 +290,13 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
+	// Read rows into structured maps (up to 100 sample rows)
+	const maxSampleRows = 100
+	var sampleRows []map[string]any
 	rowCount := 0
-	var stdout string
+
 	for {
-		var row []bigquery.Value
+		var row map[string]bigquery.Value
 		err := it.Next(&row)
 		if err == iterator.Done {
 			break
@@ -301,26 +305,48 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 			break
 		}
 		rowCount++
-		if rowCount <= 10 {
-			stdout += fmt.Sprintf("%v\n", row)
+		if rowCount <= maxSampleRows {
+			m := make(map[string]any, len(row))
+			for k, v := range row {
+				m[k] = v
+			}
+			sampleRows = append(sampleRows, m)
 		}
 	}
 
 	end := time.Now()
+	metadata := map[string]string{
+		"check_total_rows": strconv.Itoa(rowCount),
+		"check_sql":        sqlStr,
+	}
+
 	if rowCount == 0 {
 		return NodeResult{
 			AssetName: asset.Name, Status: "success", StartTime: start,
 			EndTime: end, Duration: end.Sub(start), ExitCode: 0,
-			Metadata: map[string]string{"check_rows": "0"},
+			Metadata: metadata,
 		}
+	}
+
+	if encoded, jerr := json.Marshal(sampleRows); jerr == nil {
+		metadata["check_sample_rows"] = string(encoded)
+	}
+
+	var stdout string
+	for i, row := range sampleRows {
+		if i >= 10 {
+			stdout += fmt.Sprintf("... and %d more rows\n", rowCount-10)
+			break
+		}
+		stdout += fmt.Sprintf("%v\n", row)
 	}
 
 	return NodeResult{
 		AssetName: asset.Name, Status: "failed", StartTime: start,
 		EndTime: end, Duration: end.Sub(start), ExitCode: 1,
-		Error:  fmt.Sprintf("check failed: %d rows returned", rowCount),
-		Stdout: stdout,
-		Metadata: map[string]string{"check_rows": strconv.Itoa(rowCount)},
+		Error:    fmt.Sprintf("check failed: %d rows returned", rowCount),
+		Stdout:   stdout,
+		Metadata: metadata,
 	}
 }
 

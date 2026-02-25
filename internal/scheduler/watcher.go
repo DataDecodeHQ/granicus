@@ -1,12 +1,15 @@
 package scheduler
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 type Watcher struct {
@@ -77,6 +80,15 @@ func (w *Watcher) loop() {
 				}
 				if len(updated) > 0 {
 					log.Printf("scheduler: updated pipelines: %v", updated)
+				}
+				if len(added)+len(removed)+len(updated) > 0 {
+					w.scheduler.emitEvent(events.Event{
+						EventType: "config_reloaded", Severity: "info",
+						Summary: fmt.Sprintf("Config reloaded: %d added, %d removed, %d updated", len(added), len(removed), len(updated)),
+						Details: map[string]any{
+							"added": added, "removed": removed, "updated": updated,
+						},
+					})
 				}
 			})
 			debounceMu.Unlock()

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/logging"
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 func TestIntegration_AuthFlow(t *testing.T) {
@@ -54,21 +54,24 @@ func TestIntegration_AuthFlow(t *testing.T) {
 }
 
 func TestIntegration_TriggerAndStatus(t *testing.T) {
-	srv, logStore := setupServer(t)
+	srv, eventStore := setupServer(t)
 
 	var lastRunID string
 	srv.runFunc = func(cfg *config.PipelineConfig, pr string, runID string, req TriggerRequest) {
 		lastRunID = runID
-		// Simulate writing a run summary
-		summary := logging.RunSummary{
-			RunID:     runID,
-			Pipeline:  cfg.Pipeline,
-			Status:    "success",
-			Succeeded: 1,
-			StartTime: time.Now(),
-			EndTime:   time.Now(),
-		}
-		logStore.WriteRunSummary(runID, summary)
+		// Simulate emitting run events
+		eventStore.Emit(events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started",
+			Severity: "info", Summary: "started",
+		})
+		eventStore.Emit(events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed",
+			Severity: "info", Summary: "completed",
+			Details: map[string]any{
+				"status": "success", "succeeded": 1, "failed": 0, "skipped": 0,
+				"total_nodes": 1, "duration_seconds": 1.0,
+			},
+		})
 	}
 
 	handler := srv.Handler()
@@ -95,7 +98,7 @@ func TestIntegration_TriggerAndStatus(t *testing.T) {
 		t.Errorf("status: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var statusResp logging.RunSummary
+	var statusResp events.RunSummary
 	json.NewDecoder(w.Body).Decode(&statusResp)
 	if statusResp.Status != "success" {
 		t.Errorf("expected success, got %q", statusResp.Status)

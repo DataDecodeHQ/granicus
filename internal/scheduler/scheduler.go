@@ -12,6 +12,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
@@ -23,11 +24,12 @@ type Scheduler struct {
 	projectRoot string
 	runFunc     RunFunc
 	lockStore   *LockStore
+	eventStore  *events.Store
 	entries     map[string]cron.EntryID // pipeline name -> cron entry ID
 	configs     map[string]*config.PipelineConfig
 }
 
-func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc) (*Scheduler, error) {
+func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
 	lockStore, err := NewLockStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("lock store: %w", err)
@@ -39,6 +41,7 @@ func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc) (*
 		projectRoot: projectRoot,
 		runFunc:     runFunc,
 		lockStore:   lockStore,
+		eventStore:  eventStore,
 		entries:     make(map[string]cron.EntryID),
 		configs:     make(map[string]*config.PipelineConfig),
 	}, nil
@@ -141,11 +144,38 @@ func (s *Scheduler) runWithLock(pipeline string, cfg *config.PipelineConfig) {
 	}
 	if !acquired {
 		log.Printf("scheduler: skipping %s (already running)", pipeline)
+		s.emitEvent(events.Event{
+			Pipeline: pipeline, EventType: "lock_contention", Severity: "warning",
+			Summary: fmt.Sprintf("Skipped %s: pipeline already running", pipeline),
+		})
 		return
 	}
-	defer s.lockStore.ReleaseLock(pipeline, "scheduled")
+
+	s.emitEvent(events.Event{
+		Pipeline: pipeline, EventType: "lock_acquired", Severity: "info",
+		Summary: fmt.Sprintf("Lock acquired for %s", pipeline),
+	})
+
+	defer func() {
+		s.lockStore.ReleaseLock(pipeline, "scheduled")
+		s.emitEvent(events.Event{
+			Pipeline: pipeline, EventType: "lock_released", Severity: "info",
+			Summary: fmt.Sprintf("Lock released for %s", pipeline),
+		})
+	}()
 
 	s.runFunc(cfg, s.projectRoot)
+}
+
+func (s *Scheduler) emitEvent(event events.Event) {
+	if s.eventStore != nil {
+		_ = s.eventStore.Emit(event)
+	}
+}
+
+// EventStore returns the scheduler's event store (may be nil).
+func (s *Scheduler) EventStore() *events.Store {
+	return s.eventStore
 }
 
 func (s *Scheduler) Start() {

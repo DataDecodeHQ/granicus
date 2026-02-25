@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,10 +15,10 @@ import (
 	"github.com/analytehealth/granicus/internal/backup"
 	"github.com/analytehealth/granicus/internal/checker"
 	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/gc"
 	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/logging"
 	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
 	"github.com/analytehealth/granicus/internal/state"
@@ -106,7 +107,30 @@ func main() {
 	backupCmd.Flags().String("output", "", "Output path (default: alongside state.db)")
 	backupCmd.Flags().Int("keep", 7, "Number of backups to retain")
 
-	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd)
+	eventsCmd := &cobra.Command{
+		Use:   "events",
+		Short: "Query the event store",
+		RunE:  runEvents,
+	}
+	eventsCmd.Flags().String("project-root", ".", "Project root directory")
+	eventsCmd.Flags().String("run-id", "", "Filter by run ID")
+	eventsCmd.Flags().String("asset", "", "Filter by asset")
+	eventsCmd.Flags().String("type", "", "Filter by event type (comma-separated)")
+	eventsCmd.Flags().String("pipeline", "", "Filter by pipeline")
+	eventsCmd.Flags().String("since", "", "Show events since duration (e.g., 24h, 7d)")
+	eventsCmd.Flags().Int("limit", 50, "Maximum events to show")
+	eventsCmd.Flags().Bool("json", false, "Output as JSON")
+
+	modelsCmd := &cobra.Command{
+		Use:   "models [asset_name]",
+		Short: "Show model registry and version history",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  runModels,
+	}
+	modelsCmd.Flags().String("project-root", ".", "Project root directory")
+	modelsCmd.Flags().String("diff", "", "Show diff between two versions (e.g., 1,2)")
+
+	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -265,9 +289,16 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--from-failure and --assets are mutually exclusive")
 	}
 
+	// Open event store
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	defer eventStore.Close()
+
 	if fromFailure != "" {
-		store := logging.NewStore(projectRoot)
-		rerunAssets, warnings, err := rerun.ComputeRerunSet(store, fromFailure, g)
+		rerunAssets, warnings, err := rerun.ComputeRerunSet(eventStore, fromFailure, g)
 		if err != nil {
 			return fmt.Errorf("from-failure: %w", err)
 		}
@@ -284,8 +315,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Assets: %d (%d root nodes)\n", len(g.Assets), len(g.RootNodes))
 	fmt.Printf("Max parallel: %d\n\n", cfg.MaxParallel)
 
-	runID := logging.GenerateRunID()
-	store := logging.NewStore(projectRoot)
+	runID := events.GenerateRunID()
 	registry := buildRegistry(cfg, projectRoot)
 
 	// Initialize state store
@@ -315,11 +345,37 @@ func runRun(cmd *cobra.Command, args []string) error {
 		registry = buildRegistry(cfg, projectRoot)
 	}
 
+	// Emit run_started event
+	_ = eventStore.Emit(events.Event{
+		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started", Severity: "info",
+		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
+		Details: map[string]any{
+			"asset_count":  len(g.Assets),
+			"max_parallel": cfg.MaxParallel,
+			"asset_filter": assetFilter,
+			"test_mode":    testMode,
+			"full_refresh": fullRefresh,
+		},
+	})
+
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
 
-		// Look up connection for this specific asset
+		_ = eventStore.Emit(events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
+			EventType: "node_started", Severity: "info",
+			Summary: fmt.Sprintf("Node %s started", asset.Name),
+		})
+
+		// Model version tracking
+		if asset.Source != "" {
+			srcPath := filepath.Join(pr, asset.Source)
+			if hash, herr := events.HashFile(srcPath); herr == nil {
+				eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID)
+			}
+		}
+
 		ra := &runner.Asset{
 			Name:                  asset.Name,
 			Type:                  asset.Type,
@@ -336,21 +392,43 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 		r := registry.Run(ra, pr, rid)
 
-		entry := logging.NodeEntry{
-			Asset:       r.AssetName,
-			Status:      r.Status,
-			StartTime:   r.StartTime.Format(time.RFC3339),
-			EndTime:     r.EndTime.Format(time.RFC3339),
-			DurationMs:  r.Duration.Milliseconds(),
-			ExitCode:    r.ExitCode,
-			Error:       r.Error,
-			Stdout:      r.Stdout,
-			Stderr:      r.Stderr,
-			StdoutLines: logging.CountLines(r.Stdout),
-			StderrLines: logging.CountLines(r.Stderr),
-			Metadata:    r.Metadata,
+		if r.Status == "success" {
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_succeeded", Severity: "info",
+				DurationMs: r.Duration.Milliseconds(),
+				Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
+				Details: map[string]any{
+					"exit_code":    r.ExitCode,
+					"metadata":     r.Metadata,
+					"stdout_lines": events.CountLines(r.Stdout),
+					"stderr_lines": events.CountLines(r.Stderr),
+				},
+			})
+		} else {
+			stdout := r.Stdout
+			if len(stdout) > 10*1024 {
+				stdout = stdout[:10*1024] + "[truncated]"
+			}
+			stderr := r.Stderr
+			if len(stderr) > 10*1024 {
+				stderr = stderr[:10*1024] + "[truncated]"
+			}
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_failed", Severity: "error",
+				DurationMs: r.Duration.Milliseconds(),
+				Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
+				Details: map[string]any{
+					"error_message": r.Error,
+					"exit_code":     r.ExitCode,
+					"source_file":   asset.Source,
+					"metadata":      r.Metadata,
+					"stdout":        stdout,
+					"stderr":        stderr,
+				},
+			})
 		}
-		_ = store.WriteNodeResult(runID, entry)
 
 		ts = time.Now().Format("15:04:05")
 		switch r.Status {
@@ -396,13 +474,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("[%s] %s %-24s skipped -- dependency failed\n", ts, yellowCirc, r.AssetName)
 
-			entry := logging.NodeEntry{
-				Asset:    r.AssetName,
-				Status:   "skipped",
-				ExitCode: -1,
-				Error:    r.Error,
-			}
-			_ = store.WriteNodeResult(runID, entry)
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_skipped", Severity: "warning",
+				Summary: fmt.Sprintf("Node %s skipped: dependency failed", r.AssetName),
+				Details: map[string]any{"error_message": r.Error},
+			})
 		}
 	}
 
@@ -424,20 +501,19 @@ func runRun(cmd *cobra.Command, args []string) error {
 		status = "completed_with_failures"
 	}
 
-	summary := logging.RunSummary{
-		RunID:           runID,
-		Pipeline:        cfg.Pipeline,
-		StartTime:       rr.StartTime,
-		EndTime:         rr.EndTime,
-		DurationSeconds: totalDuration.Seconds(),
-		TotalNodes:      len(rr.Results),
-		Succeeded:       succeeded,
-		Failed:          failed,
-		Skipped:         skipped,
-		Status:          status,
-		Config:          logging.RunConfig{MaxParallel: cfg.MaxParallel, AssetsFilter: assetFilter},
-	}
-	_ = store.WriteRunSummary(runID, summary)
+	_ = eventStore.Emit(events.Event{
+		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed", Severity: "info",
+		DurationMs: totalDuration.Milliseconds(),
+		Summary:    fmt.Sprintf("Run %s: %d succeeded, %d failed, %d skipped", status, succeeded, failed, skipped),
+		Details: map[string]any{
+			"status":           status,
+			"succeeded":        succeeded,
+			"failed":           failed,
+			"skipped":          skipped,
+			"total_nodes":      len(rr.Results),
+			"duration_seconds": totalDuration.Seconds(),
+		},
+	})
 
 	fmt.Printf("\nRun complete: %d succeeded, %d failed, %d skipped (%.0fs total)\n", succeeded, failed, skipped, totalDuration.Seconds())
 	fmt.Printf("Run ID: %s\n", runID)
@@ -544,20 +620,25 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
-	store := logging.NewStore(projectRoot)
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	defer eventStore.Close()
 
 	var runID string
 	if len(args) > 0 {
 		runID = args[0]
 	} else {
-		runs, err := store.ListRuns()
+		runs, err := eventStore.ListRuns(1)
 		if err != nil || len(runs) == 0 {
 			return fmt.Errorf("no runs found")
 		}
 		runID = runs[0].RunID
 	}
 
-	summary, err := store.ReadRunSummary(runID)
+	summary, err := eventStore.GetRunSummary(runID)
 	if err != nil {
 		return fmt.Errorf("reading run %s: %w", runID, err)
 	}
@@ -568,12 +649,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Duration: %.0fs\n", summary.DurationSeconds)
 	fmt.Printf("Nodes: %d succeeded, %d failed, %d skipped\n", summary.Succeeded, summary.Failed, summary.Skipped)
 
-	nodes, err := store.ReadNodeResults(runID)
+	nodes, err := eventStore.GetNodeResults(runID)
 	if err != nil {
 		return nil
 	}
 
-	var failedNodes, skippedNodes []logging.NodeEntry
+	var failedNodes, skippedNodes []events.NodeResult
 	for _, n := range nodes {
 		switch n.Status {
 		case "failed":
@@ -602,9 +683,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 func runHistory(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	limit, _ := cmd.Flags().GetInt("limit")
-	store := logging.NewStore(projectRoot)
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	defer eventStore.Close()
 
-	runs, err := store.ListRuns()
+	runs, err := eventStore.ListRuns(limit)
 	if err != nil {
 		return err
 	}
@@ -612,10 +698,6 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	if len(runs) == 0 {
 		fmt.Println("No runs found.")
 		return nil
-	}
-
-	if limit > 0 && len(runs) > limit {
-		runs = runs[:limit]
 	}
 
 	fmt.Printf("%-32s %-16s %-24s %-10s %s\n", "Run ID", "Pipeline", "Status", "Duration", "Date")
@@ -636,15 +718,43 @@ func runGC(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	retentionDays, _ := cmd.Flags().GetInt("retention-days")
 
+	// Clean old JSONL runs (legacy)
 	result, err := gc.Collect(projectRoot, retentionDays)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Deleted %d runs, freed %s\n", result.RunsDeleted, gc.FormatBytes(result.BytesFreed))
+	if result.RunsDeleted > 0 {
+		fmt.Printf("Deleted %d legacy runs, freed %s\n", result.RunsDeleted, gc.FormatBytes(result.BytesFreed))
+	}
 	if result.TestCleanup > 0 {
 		fmt.Printf("Cleaned up %d test artifacts\n", result.TestCleanup)
 	}
+
+	// Clean events
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	if _, statErr := os.Stat(eventsDBPath); statErr == nil {
+		eventStore, err := events.New(eventsDBPath)
+		if err != nil {
+			return fmt.Errorf("event store: %w", err)
+		}
+		defer eventStore.Close()
+
+		cutoff := time.Now().AddDate(0, 0, -retentionDays)
+		deleted, err := eventStore.DeleteBefore(cutoff)
+		if err != nil {
+			return fmt.Errorf("event gc: %w", err)
+		}
+		if deleted > 0 {
+			fmt.Printf("Deleted %d events older than %d days\n", deleted, retentionDays)
+		}
+
+		// Report DB size
+		if info, err := os.Stat(eventsDBPath); err == nil {
+			fmt.Printf("Events DB: %s\n", gc.FormatBytes(info.Size()))
+		}
+	}
+
 	return nil
 }
 
@@ -659,8 +769,18 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("State backup: %s\n", backupPath)
 
-	fmt.Printf("Backup created: %s\n", backupPath)
+	// Backup events.db
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	if _, statErr := os.Stat(eventsDBPath); statErr == nil {
+		eventsBackup, err := backup.BackupStateDB(eventsDBPath, "")
+		if err != nil {
+			fmt.Printf("Warning: events backup failed: %v\n", err)
+		} else {
+			fmt.Printf("Events backup: %s\n", eventsBackup)
+		}
+	}
 
 	if keep > 0 {
 		pruned, err := backup.PruneBackups(filepath.Dir(backupPath), keep)
@@ -673,4 +793,209 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runEvents(cmd *cobra.Command, args []string) error {
+	projectRoot, _ := cmd.Flags().GetString("project-root")
+	runID, _ := cmd.Flags().GetString("run-id")
+	asset, _ := cmd.Flags().GetString("asset")
+	eventType, _ := cmd.Flags().GetString("type")
+	pipeline, _ := cmd.Flags().GetString("pipeline")
+	since, _ := cmd.Flags().GetString("since")
+	limit, _ := cmd.Flags().GetInt("limit")
+	asJSON, _ := cmd.Flags().GetBool("json")
+
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	if _, err := os.Stat(eventsDBPath); os.IsNotExist(err) {
+		fmt.Println("No events found (events.db does not exist).")
+		return nil
+	}
+
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	defer eventStore.Close()
+
+	filters := events.QueryFilters{
+		RunID:     runID,
+		Pipeline:  pipeline,
+		Asset:     asset,
+		EventType: eventType,
+		Limit:     limit,
+	}
+
+	if since != "" {
+		dur, err := parseDuration(since)
+		if err != nil {
+			return fmt.Errorf("invalid --since: %w", err)
+		}
+		filters.Since = time.Now().Add(-dur)
+	}
+
+	results, err := eventStore.Query(filters)
+	if err != nil {
+		return err
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No events found.")
+		return nil
+	}
+
+	if asJSON {
+		for _, e := range results {
+			data, _ := json.Marshal(e)
+			fmt.Println(string(data))
+		}
+		return nil
+	}
+
+	fmt.Printf("%-20s %-20s %-24s %s\n", "Timestamp", "Type", "Asset", "Summary")
+	for _, e := range results {
+		asset := e.Asset
+		if asset == "" {
+			asset = "-"
+		}
+		fmt.Printf("%-20s %-20s %-24s %s\n",
+			e.Timestamp.Format("2006-01-02 15:04:05"),
+			e.EventType,
+			asset,
+			e.Summary,
+		)
+	}
+	return nil
+}
+
+func runModels(cmd *cobra.Command, args []string) error {
+	projectRoot, _ := cmd.Flags().GetString("project-root")
+	diffFlag, _ := cmd.Flags().GetString("diff")
+
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	if _, err := os.Stat(eventsDBPath); os.IsNotExist(err) {
+		fmt.Println("No models found (events.db does not exist).")
+		return nil
+	}
+
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	defer eventStore.Close()
+
+	if len(args) == 0 {
+		models, err := eventStore.ListModels()
+		if err != nil {
+			return err
+		}
+		if len(models) == 0 {
+			fmt.Println("No models registered.")
+			return nil
+		}
+
+		fmt.Printf("%-32s %-8s %-10s %s\n", "Asset", "Version", "Hash", "Last Run")
+		for _, m := range models {
+			hash := m.SourceHash
+			if len(hash) > 8 {
+				hash = hash[:8]
+			}
+			fmt.Printf("%-32s v%-7d %-10s %s\n", m.AssetName, m.Version, hash, m.ActivatedAt[:19])
+		}
+		return nil
+	}
+
+	assetName := args[0]
+
+	if diffFlag != "" {
+		var v1, v2 int
+		if _, err := fmt.Sscanf(diffFlag, "%d,%d", &v1, &v2); err != nil {
+			return fmt.Errorf("--diff expects N,M (e.g., --diff 1,2)")
+		}
+		history, err := eventStore.GetModelHistory(assetName)
+		if err != nil {
+			return err
+		}
+		var src1, src2 string
+		for _, h := range history {
+			if h.Version == v1 {
+				src1 = h.SourceSnapshot
+			}
+			if h.Version == v2 {
+				src2 = h.SourceSnapshot
+			}
+		}
+		if src1 == "" || src2 == "" {
+			return fmt.Errorf("version not found")
+		}
+		// Simple line-by-line diff
+		lines1 := strings.Split(src1, "\n")
+		lines2 := strings.Split(src2, "\n")
+		fmt.Printf("--- %s v%d\n+++ %s v%d\n", assetName, v1, assetName, v2)
+		maxLen := len(lines1)
+		if len(lines2) > maxLen {
+			maxLen = len(lines2)
+		}
+		for i := 0; i < maxLen; i++ {
+			l1, l2 := "", ""
+			if i < len(lines1) {
+				l1 = lines1[i]
+			}
+			if i < len(lines2) {
+				l2 = lines2[i]
+			}
+			if l1 != l2 {
+				if l1 != "" {
+					fmt.Printf("-%s\n", l1)
+				}
+				if l2 != "" {
+					fmt.Printf("+%s\n", l2)
+				}
+			} else {
+				fmt.Printf(" %s\n", l1)
+			}
+		}
+		return nil
+	}
+
+	history, err := eventStore.GetModelHistory(assetName)
+	if err != nil {
+		return err
+	}
+	if len(history) == 0 {
+		return fmt.Errorf("no history for %s", assetName)
+	}
+
+	fmt.Printf("Model: %s\n\n", assetName)
+	fmt.Printf("%-8s %-10s %-20s %-32s %s\n", "Version", "Hash", "Activated", "Run", "Replaced")
+	for _, h := range history {
+		hash := h.SourceHash
+		if len(hash) > 8 {
+			hash = hash[:8]
+		}
+		replaced := "-"
+		if h.ReplacedAt != "" {
+			replaced = h.ReplacedAt[:19]
+		}
+		activated := h.ActivatedAt
+		if len(activated) > 19 {
+			activated = activated[:19]
+		}
+		fmt.Printf("v%-7d %-10s %-20s %-32s %s\n", h.Version, hash, activated, h.ActivatedRun, replaced)
+	}
+	return nil
+}
+
+func parseDuration(s string) (time.Duration, error) {
+	// Try standard Go duration first (24h, 1h30m, etc.)
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	// Try custom formats: 7d, 30d
+	if len(s) > 1 && s[len(s)-1] == 'd' {
+		var n int
+		if _, err := fmt.Sscanf(s[:len(s)-1], "%d", &n); err == nil {
+			return time.Duration(n) * 24 * time.Hour, nil
+		}
+	}
+	return 0, fmt.Errorf("invalid duration: %q (use e.g., 24h, 7d, 30d)", s)
 }

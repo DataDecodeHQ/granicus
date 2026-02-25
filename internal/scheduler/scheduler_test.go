@@ -44,7 +44,7 @@ assets:
 	var runCount int32
 	s, err := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	pipelines := s.Pipelines()
@@ -100,7 +100,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	// Add a new pipeline
@@ -149,7 +149,7 @@ assets:
 	var runCount int32
 	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
-	})
+	}, nil)
 
 	// Use cron with seconds support for fast testing
 	s.cron = newCronWithSeconds()
@@ -186,7 +186,7 @@ assets:
 	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 		time.Sleep(2 * time.Second) // Hold lock for 2 seconds
-	})
+	}, nil)
 
 	s.cron = newCronWithSeconds()
 	s.LoadAndRegister()

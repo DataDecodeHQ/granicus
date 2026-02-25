@@ -1,27 +1,34 @@
 package rerun
 
 import (
+	"path/filepath"
 	"sort"
 	"testing"
 
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/logging"
 )
 
+func newTestEventStore(t *testing.T) *events.Store {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "events.db")
+	s, err := events.New(dbPath)
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
 func TestComputeRerunSet_Basic(t *testing.T) {
-	dir := t.TempDir()
-	store := logging.NewStore(dir)
+	store := newTestEventStore(t)
 	runID := "run_20260225_120000_test"
 
-	// Write node results: A success, B failed, C skipped (depends on B), D success
-	for _, entry := range []logging.NodeEntry{
-		{Asset: "A", Status: "success"},
-		{Asset: "B", Status: "failed", Error: "exit 1"},
-		{Asset: "C", Status: "skipped", Error: "skipped: B failed"},
-		{Asset: "D", Status: "success"},
-	} {
-		store.WriteNodeResult(runID, entry)
-	}
+	// Emit node events: A success, B failed, C skipped, D success
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "A", EventType: "node_succeeded"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "B", EventType: "node_failed"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "C", EventType: "node_skipped"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "D", EventType: "node_succeeded"})
 
 	// Build graph: A -> B -> C, D independent
 	g, err := graph.BuildGraph(
@@ -53,11 +60,10 @@ func TestComputeRerunSet_Basic(t *testing.T) {
 }
 
 func TestComputeRerunSet_MissingNode(t *testing.T) {
-	dir := t.TempDir()
-	store := logging.NewStore(dir)
+	store := newTestEventStore(t)
 	runID := "run_20260225_120000_gone"
 
-	store.WriteNodeResult(runID, logging.NodeEntry{Asset: "removed_node", Status: "failed"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "removed_node", EventType: "node_failed"})
 
 	g, _ := graph.BuildGraph(
 		[]graph.AssetInput{{Name: "A", Type: "shell", Source: "a.sh"}},
@@ -74,11 +80,10 @@ func TestComputeRerunSet_MissingNode(t *testing.T) {
 }
 
 func TestComputeRerunSet_NoFailures(t *testing.T) {
-	dir := t.TempDir()
-	store := logging.NewStore(dir)
+	store := newTestEventStore(t)
 	runID := "run_20260225_120000_ok"
 
-	store.WriteNodeResult(runID, logging.NodeEntry{Asset: "A", Status: "success"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "A", EventType: "node_succeeded"})
 
 	g, _ := graph.BuildGraph(
 		[]graph.AssetInput{{Name: "A", Type: "shell", Source: "a.sh"}},

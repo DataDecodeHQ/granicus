@@ -17,9 +17,9 @@ import (
 
 	"github.com/analytehealth/granicus/internal/checker"
 	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/logging"
 	"github.com/analytehealth/granicus/internal/runner"
 	"github.com/analytehealth/granicus/internal/scheduler"
 	"github.com/analytehealth/granicus/internal/server"
@@ -89,22 +89,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("lock store: %w", err)
 	}
 
+	// Open event store
+	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
+	eventStore, err := events.New(eventsDBPath)
+	if err != nil {
+		return fmt.Errorf("event store: %w", err)
+	}
+	defer eventStore.Close()
+
 	// Recover stale locks
 	recovered, err := lockStore.RecoverStaleLocks(6 * time.Hour)
 	if err != nil {
 		log.Printf("stale lock recovery error: %v", err)
 	} else if recovered > 0 {
 		log.Printf("recovered %d stale locks", recovered)
+		_ = eventStore.Emit(events.Event{
+			EventType: "stale_lock_recovered", Severity: "warning",
+			Summary: fmt.Sprintf("Recovered %d stale locks on startup", recovered),
+			Details: map[string]any{"recovered_count": recovered},
+		})
 	}
 
 	// Build run function
-	logStore := logging.NewStore(projectRoot)
 	runFunc := func(cfg *config.PipelineConfig, pr string) {
-		runPipelineForScheduler(cfg, pr, envName, envCfg, logStore)
+		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore)
 	}
 
 	// Create scheduler
-	sched, err := scheduler.NewScheduler(configDir, projectRoot, db, runFunc)
+	sched, err := scheduler.NewScheduler(configDir, projectRoot, db, runFunc, eventStore)
 	if err != nil {
 		return fmt.Errorf("scheduler: %w", err)
 	}
@@ -140,9 +152,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiKeys = append(apiKeys, server.APIKey{Name: k.Name, Key: k.Key})
 	}
 
-	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, logStore,
+	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, eventStore,
 		func(cfg *config.PipelineConfig, pr string, runID string, req server.TriggerRequest) {
-			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, logStore, req)
+			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req)
 		},
 	)
 
@@ -194,7 +206,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, logStore *logging.Store) {
+func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store) {
 	if envCfg != nil {
 		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
 		if err == nil {
@@ -202,12 +214,12 @@ func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName st
 		}
 	}
 
-	runID := logging.GenerateRunID()
+	runID := events.GenerateRunID()
 	log.Printf("scheduled run: %s (run_id=%s)", cfg.Pipeline, runID)
-	executePipeline(cfg, projectRoot, runID, logStore, nil, "", "")
+	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled")
 }
 
-func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, logStore *logging.Store, req server.TriggerRequest) {
+func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest) {
 	if envCfg != nil {
 		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
 		if err == nil {
@@ -217,11 +229,29 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 
 	log.Printf("triggered run: %s (run_id=%s)", cfg.Pipeline, runID)
 
-	executePipeline(cfg, projectRoot, runID, logStore, req.Assets, req.FromDate, req.ToDate)
+	_ = eventStore.Emit(events.Event{
+		RunID: runID, Pipeline: cfg.Pipeline, EventType: "pipeline_triggered",
+		Severity: "info",
+		Summary:  fmt.Sprintf("Pipeline %s triggered via webhook", cfg.Pipeline),
+		Details:  map[string]any{"assets": req.Assets, "from_date": req.FromDate, "to_date": req.ToDate},
+	})
+
+	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook")
 }
 
-func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, logStore *logging.Store, assetFilter []string, fromDate, toDate string) {
+func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string) {
 	start := time.Now()
+
+	_ = eventStore.Emit(events.Event{
+		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started", Severity: "info",
+		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
+		Details: map[string]any{
+			"asset_count":  len(cfg.Assets),
+			"max_parallel": cfg.MaxParallel,
+			"asset_filter": assetFilter,
+			"trigger":      trigger,
+		},
+	})
 
 	deps, directives, err := graph.ParseAllDirectives(cfg, projectRoot)
 	if err != nil {
@@ -278,6 +308,19 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, logS
 	registry := buildRegistry(cfg, projectRoot)
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
+		_ = eventStore.Emit(events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
+			EventType: "node_started", Severity: "info",
+			Summary: fmt.Sprintf("Node %s started", asset.Name),
+		})
+
+		if asset.Source != "" {
+			srcPath := filepath.Join(pr, asset.Source)
+			if hash, herr := events.HashFile(srcPath); herr == nil {
+				eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID)
+			}
+		}
+
 		ra := &runner.Asset{
 			Name:                  asset.Name,
 			Type:                  asset.Type,
@@ -292,21 +335,38 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, logS
 
 		r := registry.Run(ra, pr, rid)
 
-		entry := logging.NodeEntry{
-			Asset:       r.AssetName,
-			Status:      r.Status,
-			StartTime:   r.StartTime.Format(time.RFC3339),
-			EndTime:     r.EndTime.Format(time.RFC3339),
-			DurationMs:  r.Duration.Milliseconds(),
-			ExitCode:    r.ExitCode,
-			Error:       r.Error,
-			Stdout:      r.Stdout,
-			Stderr:      r.Stderr,
-			StdoutLines: logging.CountLines(r.Stdout),
-			StderrLines: logging.CountLines(r.Stderr),
-			Metadata:    r.Metadata,
+		if r.Status == "success" {
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_succeeded", Severity: "info",
+				DurationMs: r.Duration.Milliseconds(),
+				Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
+				Details: map[string]any{
+					"exit_code":    r.ExitCode,
+					"metadata":     r.Metadata,
+					"stdout_lines": events.CountLines(r.Stdout),
+					"stderr_lines": events.CountLines(r.Stderr),
+				},
+			})
+		} else {
+			stdout := r.Stdout
+			if len(stdout) > 10*1024 {
+				stdout = stdout[:10*1024] + "[truncated]"
+			}
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_failed", Severity: "error",
+				DurationMs: r.Duration.Milliseconds(),
+				Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
+				Details: map[string]any{
+					"error_message": r.Error,
+					"exit_code":     r.ExitCode,
+					"source_file":   asset.Source,
+					"metadata":      r.Metadata,
+					"stdout":        stdout,
+				},
+			})
 		}
-		_ = logStore.WriteNodeResult(runID, entry)
 
 		return executor.NodeResult{
 			AssetName: r.AssetName,
@@ -343,6 +403,11 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, logS
 			failed++
 		case "skipped":
 			skipped++
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_skipped", Severity: "warning",
+				Summary: fmt.Sprintf("Node %s skipped", r.AssetName),
+			})
 		}
 	}
 
@@ -352,20 +417,19 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, logS
 	}
 
 	totalDuration := rr.EndTime.Sub(start)
-	summary := logging.RunSummary{
-		RunID:           runID,
-		Pipeline:        cfg.Pipeline,
-		StartTime:       start,
-		EndTime:         rr.EndTime,
-		DurationSeconds: totalDuration.Seconds(),
-		TotalNodes:      len(rr.Results),
-		Succeeded:       succeeded,
-		Failed:          failed,
-		Skipped:         skipped,
-		Status:          status,
-		Config:          logging.RunConfig{MaxParallel: cfg.MaxParallel, AssetsFilter: assetFilter},
-	}
-	_ = logStore.WriteRunSummary(runID, summary)
+	_ = eventStore.Emit(events.Event{
+		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed", Severity: "info",
+		DurationMs: totalDuration.Milliseconds(),
+		Summary:    fmt.Sprintf("Run %s: %d succeeded, %d failed, %d skipped", status, succeeded, failed, skipped),
+		Details: map[string]any{
+			"status":           status,
+			"succeeded":        succeeded,
+			"failed":           failed,
+			"skipped":          skipped,
+			"total_nodes":      len(rr.Results),
+			"duration_seconds": totalDuration.Seconds(),
+		},
+	})
 
 	// Record metrics
 	server.RunsTotal.WithLabelValues(cfg.Pipeline, status).Inc()

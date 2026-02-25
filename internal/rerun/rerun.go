@@ -3,21 +3,14 @@ package rerun
 import (
 	"fmt"
 
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/logging"
 )
 
-func ComputeRerunSet(store *logging.Store, runID string, g *graph.Graph) ([]string, []string, error) {
-	nodes, err := store.ReadNodeResults(runID)
+func ComputeRerunSet(store *events.Store, runID string, g *graph.Graph) ([]string, []string, error) {
+	failedNames, err := store.GetFailedNodes(runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading run %s: %w", runID, err)
-	}
-
-	var failedNames []string
-	for _, n := range nodes {
-		if n.Status == "failed" {
-			failedNames = append(failedNames, n.Asset)
-		}
 	}
 
 	if len(failedNames) == 0 {

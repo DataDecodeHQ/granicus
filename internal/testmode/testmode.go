@@ -8,6 +8,8 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/option"
+
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 func TestDatasetName(baseDataset string, runID string) string {
@@ -18,7 +20,7 @@ func TestDatasetName(baseDataset string, runID string) string {
 	return fmt.Sprintf("%s__test_%s", baseDataset, short)
 }
 
-func CreateTestDataset(ctx context.Context, project, baseDataset, runID string, opts ...option.ClientOption) (string, error) {
+func CreateTestDataset(ctx context.Context, project, baseDataset, runID string, eventStore *events.Store, opts ...option.ClientOption) (string, error) {
 	client, err := bigquery.NewClient(ctx, project, opts...)
 	if err != nil {
 		return "", fmt.Errorf("creating BQ client: %w", err)
@@ -37,10 +39,18 @@ func CreateTestDataset(ctx context.Context, project, baseDataset, runID string, 
 		return "", fmt.Errorf("creating test dataset %q: %w", name, err)
 	}
 
+	if eventStore != nil {
+		_ = eventStore.Emit(events.Event{
+			RunID: runID, EventType: "test_dataset_created", Severity: "info",
+			Summary: fmt.Sprintf("Test dataset %s created", name),
+			Details: map[string]any{"dataset_name": name, "base_dataset": baseDataset, "project": project},
+		})
+	}
+
 	return name, nil
 }
 
-func DropTestDataset(ctx context.Context, project, datasetName string, opts ...option.ClientOption) error {
+func DropTestDataset(ctx context.Context, project, datasetName, runID string, eventStore *events.Store, opts ...option.ClientOption) error {
 	client, err := bigquery.NewClient(ctx, project, opts...)
 	if err != nil {
 		return fmt.Errorf("creating BQ client: %w", err)
@@ -49,6 +59,14 @@ func DropTestDataset(ctx context.Context, project, datasetName string, opts ...o
 
 	if err := client.Dataset(datasetName).DeleteWithContents(ctx); err != nil {
 		return fmt.Errorf("dropping test dataset %q: %w", datasetName, err)
+	}
+
+	if eventStore != nil {
+		_ = eventStore.Emit(events.Event{
+			RunID: runID, EventType: "test_dataset_dropped", Severity: "info",
+			Summary: fmt.Sprintf("Test dataset %s dropped", datasetName),
+			Details: map[string]any{"dataset_name": datasetName, "project": project},
+		})
 	}
 
 	return nil
@@ -96,7 +114,7 @@ func ListTestDatasets(ctx context.Context, project, baseDataset string, opts ...
 	return results, nil
 }
 
-func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, maxAge time.Duration, opts ...option.ClientOption) ([]string, error) {
+func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, maxAge time.Duration, eventStore *events.Store, opts ...option.ClientOption) ([]string, error) {
 	datasets, err := ListTestDatasets(ctx, project, baseDataset, opts...)
 	if err != nil {
 		return nil, err
@@ -107,7 +125,7 @@ func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, ma
 
 	for _, ds := range datasets {
 		if ds.CreatedAt.Before(cutoff) {
-			if err := DropTestDataset(ctx, project, ds.Name, opts...); err != nil {
+			if err := DropTestDataset(ctx, project, ds.Name, ds.RunID, eventStore, opts...); err != nil {
 				return dropped, fmt.Errorf("cleaning up %s: %w", ds.Name, err)
 			}
 			dropped = append(dropped, ds.Name)
@@ -115,6 +133,18 @@ func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, ma
 	}
 
 	return dropped, nil
+}
+
+func EmitTestMetadata(eventStore *events.Store, runID, pipeline string, metadata map[string]any) {
+	if eventStore == nil {
+		return
+	}
+	_ = eventStore.Emit(events.Event{
+		RunID: runID, Pipeline: pipeline,
+		EventType: "test_metadata_captured", Severity: "info",
+		Summary: fmt.Sprintf("Test metadata captured for %s", pipeline),
+		Details: metadata,
+	})
 }
 
 func sanitizeLabel(s string) string {

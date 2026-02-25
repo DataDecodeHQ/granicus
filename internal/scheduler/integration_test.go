@@ -31,7 +31,7 @@ assets:
 	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 		time.Sleep(100 * time.Millisecond)
-	})
+	}, nil)
 
 	s.cron = newCronWithSeconds()
 	s.LoadAndRegister()
@@ -63,7 +63,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 	s.Start()
 	defer s.Stop()
@@ -174,7 +174,7 @@ assets:
     source: a.sh
 `)
 
-	s, err := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, err := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

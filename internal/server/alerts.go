@@ -8,6 +8,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 type AlertConfig struct {
@@ -28,14 +30,16 @@ type AlertData struct {
 }
 
 type AlertManager struct {
-	configs []AlertConfig
-	client  *http.Client
+	configs    []AlertConfig
+	client     *http.Client
+	eventStore *events.Store
 }
 
-func NewAlertManager(configs []AlertConfig) *AlertManager {
+func NewAlertManager(configs []AlertConfig, eventStore *events.Store) *AlertManager {
 	return &AlertManager{
-		configs: configs,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		configs:    configs,
+		client:     &http.Client{Timeout: 10 * time.Second},
+		eventStore: eventStore,
 	}
 }
 
@@ -85,5 +89,23 @@ func (m *AlertManager) sendAlert(cfg AlertConfig, data AlertData) {
 
 	if resp.StatusCode >= 400 {
 		log.Printf("alert: webhook %s returned %d", cfg.URL, resp.StatusCode)
+	}
+
+	if m.eventStore != nil {
+		severity := "info"
+		if resp.StatusCode >= 400 {
+			severity = "warning"
+		}
+		_ = m.eventStore.Emit(events.Event{
+			RunID: data.RunID, Pipeline: data.Pipeline,
+			EventType: "alert_sent", Severity: severity,
+			Summary: fmt.Sprintf("Alert sent to %s (status %d)", cfg.URL, resp.StatusCode),
+			Details: map[string]any{
+				"webhook_url":  cfg.URL,
+				"status_code":  resp.StatusCode,
+				"alert_type":   cfg.Type,
+				"failed_count": data.Failed,
+			},
+		})
 	}
 }

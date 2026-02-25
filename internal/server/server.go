@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/logging"
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/scheduler"
 )
 
@@ -36,18 +36,18 @@ type Server struct {
 	projectRoot string
 	configs     map[string]*config.PipelineConfig
 	lockStore   *scheduler.LockStore
-	logStore    *logging.Store
+	eventStore  *events.Store
 	runFunc     RunFunc
 	httpServer  *http.Server
 }
 
-func NewServer(port int, projectRoot string, lockStore *scheduler.LockStore, logStore *logging.Store, runFunc RunFunc) *Server {
+func NewServer(port int, projectRoot string, lockStore *scheduler.LockStore, eventStore *events.Store, runFunc RunFunc) *Server {
 	return &Server{
 		port:        port,
 		projectRoot: projectRoot,
 		configs:     make(map[string]*config.PipelineConfig),
 		lockStore:   lockStore,
-		logStore:    logStore,
+		eventStore:  eventStore,
 		runFunc:     runFunc,
 	}
 }
@@ -113,7 +113,7 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	runID := logging.GenerateRunID()
+	runID := events.GenerateRunID()
 
 	acquired, err := s.lockStore.AcquireLock(pipeline, runID)
 	if err != nil {
@@ -149,7 +149,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	summary, err := s.logStore.ReadRunSummary(runID)
+	summary, err := s.eventStore.GetRunSummary(runID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("run %q not found", runID)})
 		return

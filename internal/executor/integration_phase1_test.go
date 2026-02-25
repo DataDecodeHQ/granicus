@@ -1,16 +1,14 @@
 package executor
 
 import (
-	"testing"
-	"time"
-
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/analytehealth/granicus/internal/checker"
 	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/logging"
 	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
 )
@@ -22,15 +20,12 @@ func TestIntegration_Phase1_MixedRunners(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Create directories
 	os.MkdirAll(filepath.Join(dir, "scripts"), 0755)
 	os.MkdirAll(filepath.Join(dir, "python"), 0755)
 	os.MkdirAll(filepath.Join(dir, "checks"), 0755)
 
-	// Shell script: root node
 	os.WriteFile(filepath.Join(dir, "scripts/extract.sh"), []byte("#!/bin/bash\necho extracted 100 rows"), 0755)
 
-	// Python script: depends on extract, writes metadata
 	os.WriteFile(filepath.Join(dir, "python/transform.py"), []byte(`import os, json
 path = os.environ.get("GRANICUS_METADATA_PATH", "")
 if path:
@@ -39,7 +34,6 @@ if path:
 print("transform complete")
 `), 0644)
 
-	// dlt script: depends on extract, writes metadata
 	os.WriteFile(filepath.Join(dir, "python/dlt_load.py"), []byte(`import os, json
 path = os.environ.get("GRANICUS_METADATA_PATH", "")
 if path:
@@ -48,16 +42,13 @@ if path:
 print("dlt load complete")
 `), 0644)
 
-	// Python check: pass (exit 0)
 	os.WriteFile(filepath.Join(dir, "checks/check_transform_rows.py"), []byte(`print("check passed: rows > 0")`), 0644)
 
-	// Python check: fail (exit 1)
 	os.WriteFile(filepath.Join(dir, "checks/check_dlt_freshness.py"), []byte(`import sys
 print("stale data detected")
 sys.exit(1)
 `), 0644)
 
-	// Config YAML with mixed types and checks
 	configContent := `pipeline: phase1_integration
 max_parallel: 4
 assets:
@@ -75,7 +66,6 @@ assets:
     checks:
       - source: checks/check_dlt_freshness.py
 `
-	// Add dependency comments
 	os.WriteFile(filepath.Join(dir, "python/transform.py"),
 		append([]byte("# depends_on: extract\n"), mustRead(t, filepath.Join(dir, "python/transform.py"))...), 0644)
 	os.WriteFile(filepath.Join(dir, "python/dlt_load.py"),
@@ -84,7 +74,6 @@ assets:
 	configPath := filepath.Join(dir, "config.yaml")
 	os.WriteFile(configPath, []byte(configContent), 0644)
 
-	// Load config and build graph (mirrors CLI loadAndBuild)
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		t.Fatalf("config: %v", err)
@@ -97,7 +86,6 @@ assets:
 
 	inputs := graph.ConfigToAssetInputs(cfg)
 
-	// Generate check nodes (Phase 1 feature)
 	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
 	inputs = append(inputs, checkNodes...)
 	for k, v := range checkDeps {
@@ -109,7 +97,6 @@ assets:
 		t.Fatalf("graph: %v", err)
 	}
 
-	// Verify check nodes were created
 	if _, ok := g.Assets["check:transform:check_transform_rows"]; !ok {
 		t.Fatal("missing check node for transform")
 	}
@@ -117,14 +104,13 @@ assets:
 		t.Fatal("missing check node for dlt_load")
 	}
 
-	// Set up registry with all runner types
 	reg := runner.NewRunnerRegistry(nil)
 	reg.Register("python", runner.NewPythonRunner(nil, nil))
 	reg.Register("python_check", runner.NewPythonCheckRunner(nil, nil))
 	reg.Register("dlt", runner.NewDLTRunner(nil, nil))
 
-	runID := logging.GenerateRunID()
-	store := logging.NewStore(dir)
+	runID := events.GenerateRunID()
+	eventStore := newTestEventStore(t)
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) NodeResult {
 		ra := &runner.Asset{
@@ -135,19 +121,19 @@ assets:
 
 		r := reg.Run(ra, pr, rid)
 
-		entry := logging.NodeEntry{
-			Asset:      r.AssetName,
-			Status:     r.Status,
-			StartTime:  r.StartTime.Format(time.RFC3339),
-			EndTime:    r.EndTime.Format(time.RFC3339),
-			DurationMs: r.Duration.Milliseconds(),
-			ExitCode:   r.ExitCode,
-			Error:      r.Error,
-			Stdout:     r.Stdout,
-			Stderr:     r.Stderr,
-			Metadata:   r.Metadata,
+		eventType := "node_succeeded"
+		severity := "info"
+		if r.Status == "failed" {
+			eventType = "node_failed"
+			severity = "error"
 		}
-		_ = store.WriteNodeResult(runID, entry)
+		_ = eventStore.Emit(events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+			EventType:  eventType,
+			Severity:   severity,
+			DurationMs: r.Duration.Milliseconds(),
+			Details:    map[string]any{"error_message": r.Error, "metadata": r.Metadata},
+		})
 
 		return NodeResult{
 			AssetName: r.AssetName,
@@ -169,16 +155,13 @@ assets:
 		RunID:       runID,
 	}, runnerFunc)
 
-	// Write skipped nodes
+	// Emit skipped nodes
 	for _, r := range rr.Results {
 		if r.Status == "skipped" {
-			entry := logging.NodeEntry{
-				Asset:    r.AssetName,
-				Status:   "skipped",
-				ExitCode: -1,
-				Error:    r.Error,
-			}
-			_ = store.WriteNodeResult(runID, entry)
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_skipped", Severity: "warning",
+			})
 		}
 	}
 
@@ -187,13 +170,12 @@ assets:
 		rm[r.AssetName] = r.Status
 	}
 
-	// Verify statuses
 	expected := map[string]string{
-		"extract":                             "success",
-		"transform":                           "success",
-		"dlt_load":                            "success",
-		"check:transform:check_transform_rows": "success",
-		"check:dlt_load:check_dlt_freshness":   "failed",
+		"extract":                               "success",
+		"transform":                             "success",
+		"dlt_load":                              "success",
+		"check:transform:check_transform_rows":  "success",
+		"check:dlt_load:check_dlt_freshness":    "failed",
 	}
 
 	for name, want := range expected {
@@ -207,13 +189,13 @@ assets:
 		}
 	}
 
-	// Verify metadata was captured for python and dlt runners
-	nodes, err := store.ReadNodeResults(runID)
+	// Verify metadata was captured via event details
+	nodeResults, err := eventStore.GetNodeResults(runID)
 	if err != nil {
 		t.Fatalf("reading nodes: %v", err)
 	}
 
-	for _, n := range nodes {
+	for _, n := range nodeResults {
 		switch n.Asset {
 		case "transform":
 			if n.Metadata["rows_processed"] != "100" {
@@ -226,7 +208,6 @@ assets:
 		}
 	}
 
-	// Write run summary for rerun test
 	var succeeded, failed, skipped int
 	for _, r := range rr.Results {
 		switch r.Status {
@@ -238,20 +219,6 @@ assets:
 			skipped++
 		}
 	}
-
-	summary := logging.RunSummary{
-		RunID:           runID,
-		Pipeline:        cfg.Pipeline,
-		StartTime:       rr.StartTime,
-		EndTime:         rr.EndTime,
-		DurationSeconds: rr.EndTime.Sub(rr.StartTime).Seconds(),
-		TotalNodes:      len(rr.Results),
-		Succeeded:       succeeded,
-		Failed:          failed,
-		Skipped:         skipped,
-		Status:          "completed_with_failures",
-	}
-	store.WriteRunSummary(runID, summary)
 
 	if failed != 1 {
 		t.Errorf("expected 1 failed, got %d", failed)
@@ -272,7 +239,6 @@ func TestIntegration_Phase1_FromFailure(t *testing.T) {
 
 	os.MkdirAll(filepath.Join(dir, "scripts"), 0755)
 
-	// Create scripts: root -> mid -> leaf, mid will fail on first run
 	os.WriteFile(filepath.Join(dir, "scripts/root.sh"), []byte("#!/bin/bash\necho root ok"), 0755)
 	os.WriteFile(filepath.Join(dir, "scripts/mid.sh"), []byte("#!/bin/bash\n# depends_on: root\necho mid fail >&2\nexit 1"), 0755)
 	os.WriteFile(filepath.Join(dir, "scripts/leaf.sh"), []byte("#!/bin/bash\n# depends_on: mid\necho leaf ok"), 0755)
@@ -302,7 +268,7 @@ assets:
 	inputs := graph.ConfigToAssetInputs(cfg)
 	g, _ := graph.BuildGraph(inputs, deps)
 
-	store := logging.NewStore(dir)
+	eventStore := newTestEventStore(t)
 	runID1 := "run-fail-001"
 
 	shellRunner := runner.NewShellRunner()
@@ -312,16 +278,17 @@ assets:
 				Name: asset.Name, Type: asset.Type, Source: asset.Source,
 			}, pr, rid)
 
-			entry := logging.NodeEntry{
-				Asset:      r.AssetName,
-				Status:     r.Status,
-				StartTime:  r.StartTime.Format(time.RFC3339),
-				EndTime:    r.EndTime.Format(time.RFC3339),
-				DurationMs: r.Duration.Milliseconds(),
-				ExitCode:   r.ExitCode,
-				Error:      r.Error,
+			eventType := "node_succeeded"
+			if r.Status == "failed" {
+				eventType = "node_failed"
 			}
-			_ = store.WriteNodeResult(rid, entry)
+			_ = eventStore.Emit(events.Event{
+				RunID: rid, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType:  eventType,
+				Severity:   "info",
+				DurationMs: r.Duration.Milliseconds(),
+				Details:    map[string]any{"error_message": r.Error},
+			})
 
 			return NodeResult{
 				AssetName: r.AssetName,
@@ -344,20 +311,12 @@ assets:
 
 	for _, r := range rr1.Results {
 		if r.Status == "skipped" {
-			entry := logging.NodeEntry{
-				Asset: r.AssetName, Status: "skipped", ExitCode: -1, Error: r.Error,
-			}
-			_ = store.WriteNodeResult(runID1, entry)
+			_ = eventStore.Emit(events.Event{
+				RunID: runID1, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+				EventType: "node_skipped", Severity: "warning",
+			})
 		}
 	}
-
-	summary1 := logging.RunSummary{
-		RunID: runID1, Pipeline: "rerun_test",
-		StartTime: rr1.StartTime, EndTime: rr1.EndTime,
-		DurationSeconds: rr1.EndTime.Sub(rr1.StartTime).Seconds(),
-		TotalNodes: len(rr1.Results), Status: "completed_with_failures",
-	}
-	store.WriteRunSummary(runID1, summary1)
 
 	rm1 := make(map[string]string)
 	for _, r := range rr1.Results {
@@ -378,7 +337,7 @@ assets:
 	}
 
 	// Compute rerun set from failed run
-	rerunAssets, warnings, err := rerun.ComputeRerunSet(store, runID1, g)
+	rerunAssets, warnings, err := rerun.ComputeRerunSet(eventStore, runID1, g)
 	if err != nil {
 		t.Fatalf("ComputeRerunSet: %v", err)
 	}
@@ -386,7 +345,6 @@ assets:
 		t.Errorf("unexpected warnings: %v", warnings)
 	}
 
-	// Should rerun mid + leaf (failed + descendants), NOT root or independent
 	rerunMap := make(map[string]bool)
 	for _, name := range rerunAssets {
 		rerunMap[name] = true
@@ -408,7 +366,6 @@ assets:
 	// Fix the script so mid succeeds on re-run
 	os.WriteFile(filepath.Join(dir, "scripts/mid.sh"), []byte("#!/bin/bash\n# depends_on: root\necho mid fixed"), 0755)
 
-	// Re-run with asset filter (simulates --from-failure)
 	runID2 := "run-rerun-002"
 	rr2 := Execute(g, RunConfig{
 		MaxParallel: 2,
@@ -422,20 +379,15 @@ assets:
 		rm2[r.AssetName] = r.Status
 	}
 
-	// mid and leaf should have succeeded (mid was fixed)
 	if rm2["mid"] != "success" {
 		t.Errorf("rerun mid: %s", rm2["mid"])
 	}
 	if rm2["leaf"] != "success" {
 		t.Errorf("rerun leaf: %s", rm2["leaf"])
 	}
-
-	// root gets pulled in by Subgraph as a dependency of mid — this is correct
 	if rm2["root"] != "success" {
 		t.Errorf("rerun root (dependency): %s", rm2["root"])
 	}
-
-	// independent should NOT appear — it has no relationship to failed nodes
 	if _, ok := rm2["independent"]; ok {
 		t.Error("independent should not be in rerun results")
 	}
@@ -454,7 +406,6 @@ func TestIntegration_Phase0_BackwardsCompat(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "scripts/a.sh"), []byte("#!/bin/bash\necho a"), 0755)
 	os.WriteFile(filepath.Join(dir, "scripts/b.sh"), []byte("#!/bin/bash\n# depends_on: a\necho b"), 0755)
 
-	// Phase 0 style config: no connections, no checks
 	configContent := `pipeline: phase0_compat
 max_parallel: 2
 assets:
@@ -476,7 +427,6 @@ assets:
 	deps, _ := graph.ParseAllDependencies(cfg, dir)
 	inputs := graph.ConfigToAssetInputs(cfg)
 
-	// Phase 1 code path: generate check nodes (should produce none)
 	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
 	inputs = append(inputs, checkNodes...)
 	for k, v := range checkDeps {

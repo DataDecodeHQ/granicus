@@ -22,7 +22,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	w, err := NewWatcher(s)
@@ -72,7 +72,7 @@ assets:
     source: b.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	w, err := NewWatcher(s)
@@ -96,7 +96,7 @@ func TestWatcher_DebounceCoalesces(t *testing.T) {
 	db := newTestDB(t)
 	configDir := t.TempDir()
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {})
+	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	w, err := NewWatcher(s)
