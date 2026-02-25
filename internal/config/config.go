@@ -58,9 +58,26 @@ type PipelineConfig struct {
 	Schedule     string                       `yaml:"schedule,omitempty"`
 	MaxParallel  int                          `yaml:"max_parallel"`
 	Connections  map[string]*ConnectionConfig `yaml:"connections,omitempty"`
+	Datasets     map[string]string            `yaml:"datasets,omitempty"`
 	Assets       []AssetConfig                `yaml:"assets"`
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
 	Prefix       string                       `yaml:"-"`
+}
+
+func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset string) string {
+	if asset.DestinationConnection != "" {
+		if conn, ok := cfg.Connections[asset.DestinationConnection]; ok {
+			if ds := conn.Properties["dataset"]; ds != "" {
+				return ds
+			}
+		}
+	}
+	if asset.Layer != "" && cfg.Datasets != nil {
+		if ds, ok := cfg.Datasets[asset.Layer]; ok {
+			return ds
+		}
+	}
+	return defaultDataset
 }
 
 var connectionRequirements = map[string][]string{

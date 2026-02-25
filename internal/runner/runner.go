@@ -26,6 +26,8 @@ type Asset struct {
 	InlineSQL             string
 	TestStart             string
 	TestEnd               string
+	Dataset               string
+	Layer                 string
 }
 
 type NodeResult struct {

@@ -16,6 +16,49 @@ func BuiltinFuncMap() template.FuncMap {
 	}
 }
 
+type RefContext struct {
+	Assets         []RefAsset
+	Datasets       map[string]string
+	DefaultDataset string
+	Prefix         string
+}
+
+type RefAsset struct {
+	Name    string
+	Layer   string
+	Dataset string
+}
+
+func BuildRefFunc(ctx RefContext) func(string) (string, error) {
+	lookup := make(map[string]RefAsset, len(ctx.Assets))
+	for _, a := range ctx.Assets {
+		lookup[a.Name] = a
+	}
+
+	return func(name string) (string, error) {
+		asset, ok := lookup[name]
+		if !ok {
+			return "", fmt.Errorf("ref(%q): asset not found in pipeline", name)
+		}
+
+		dataset := ctx.DefaultDataset
+		if asset.Dataset != "" {
+			dataset = asset.Dataset
+		} else if asset.Layer != "" && ctx.Datasets != nil {
+			if ds, found := ctx.Datasets[asset.Layer]; found {
+				dataset = ds
+			}
+		}
+
+		tableName := name
+		if ctx.Prefix != "" {
+			tableName = ctx.Prefix + name
+		}
+
+		return fmt.Sprintf("`%s.%s`", dataset, tableName), nil
+	}
+}
+
 func LoadFunctions(dir string) (template.FuncMap, error) {
 	funcs := make(template.FuncMap)
 

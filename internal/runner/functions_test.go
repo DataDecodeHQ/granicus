@@ -150,3 +150,126 @@ func (w *writerBuf) Write(p []byte) (int, error) {
 	*w.buf = append(*w.buf, p...)
 	return len(p), nil
 }
+
+func TestBuildRefFunc_BasicResolution(t *testing.T) {
+	ctx := RefContext{
+		Assets: []RefAsset{
+			{Name: "orders", Layer: "analytics", Dataset: "legacy_analytics"},
+			{Name: "stg_payments", Layer: "staging", Dataset: "legacy_staging"},
+			{Name: "report_summary", Layer: "report", Dataset: "legacy_report"},
+			{Name: "no_layer", Layer: "", Dataset: "default_ds"},
+		},
+		Datasets:       map[string]string{"analytics": "legacy_analytics", "staging": "legacy_staging", "report": "legacy_report"},
+		DefaultDataset: "default_ds",
+	}
+
+	ref := BuildRefFunc(ctx)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+		wantErr  bool
+	}{
+		{"analytics asset", "orders", "`legacy_analytics.orders`", false},
+		{"staging asset", "stg_payments", "`legacy_staging.stg_payments`", false},
+		{"report asset", "report_summary", "`legacy_report.report_summary`", false},
+		{"no layer uses default", "no_layer", "`default_ds.no_layer`", false},
+		{"nonexistent asset", "nonexistent", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ref(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for ref(%q)", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("ref(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildRefFunc_WithPrefix(t *testing.T) {
+	ctx := RefContext{
+		Assets:         []RefAsset{{Name: "orders", Layer: "analytics", Dataset: "legacy_analytics"}},
+		Datasets:       map[string]string{"analytics": "legacy_analytics"},
+		DefaultDataset: "default_ds",
+		Prefix:         "ah_",
+	}
+
+	ref := BuildRefFunc(ctx)
+	got, err := ref("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "`legacy_analytics.ah_orders`" {
+		t.Errorf("ref with prefix = %q, want %q", got, "`legacy_analytics.ah_orders`")
+	}
+}
+
+func TestBuildRefFunc_InTemplate(t *testing.T) {
+	ctx := RefContext{
+		Assets: []RefAsset{
+			{Name: "orders", Layer: "analytics", Dataset: "legacy_analytics"},
+			{Name: "payments", Layer: "staging", Dataset: "legacy_staging"},
+		},
+		Datasets:       map[string]string{"analytics": "legacy_analytics", "staging": "legacy_staging"},
+		DefaultDataset: "default_ds",
+	}
+
+	fm := MergeFuncMaps(BuiltinFuncMap(), template.FuncMap{
+		"ref": BuildRefFunc(ctx),
+	})
+
+	sql := `SELECT o.id, p.amount
+FROM {{ ref "orders" }} o
+JOIN {{ ref "payments" }} p ON o.id = p.order_id
+WHERE o.dataset = '{{.Dataset}}'`
+
+	tmpl, err := template.New("test").Funcs(fm).Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := templateData{Project: "my-project", Dataset: "legacy_analytics", Prefix: ""}
+	var buf []byte
+	w := &writerBuf{buf: &buf}
+	if err := tmpl.Execute(w, data); err != nil {
+		t.Fatal(err)
+	}
+
+	result := string(*w.buf)
+	expected := "SELECT o.id, p.amount\nFROM `legacy_analytics.orders` o\nJOIN `legacy_staging.payments` p ON o.id = p.order_id\nWHERE o.dataset = 'legacy_analytics'"
+	if result != expected {
+		t.Errorf("template render:\ngot:  %s\nwant: %s", result, expected)
+	}
+}
+
+func TestBuildRefFunc_NonexistentInTemplate(t *testing.T) {
+	ctx := RefContext{
+		Assets:         []RefAsset{{Name: "orders", Layer: "analytics", Dataset: "legacy_analytics"}},
+		DefaultDataset: "default_ds",
+	}
+	fm := template.FuncMap{"ref": BuildRefFunc(ctx)}
+
+	sql := `SELECT * FROM {{ ref "nonexistent" }}`
+	tmpl, err := template.New("test").Funcs(fm).Parse(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf []byte
+	w := &writerBuf{buf: &buf}
+	err = tmpl.Execute(w, nil)
+	if err == nil {
+		t.Error("expected template execution error for ref to nonexistent asset")
+	}
+}

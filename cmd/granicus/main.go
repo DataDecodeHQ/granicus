@@ -218,6 +218,30 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		}
 	}
 
+	// Build ref() function with pipeline context
+	defaultDS := ""
+	if cfg.Connections != nil {
+		for _, conn := range cfg.Connections {
+			if conn.Type == "bigquery" {
+				defaultDS = conn.Properties["dataset"]
+				break
+			}
+		}
+	}
+	var refAssets []runner.RefAsset
+	for _, a := range cfg.Assets {
+		ra := runner.RefAsset{Name: a.Name, Layer: a.Layer}
+		ra.Dataset = cfg.DatasetForAsset(a, defaultDS)
+		refAssets = append(refAssets, ra)
+	}
+	refFunc := runner.BuildRefFunc(runner.RefContext{
+		Assets:         refAssets,
+		Datasets:       cfg.Datasets,
+		DefaultDataset: defaultDS,
+		Prefix:         cfg.Prefix,
+	})
+	funcMap["ref"] = refFunc
+
 	// Register runners per connection type
 	if cfg.Connections != nil {
 		for _, conn := range cfg.Connections {
@@ -245,6 +269,26 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 	reg.Register("dlt", runner.NewDLTRunner(nil, nil))
 
 	return reg
+}
+
+func findAssetConfig(cfg *config.PipelineConfig, name string) *config.AssetConfig {
+	for i := range cfg.Assets {
+		if cfg.Assets[i].Name == name {
+			return &cfg.Assets[i]
+		}
+	}
+	return nil
+}
+
+func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *config.ConnectionConfig {
+	connName := asset.DestinationConnection
+	if connName == "" {
+		return nil
+	}
+	if conn, ok := cfg.Connections[connName]; ok {
+		return conn
+	}
+	return nil
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
@@ -376,6 +420,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Resolve per-asset dataset from layer routing
+		assetCfg := findAssetConfig(cfg, asset.Name)
+		resolvedDataset := ""
+		if assetCfg != nil {
+			defaultDS := ""
+			if conn := connectionForAsset(cfg, assetCfg); conn != nil {
+				defaultDS = conn.Properties["dataset"]
+			}
+			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
+		}
+
 		ra := &runner.Asset{
 			Name:                  asset.Name,
 			Type:                  asset.Type,
@@ -388,6 +443,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			InlineSQL:             asset.InlineSQL,
 			TestStart:             asset.TestStart,
 			TestEnd:               asset.TestEnd,
+			Dataset:               resolvedDataset,
+			Layer:                 asset.Layer,
 		}
 
 		r := registry.Run(ra, pr, rid)

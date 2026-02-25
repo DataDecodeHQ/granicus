@@ -325,3 +325,109 @@ assets:
 		t.Errorf("expected nil default_checks for ent, got %v", cfg.Assets[1].DefaultChecks)
 	}
 }
+
+func TestDatasetForAsset(t *testing.T) {
+	cfg := &PipelineConfig{
+		Connections: map[string]*ConnectionConfig{
+			"bq_main": {Name: "bq_main", Type: "bigquery", Properties: map[string]string{
+				"project": "p", "dataset": "default_ds",
+			}},
+			"bq_staging": {Name: "bq_staging", Type: "bigquery", Properties: map[string]string{
+				"project": "p", "dataset": "staging_ds",
+			}},
+		},
+		Datasets: map[string]string{
+			"staging":   "legacy_staging",
+			"analytics": "legacy_analytics",
+			"report":    "legacy_report",
+		},
+	}
+
+	tests := []struct {
+		name     string
+		asset    AssetConfig
+		defDS    string
+		expected string
+	}{
+		{
+			name:     "layer in datasets map",
+			asset:    AssetConfig{Name: "orders", Layer: "analytics"},
+			defDS:    "fallback",
+			expected: "legacy_analytics",
+		},
+		{
+			name:     "explicit destination_connection overrides layer",
+			asset:    AssetConfig{Name: "stg", Layer: "analytics", DestinationConnection: "bq_staging"},
+			defDS:    "fallback",
+			expected: "staging_ds",
+		},
+		{
+			name:     "no layer falls back to default",
+			asset:    AssetConfig{Name: "extract", Layer: ""},
+			defDS:    "fallback",
+			expected: "fallback",
+		},
+		{
+			name:     "layer not in datasets map falls back to default",
+			asset:    AssetConfig{Name: "ent", Layer: "entity"},
+			defDS:    "fallback",
+			expected: "fallback",
+		},
+		{
+			name:     "empty datasets block uses default",
+			asset:    AssetConfig{Name: "x", Layer: "staging"},
+			defDS:    "fallback",
+			expected: "fallback",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := cfg
+			if tt.name == "empty datasets block uses default" {
+				c = &PipelineConfig{Connections: cfg.Connections}
+			}
+			got := c.DatasetForAsset(tt.asset, tt.defDS)
+			if got != tt.expected {
+				t.Errorf("DatasetForAsset() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseConfig_DatasetsBlock(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: default_ds
+datasets:
+  staging: legacy_staging
+  analytics: legacy_analytics
+assets:
+  - name: stg
+    type: sql
+    source: stg.sql
+    destination_connection: bq
+    layer: staging
+  - name: rpt
+    type: sql
+    source: rpt.sql
+    destination_connection: bq
+    layer: analytics
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Datasets) != 2 {
+		t.Fatalf("expected 2 datasets, got %d", len(cfg.Datasets))
+	}
+	if cfg.Datasets["staging"] != "legacy_staging" {
+		t.Errorf("staging dataset: %q", cfg.Datasets["staging"])
+	}
+	if cfg.Datasets["analytics"] != "legacy_analytics" {
+		t.Errorf("analytics dataset: %q", cfg.Datasets["analytics"])
+	}
+}

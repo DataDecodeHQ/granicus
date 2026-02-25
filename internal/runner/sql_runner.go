@@ -72,9 +72,13 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
+	dataset := r.Connection.Properties["dataset"]
+	if asset.Dataset != "" {
+		dataset = asset.Dataset
+	}
 	data := templateData{
 		Project: r.Connection.Properties["project"],
-		Dataset: r.Connection.Properties["dataset"],
+		Dataset: dataset,
 		Prefix:  asset.Prefix,
 	}
 
@@ -239,9 +243,13 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
+	checkDataset := r.Connection.Properties["dataset"]
+	if asset.Dataset != "" {
+		checkDataset = asset.Dataset
+	}
 	data := templateData{
 		Project: r.Connection.Properties["project"],
-		Dataset: r.Connection.Properties["dataset"],
+		Dataset: checkDataset,
 		Prefix:  asset.Prefix,
 	}
 	buf := new(bytes.Buffer)
