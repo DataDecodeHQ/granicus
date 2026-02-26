@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/bigquery"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"google.golang.org/api/option"
 
 	"github.com/analytehealth/granicus/internal/backup"
 	"github.com/analytehealth/granicus/internal/checker"
@@ -446,6 +449,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 		}
 		// Rebuild registry with updated connection properties
 		registry = buildRegistry(cfg, projectRoot)
+	}
+
+	// Ensure all destination datasets exist before running
+	if err := ensureDatasets(cfg, eventStore, runID); err != nil {
+		return fmt.Errorf("ensuring datasets: %w", err)
 	}
 
 	// Emit run_started event
@@ -1301,4 +1309,60 @@ func parseDuration(s string) (time.Duration, error) {
 		}
 	}
 	return 0, fmt.Errorf("invalid duration: %q (use e.g., 24h, 7d, 30d)", s)
+}
+
+func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID string) error {
+	ctx := context.Background()
+
+	type dsKey struct{ project, dataset, creds string }
+	seen := map[dsKey]bool{}
+
+	for _, conn := range cfg.Connections {
+		if conn.Type != "bigquery" {
+			continue
+		}
+		key := dsKey{
+			project: conn.Properties["project"],
+			dataset: conn.Properties["dataset"],
+			creds:   conn.Properties["credentials"],
+		}
+		if key.dataset == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		var opts []option.ClientOption
+		if key.creds != "" {
+			opts = append(opts, option.WithCredentialsFile(key.creds))
+		}
+		client, err := bigquery.NewClient(ctx, key.project, opts...)
+		if err != nil {
+			return fmt.Errorf("creating BQ client for %s: %w", key.dataset, err)
+		}
+
+		location := conn.Properties["location"]
+		if location == "" {
+			location = "us-central1"
+		}
+		meta := &bigquery.DatasetMetadata{
+			Location: location,
+		}
+		if err := client.Dataset(key.dataset).Create(ctx, meta); err != nil {
+			client.Close()
+			if strings.Contains(err.Error(), "Already Exists") || strings.Contains(err.Error(), "already exists") {
+				continue
+			}
+			return fmt.Errorf("creating dataset %s.%s: %w", key.project, key.dataset, err)
+		}
+		client.Close()
+
+		fmt.Printf("Created dataset %s.%s (%s)\n", key.project, key.dataset, location)
+		if eventStore != nil {
+			_ = eventStore.Emit(events.Event{
+				RunID: runID, EventType: "dataset_created", Severity: "info",
+				Summary: fmt.Sprintf("Created dataset %s.%s (%s)", key.project, key.dataset, location),
+			})
+		}
+	}
+	return nil
 }
