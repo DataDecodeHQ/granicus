@@ -528,6 +528,312 @@ assets:
 	}
 }
 
+func TestParseConfig_SourceExtendedFields(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+sources:
+  orders:
+    connection: bq
+    identifier: project.dataset.orders
+    primary_key: order_id
+    expected_freshness: 24h
+    expected_columns:
+      - order_id
+      - customer_id
+      - created_at
+assets:
+  - name: x
+    type: sql
+    source: x.sql
+    destination_connection: bq
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := cfg.Sources["orders"]
+	if src.PrimaryKey != "order_id" {
+		t.Errorf("primary_key: %q", src.PrimaryKey)
+	}
+	if src.ExpectedFresh != "24h" {
+		t.Errorf("expected_freshness: %q", src.ExpectedFresh)
+	}
+	if len(src.ExpectedColumns) != 3 || src.ExpectedColumns[0] != "order_id" {
+		t.Errorf("expected_columns: %v", src.ExpectedColumns)
+	}
+}
+
+func TestParseConfig_SourceBadFreshness(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+sources:
+  orders:
+    connection: bq
+    identifier: project.dataset.orders
+    expected_freshness: not-a-duration
+assets:
+  - name: x
+    type: sql
+    source: x.sql
+    destination_connection: bq
+`))
+	if err == nil {
+		t.Error("expected error for invalid expected_freshness")
+	}
+}
+
+func TestParseConfig_ForeignKeys(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    foreign_keys:
+      - column: customer_id
+        references: customers.customer_id
+      - column: product_id
+        references: products.product_id
+        nullable: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fks := cfg.Assets[0].ForeignKeys
+	if len(fks) != 2 {
+		t.Fatalf("expected 2 foreign keys, got %d", len(fks))
+	}
+	if fks[0].Column != "customer_id" || fks[0].References != "customers.customer_id" || fks[0].Nullable {
+		t.Errorf("fk[0]: %+v", fks[0])
+	}
+	if fks[1].Column != "product_id" || fks[1].References != "products.product_id" || !fks[1].Nullable {
+		t.Errorf("fk[1]: %+v", fks[1])
+	}
+}
+
+func TestParseConfig_ForeignKeyBadReferences(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    foreign_keys:
+      - column: customer_id
+        references: customers
+`))
+	if err == nil {
+		t.Error("expected error for references without table.column format")
+	}
+}
+
+func TestParseConfig_CompletenessConfig(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    completeness:
+      source_table: raw_orders
+      source_pk: order_id
+      exclusions:
+        - table: cancelled
+          pk: order_id
+          filter: "status = 'cancelled'"
+      tolerance: 0.05
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Assets[0].Completeness
+	if c == nil {
+		t.Fatal("expected completeness config")
+	}
+	if c.SourceTable != "raw_orders" {
+		t.Errorf("source_table: %q", c.SourceTable)
+	}
+	if c.SourcePK != "order_id" {
+		t.Errorf("source_pk: %q", c.SourcePK)
+	}
+	if len(c.Exclusions) != 1 || c.Exclusions[0].Table != "cancelled" {
+		t.Errorf("exclusions: %+v", c.Exclusions)
+	}
+	if c.Tolerance == nil || *c.Tolerance != 0.05 {
+		t.Errorf("tolerance: %v", c.Tolerance)
+	}
+}
+
+func TestParseConfig_CompletenessDefaults(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    completeness:
+      source_table: raw_orders
+      source_pk: order_id
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Assets[0].Completeness
+	if c.Tolerance == nil || *c.Tolerance != 0.01 {
+		t.Errorf("expected default tolerance 0.01, got %v", c.Tolerance)
+	}
+	if cfg.Assets[0].MinRetentionRatio == nil || *cfg.Assets[0].MinRetentionRatio != 0.5 {
+		t.Errorf("expected default min_retention_ratio 0.5, got %v", cfg.Assets[0].MinRetentionRatio)
+	}
+}
+
+func TestParseConfig_CompletenessValidation(t *testing.T) {
+	// Missing source_table
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    completeness:
+      source_pk: order_id
+`))
+	if err == nil {
+		t.Error("expected error for missing completeness source_table")
+	}
+
+	// Missing source_pk
+	_, err = LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    completeness:
+      source_table: raw_orders
+`))
+	if err == nil {
+		t.Error("expected error for missing completeness source_pk")
+	}
+}
+
+func TestParseConfig_AssetUpstream(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: stg_orders
+    type: sql
+    source: stg.sql
+    destination_connection: bq
+  - name: ent_orders
+    type: sql
+    source: ent.sql
+    destination_connection: bq
+    upstream:
+      - stg_orders
+      - stg_customers
+    primary_upstream: stg_orders
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Assets[1]
+	if len(a.Upstream) != 2 || a.Upstream[0] != "stg_orders" {
+		t.Errorf("upstream: %v", a.Upstream)
+	}
+	if a.PrimaryUpstream != "stg_orders" {
+		t.Errorf("primary_upstream: %q", a.PrimaryUpstream)
+	}
+}
+
+func TestParseConfig_FanOutCheck(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    fan_out_check: true
+  - name: lines
+    type: sql
+    source: lines.sql
+    destination_connection: bq
+    fan_out_check: false
+  - name: plain
+    type: sql
+    source: plain.sql
+    destination_connection: bq
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].FanOutCheck == nil || *cfg.Assets[0].FanOutCheck != true {
+		t.Errorf("fan_out_check[0]: %v", cfg.Assets[0].FanOutCheck)
+	}
+	if cfg.Assets[1].FanOutCheck == nil || *cfg.Assets[1].FanOutCheck != false {
+		t.Errorf("fan_out_check[1]: %v", cfg.Assets[1].FanOutCheck)
+	}
+	if cfg.Assets[2].FanOutCheck != nil {
+		t.Errorf("expected nil fan_out_check[2], got %v", cfg.Assets[2].FanOutCheck)
+	}
+}
+
 func TestResolveAssetPool(t *testing.T) {
 	pools := map[string]PoolConfig{
 		"bq_pool": {Slots: 4, DefaultFor: "bigquery"},

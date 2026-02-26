@@ -22,6 +22,8 @@ type Directives struct {
 	PartitionBy   string   `yaml:"partition_by"`
 	PartitionType string   `yaml:"partition_type"`
 	ClusterBy     []string `yaml:"cluster_by"`
+	SourceTable   string   `yaml:"source_table"`
+	SourcePK      string   `yaml:"source_pk"`
 }
 
 type directivesRoot struct {
@@ -36,7 +38,8 @@ func ParseDirectivesWithBlock(filePath string) (bool, Directives, error) {
 	// Check if any field is set (indicating a granicus block was found)
 	found := d.TimeColumn != "" || d.IntervalUnit != "" || d.StartDate != "" ||
 		d.BatchSize != 0 || d.Lookback != 0 || len(d.Produces) > 0 || d.DependsOn != nil ||
-		d.Layer != "" || d.Grain != "" || d.DefaultChecks != nil
+		d.Layer != "" || d.Grain != "" || d.DefaultChecks != nil ||
+		d.SourceTable != "" || d.SourcePK != ""
 	return found, d, nil
 }
 

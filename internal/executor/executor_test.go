@@ -384,3 +384,153 @@ func TestExecute_MixedPoolAndNoPool(t *testing.T) {
 		t.Errorf("expected all success: %v", rm)
 	}
 }
+
+func TestExecute_SourcePhantomNodeSucceeds(t *testing.T) {
+	// source:stdlocal is a phantom source node; asset depends on it
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "source:stdlocal", Type: graph.AssetTypeSource},
+			{Name: "stg_orders", Type: "shell", Source: "stg_orders.sh"},
+		},
+		map[string][]string{"stg_orders": {"source:stdlocal"}},
+	)
+
+	var executed []string
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		executed = append(executed, asset.Name)
+		return NodeResult{AssetName: asset.Name, Status: "success"}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 10}, runner)
+	rm := resultMap(rr)
+
+	if rm["source:stdlocal"] != "success" {
+		t.Errorf("source phantom node should succeed, got %s", rm["source:stdlocal"])
+	}
+	if rm["stg_orders"] != "success" {
+		t.Errorf("stg_orders should succeed, got %s", rm["stg_orders"])
+	}
+	// runner must not be called for source phantom nodes
+	for _, name := range executed {
+		if name == "source:stdlocal" {
+			t.Error("runner should not be invoked for source phantom nodes")
+		}
+	}
+}
+
+func TestExecute_SourcePhantomNodeEnablesCheckNode(t *testing.T) {
+	// source:stdlocal -> check:source:stdlocal:default:exists_not_empty
+	// Verifies that check nodes depending on source phantom nodes are not skipped.
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "source:stdlocal", Type: graph.AssetTypeSource},
+			{Name: "check:source:stdlocal:default:exists_not_empty", Type: "sql_check"},
+		},
+		map[string][]string{
+			"check:source:stdlocal:default:exists_not_empty": {"source:stdlocal"},
+		},
+	)
+
+	var executed []string
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		executed = append(executed, asset.Name)
+		return NodeResult{AssetName: asset.Name, Status: "success"}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 10}, runner)
+	rm := resultMap(rr)
+
+	if rm["source:stdlocal"] != "success" {
+		t.Errorf("source phantom node should succeed, got %s", rm["source:stdlocal"])
+	}
+	if rm["check:source:stdlocal:default:exists_not_empty"] != "success" {
+		t.Errorf("check node should succeed, got %s", rm["check:source:stdlocal:default:exists_not_empty"])
+	}
+	// runner must be called for the check node
+	found := false
+	for _, name := range executed {
+		if name == "check:source:stdlocal:default:exists_not_empty" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("check node should have been executed by the runner")
+	}
+}
+
+func TestExecute_MultipleSourcesWithCheckNodes(t *testing.T) {
+	// Two sources each with a check node; one regular asset depending on both sources
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "source:src1", Type: graph.AssetTypeSource},
+			{Name: "source:src2", Type: graph.AssetTypeSource},
+			{Name: "check:source:src1:default:exists_not_empty", Type: "sql_check"},
+			{Name: "check:source:src2:default:exists_not_empty", Type: "sql_check"},
+			{Name: "stg_asset", Type: "shell", Source: "stg.sh"},
+		},
+		map[string][]string{
+			"check:source:src1:default:exists_not_empty": {"source:src1"},
+			"check:source:src2:default:exists_not_empty": {"source:src2"},
+			"stg_asset": {"source:src1", "source:src2"},
+		},
+	)
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		return NodeResult{AssetName: asset.Name, Status: "success"}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 10}, runner)
+	rm := resultMap(rr)
+
+	for _, name := range []string{
+		"source:src1", "source:src2",
+		"check:source:src1:default:exists_not_empty",
+		"check:source:src2:default:exists_not_empty",
+		"stg_asset",
+	} {
+		if rm[name] != "success" {
+			t.Errorf("%s should succeed, got %s", name, rm[name])
+		}
+	}
+}
+
+func TestExecute_SourcePhantomNodeNotInvolvedInSkip(t *testing.T) {
+	// Regular node fails; source phantom node and its check are unaffected
+	// source:src (phantom) -> check_src (check on source)
+	// A (regular, fails) -> B (regular, skipped)
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "source:src", Type: graph.AssetTypeSource},
+			{Name: "check:source:src:default:exists_not_empty", Type: "sql_check"},
+			{Name: "A", Type: "shell", Source: "a.sh"},
+			{Name: "B", Type: "shell", Source: "b.sh"},
+		},
+		map[string][]string{
+			"check:source:src:default:exists_not_empty": {"source:src"},
+			"B": {"A"},
+		},
+	)
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		if asset.Name == "A" {
+			return NodeResult{AssetName: asset.Name, Status: "failed", Error: "test failure"}
+		}
+		return NodeResult{AssetName: asset.Name, Status: "success"}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 10}, runner)
+	rm := resultMap(rr)
+
+	if rm["source:src"] != "success" {
+		t.Errorf("source phantom node should succeed, got %s", rm["source:src"])
+	}
+	if rm["check:source:src:default:exists_not_empty"] != "success" {
+		t.Errorf("source check node should succeed, got %s", rm["check:source:src:default:exists_not_empty"])
+	}
+	if rm["A"] != "failed" {
+		t.Errorf("A should fail, got %s", rm["A"])
+	}
+	if rm["B"] != "skipped" {
+		t.Errorf("B should be skipped, got %s", rm["B"])
+	}
+}

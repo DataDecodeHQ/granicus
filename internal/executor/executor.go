@@ -121,14 +121,15 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 			defer func() { <-sem }()
 			asset := g.Assets[name]
 
-			// Skip source phantom nodes — they represent external data, not executable assets
+			// Source phantom nodes represent external data — succeed immediately (no-op)
+			// so that downstream check nodes are not skipped.
 			if asset.Type == graph.AssetTypeSource {
+				now := time.Now()
 				done <- NodeResult{
 					AssetName: name,
 					Status:    "success",
-					StartTime: time.Now(),
-					EndTime:   time.Now(),
-					Metadata:  map[string]string{"skipped_reason": "source_node"},
+					StartTime: now,
+					EndTime:   now,
 				}
 				return
 			}

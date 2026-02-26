@@ -207,3 +207,86 @@ func TestParseDirectives_Beyond50Lines(t *testing.T) {
 		t.Errorf("should not find directives after line 50: %v", d.DependsOn)
 	}
 }
+
+func TestParseDirectives_SourceTableAndPK(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sql")
+	os.WriteFile(path, []byte(`-- granicus:
+--   layer: staging
+--   grain: order_id
+--   source_table: raw_orders
+--   source_pk: order_id
+SELECT 1;
+`), 0644)
+
+	d, err := ParseDirectives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.SourceTable != "raw_orders" {
+		t.Errorf("source_table: %q", d.SourceTable)
+	}
+	if d.SourcePK != "order_id" {
+		t.Errorf("source_pk: %q", d.SourcePK)
+	}
+	if d.Layer != "staging" {
+		t.Errorf("layer: %q", d.Layer)
+	}
+	if d.Grain != "order_id" {
+		t.Errorf("grain: %q", d.Grain)
+	}
+
+	found, d2, err := ParseDirectivesWithBlock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Error("expected found=true for source_table/source_pk")
+	}
+	if d2.SourceTable != "raw_orders" {
+		t.Errorf("source_table via WithBlock: %q", d2.SourceTable)
+	}
+}
+
+func TestParseDirectives_SourceTableOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sql")
+	os.WriteFile(path, []byte(`-- granicus:
+--   layer: staging
+--   grain: patient_id
+--   source_table: raw_patients
+SELECT 1;
+`), 0644)
+
+	d, err := ParseDirectives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.SourceTable != "raw_patients" {
+		t.Errorf("source_table: %q", d.SourceTable)
+	}
+	if d.SourcePK != "" {
+		t.Errorf("source_pk should be empty when not specified, got %q", d.SourcePK)
+	}
+}
+
+func TestParseDirectives_NoSourceTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sql")
+	os.WriteFile(path, []byte(`-- granicus:
+--   layer: staging
+--   grain: order_id
+SELECT 1;
+`), 0644)
+
+	d, err := ParseDirectives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.SourceTable != "" {
+		t.Errorf("source_table should be empty when not specified, got %q", d.SourceTable)
+	}
+	if d.SourcePK != "" {
+		t.Errorf("source_pk should be empty when not specified, got %q", d.SourcePK)
+	}
+}

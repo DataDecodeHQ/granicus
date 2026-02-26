@@ -193,6 +193,13 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 		deps[k] = v
 	}
 
+	// Generate source check nodes
+	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(cfg)
+	inputs = append(inputs, sourceCheckNodes...)
+	for k, v := range sourceCheckDeps {
+		deps[k] = v
+	}
+
 	g, err := graph.BuildGraph(inputs, deps)
 	if err != nil {
 		return cfg, nil, nil, fmt.Errorf("graph: %w", err)
@@ -727,6 +734,18 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		// Phase 5: hardcoded ref detection
 		hardcodedResults := validate.DetectHardcodedRefs(cfg, projectRoot)
 		allResults = append(allResults, hardcodedResults...)
+
+		// Phase 6: default checks summary
+		defaultCheckResults := validate.CheckDefaultChecks(cfg)
+		allResults = append(allResults, defaultCheckResults...)
+
+		// Phase 7: source contracts
+		sourceContractResults := validate.CheckSourceContracts(cfg)
+		allResults = append(allResults, sourceContractResults...)
+
+		// Phase 8: orphaned checks (check files not wired to any asset)
+		orphanedCheckResults := validate.CheckOrphanedChecks(cfg, projectRoot)
+		allResults = append(allResults, orphanedCheckResults...)
 	}
 
 	// Check for errors/warnings

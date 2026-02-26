@@ -10,6 +10,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ForeignKeyConfig struct {
+	Column     string `yaml:"column"`
+	References string `yaml:"references"`
+	Nullable   bool   `yaml:"nullable,omitempty"`
+}
+
+type CompletenessExclusion struct {
+	Table  string `yaml:"table"`
+	PK     string `yaml:"pk"`
+	Filter string `yaml:"filter,omitempty"`
+}
+
+type CompletenessConfig struct {
+	SourceTable     string                  `yaml:"source_table"`
+	SourcePK        string                  `yaml:"source_pk"`
+	Exclusions      []CompletenessExclusion `yaml:"exclusions,omitempty"`
+	Additions       []CompletenessExclusion `yaml:"additions,omitempty"`
+	Tolerance       *float64                `yaml:"tolerance,omitempty"`
+	KnownExclusions []string                `yaml:"known_exclusions,omitempty"`
+}
+
 type ConnectionConfig struct {
 	Name       string            `yaml:"-"`
 	Type       string            `yaml:"type"`
@@ -23,19 +44,25 @@ type CheckConfig struct {
 }
 
 type AssetConfig struct {
-	Name                  string        `yaml:"name"`
-	Type                  string        `yaml:"type"`
-	Source                string        `yaml:"source"`
-	DestinationConnection string        `yaml:"destination_connection,omitempty"`
-	SourceConnection      string        `yaml:"source_connection,omitempty"`
-	Checks                []CheckConfig `yaml:"checks,omitempty"`
-	Pool                  string        `yaml:"pool,omitempty"`
-	Layer                 string        `yaml:"layer,omitempty"`
-	Grain                 string        `yaml:"grain,omitempty"`
-	DefaultChecks         *bool         `yaml:"default_checks,omitempty"`
-	PartitionBy           string        `yaml:"partition_by,omitempty"`
-	PartitionType         string        `yaml:"partition_type,omitempty"`
-	ClusterBy             []string      `yaml:"cluster_by,omitempty"`
+	Name                  string              `yaml:"name"`
+	Type                  string              `yaml:"type"`
+	Source                string              `yaml:"source"`
+	DestinationConnection string              `yaml:"destination_connection,omitempty"`
+	SourceConnection      string              `yaml:"source_connection,omitempty"`
+	Checks                []CheckConfig       `yaml:"checks,omitempty"`
+	Pool                  string              `yaml:"pool,omitempty"`
+	Layer                 string              `yaml:"layer,omitempty"`
+	Grain                 string              `yaml:"grain,omitempty"`
+	DefaultChecks         *bool               `yaml:"default_checks,omitempty"`
+	PartitionBy           string              `yaml:"partition_by,omitempty"`
+	PartitionType         string              `yaml:"partition_type,omitempty"`
+	ClusterBy             []string            `yaml:"cluster_by,omitempty"`
+	ForeignKeys           []ForeignKeyConfig  `yaml:"foreign_keys,omitempty"`
+	Upstream              []string            `yaml:"upstream,omitempty"`
+	PrimaryUpstream       string              `yaml:"primary_upstream,omitempty"`
+	MinRetentionRatio     *float64            `yaml:"min_retention_ratio,omitempty"`
+	FanOutCheck           *bool               `yaml:"fan_out_check,omitempty"`
+	Completeness          *CompletenessConfig `yaml:"completeness,omitempty"`
 }
 
 var validPartitionTypes = map[string]bool{
@@ -57,8 +84,11 @@ var validLayers = map[string]bool{
 }
 
 type SourceConfig struct {
-	Connection string `yaml:"connection"`
-	Identifier string `yaml:"identifier"`
+	Connection      string   `yaml:"connection"`
+	Identifier      string   `yaml:"identifier"`
+	PrimaryKey      string   `yaml:"primary_key,omitempty"`
+	ExpectedFresh   string   `yaml:"expected_freshness,omitempty"`
+	ExpectedColumns []string `yaml:"expected_columns,omitempty"`
 }
 
 type PoolConfig struct {
@@ -205,11 +235,48 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 				return nil, fmt.Errorf("source %q: references non-existent connection %q", name, src.Connection)
 			}
 		}
+		if src.ExpectedFresh != "" {
+			if _, err := time.ParseDuration(src.ExpectedFresh); err != nil {
+				return nil, fmt.Errorf("source %q: invalid expected_freshness %q: %w", name, src.ExpectedFresh, err)
+			}
+		}
 		// Check no collision with asset names
 		for _, a := range cfg.Assets {
 			if a.Name == name {
 				return nil, fmt.Errorf("source %q: name collides with asset %q", name, a.Name)
 			}
+		}
+	}
+
+	// Validate asset structural check fields and apply defaults
+	for i := range cfg.Assets {
+		a := &cfg.Assets[i]
+		for j, fk := range a.ForeignKeys {
+			if fk.Column == "" {
+				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: column is required", a.Name, j)
+			}
+			if fk.References == "" {
+				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: references is required", a.Name, j)
+			}
+			if !strings.Contains(fk.References, ".") {
+				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: references must be in table.column format, got %q", a.Name, j, fk.References)
+			}
+		}
+		if a.Completeness != nil {
+			if a.Completeness.SourceTable == "" {
+				return nil, fmt.Errorf("asset %q: completeness.source_table is required", a.Name)
+			}
+			if a.Completeness.SourcePK == "" {
+				return nil, fmt.Errorf("asset %q: completeness.source_pk is required", a.Name)
+			}
+			if a.Completeness.Tolerance == nil {
+				defaultTolerance := 0.01
+				a.Completeness.Tolerance = &defaultTolerance
+			}
+		}
+		if a.MinRetentionRatio == nil {
+			defaultRatio := 0.5
+			a.MinRetentionRatio = &defaultRatio
 		}
 	}
 

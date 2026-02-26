@@ -411,6 +411,181 @@ func CheckLayerDirection(g *graph.Graph) []ValidationResult {
 	}}
 }
 
+// CheckDefaultChecks inspects the config to report on auto-generated default checks.
+func CheckDefaultChecks(cfg *config.PipelineConfig) []ValidationResult {
+	countsByLayer := make(map[string]int)
+	var missingGrain []string
+
+	for _, asset := range cfg.Assets {
+		if asset.DefaultChecks != nil && !*asset.DefaultChecks {
+			continue
+		}
+		if asset.Layer == "" {
+			continue
+		}
+		if asset.Grain == "" {
+			missingGrain = append(missingGrain, asset.Name)
+			continue
+		}
+
+		switch asset.Layer {
+		case "staging":
+			countsByLayer["staging"] += 5 // unique_grain, not_null_grain, not_empty, no_future_timestamps, updated_at_gte_created_at
+		case "intermediate":
+			countsByLayer["intermediate"]++ // unique_grain (+ fan_out/row_retention if upstream)
+			if len(asset.Upstream) > 0 || asset.PrimaryUpstream != "" {
+				countsByLayer["intermediate"] += 2
+			}
+		case "entity", "analytics":
+			countsByLayer["entity"]++ // unique_grain
+		case "report":
+			countsByLayer["report"]++ // row_count
+		}
+		countsByLayer["total"] += countsByLayer[asset.Layer]
+	}
+
+	// Count source checks
+	for _, src := range cfg.Sources {
+		n := 1 // exists_not_empty always
+		if src.PrimaryKey != "" {
+			n += 2 // pk_not_null + pk_unique
+		}
+		if src.ExpectedFresh != "" {
+			n++
+		}
+		if len(src.ExpectedColumns) > 0 {
+			n++
+		}
+		countsByLayer["source"] += n
+	}
+
+	var items []string
+	if len(missingGrain) > 0 {
+		items = append(items, fmt.Sprintf("assets missing grain (no default checks): %s", strings.Join(missingGrain, ", ")))
+	}
+
+	details := make(map[string]string)
+	total := 0
+	for _, l := range []string{"staging", "intermediate", "entity", "analytics", "report", "source"} {
+		if n := countsByLayer[l]; n > 0 {
+			details[l] = fmt.Sprintf("%d", n)
+			total += n
+		}
+	}
+	details["total"] = fmt.Sprintf("%d", total)
+
+	status := StatusPass
+	if len(missingGrain) > 0 {
+		status = StatusWarn
+	}
+
+	return []ValidationResult{{
+		Name:    "default_checks",
+		Status:  status,
+		Details: details,
+		Items:   items,
+	}}
+}
+
+// CheckSourceContracts inspects source declarations for contract completeness.
+func CheckSourceContracts(cfg *config.PipelineConfig) []ValidationResult {
+	if len(cfg.Sources) == 0 {
+		return nil
+	}
+
+	var withContract []string
+	var missingContract []string
+
+	for name, src := range cfg.Sources {
+		var fields []string
+		if src.PrimaryKey != "" {
+			fields = append(fields, "primary_key")
+		}
+		if src.ExpectedFresh != "" {
+			fields = append(fields, "expected_freshness")
+		}
+		if len(src.ExpectedColumns) > 0 {
+			fields = append(fields, "expected_columns")
+		}
+
+		if len(fields) > 0 {
+			withContract = append(withContract, fmt.Sprintf("%s [%s]", name, strings.Join(fields, ", ")))
+		} else {
+			missingContract = append(missingContract, name)
+		}
+	}
+
+	var items []string
+	if len(missingContract) > 0 {
+		items = append(items, fmt.Sprintf("sources without contract declarations: %s", strings.Join(missingContract, ", ")))
+	}
+
+	details := map[string]string{
+		"total":         fmt.Sprintf("%d", len(cfg.Sources)),
+		"with_contract": fmt.Sprintf("%d", len(withContract)),
+		"missing":       fmt.Sprintf("%d", len(missingContract)),
+	}
+
+	status := StatusPass
+	if len(missingContract) > 0 {
+		status = StatusWarn
+	}
+
+	return []ValidationResult{{
+		Name:    "source_contracts",
+		Status:  status,
+		Details: details,
+		Items:   items,
+	}}
+}
+
+// CheckOrphanedChecks verifies every SQL file in checks/ is wired to an asset.
+func CheckOrphanedChecks(cfg *config.PipelineConfig, projectRoot string) []ValidationResult {
+	checksDir := filepath.Join(projectRoot, "checks")
+	entries, err := os.ReadDir(checksDir)
+	if err != nil {
+		return nil // no checks dir, nothing to validate
+	}
+
+	// Build set of all check sources referenced by assets
+	wired := make(map[string]bool)
+	for _, a := range cfg.Assets {
+		for _, c := range a.Checks {
+			wired[c.Source] = true
+		}
+	}
+
+	var orphans []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		checkSource := filepath.Join("checks", e.Name())
+		if !wired[checkSource] {
+			orphans = append(orphans, e.Name())
+		}
+	}
+
+	if len(orphans) > 0 {
+		return []ValidationResult{{
+			Name:   "orphaned_checks",
+			Status: StatusWarn,
+			Items:  orphans,
+			Details: map[string]string{
+				"orphan_count": fmt.Sprintf("%d", len(orphans)),
+				"total_checks": fmt.Sprintf("%d", len(entries)),
+			},
+		}}
+	}
+	return []ValidationResult{{
+		Name:   "orphaned_checks",
+		Status: StatusPass,
+		Details: map[string]string{
+			"wired_checks": fmt.Sprintf("%d", len(wired)),
+		},
+	}}
+}
+
 // Matches {{.Project}}.LITERAL_DATASET.table (with or without backticks) but NOT {{.Project}}.{{.Dataset}}.table
 var hardcodedRefPattern = regexp.MustCompile(`\{\{\s*\.Project\s*\}\}\.([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)`)
 
