@@ -121,6 +121,18 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 			defer func() { <-sem }()
 			asset := g.Assets[name]
 
+			// Skip source phantom nodes — they represent external data, not executable assets
+			if asset.Type == graph.AssetTypeSource {
+				done <- NodeResult{
+					AssetName: name,
+					Status:    "success",
+					StartTime: time.Now(),
+					EndTime:   time.Now(),
+					Metadata:  map[string]string{"skipped_reason": "source_node"},
+				}
+				return
+			}
+
 			// Acquire pool slot if configured
 			if cfg.PoolManager != nil && cfg.AssetPools != nil {
 				if poolName, ok := cfg.AssetPools[name]; ok && poolName != "" {

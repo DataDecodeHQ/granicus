@@ -48,11 +48,17 @@ var validPartitionTypes = map[string]bool{
 
 var validLayers = map[string]bool{
 	"":             true,
+	"source":       true,
 	"staging":      true,
 	"intermediate": true,
 	"analytics":    true,
 	"entity":       true,
 	"report":       true,
+}
+
+type SourceConfig struct {
+	Connection string `yaml:"connection"`
+	Identifier string `yaml:"identifier"`
 }
 
 type PoolConfig struct {
@@ -67,6 +73,7 @@ type PipelineConfig struct {
 	MaxParallel  int                          `yaml:"max_parallel"`
 	Connections  map[string]*ConnectionConfig `yaml:"connections,omitempty"`
 	Datasets     map[string]string            `yaml:"datasets,omitempty"`
+	Sources      map[string]SourceConfig      `yaml:"sources,omitempty"`
 	Pools        map[string]PoolConfig        `yaml:"pools,omitempty"`
 	Assets       []AssetConfig                `yaml:"assets"`
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
@@ -185,6 +192,24 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		}
 		if a.Type == "sql" && a.DestinationConnection == "" {
 			return nil, fmt.Errorf("sql asset %q must have destination_connection", a.Name)
+		}
+	}
+
+	// Validate sources
+	for name, src := range cfg.Sources {
+		if src.Identifier == "" {
+			return nil, fmt.Errorf("source %q: identifier is required", name)
+		}
+		if src.Connection != "" {
+			if _, ok := cfg.Connections[src.Connection]; !ok {
+				return nil, fmt.Errorf("source %q: references non-existent connection %q", name, src.Connection)
+			}
+		}
+		// Check no collision with asset names
+		for _, a := range cfg.Assets {
+			if a.Name == name {
+				return nil, fmt.Errorf("source %q: name collides with asset %q", name, a.Name)
+			}
 		}
 	}
 

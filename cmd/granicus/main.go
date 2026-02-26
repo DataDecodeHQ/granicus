@@ -24,6 +24,7 @@ import (
 	"github.com/analytehealth/granicus/internal/runner"
 	"github.com/analytehealth/granicus/internal/state"
 	"github.com/analytehealth/granicus/internal/testmode"
+	"github.com/analytehealth/granicus/internal/validate"
 )
 
 var version = "0.2.0"
@@ -66,6 +67,9 @@ func main() {
 		RunE:  runValidate,
 	}
 	validateCmd.Flags().String("project-root", ".", "Project root directory")
+	validateCmd.Flags().Bool("strict", false, "Promote warnings to errors")
+	validateCmd.Flags().Bool("json", false, "Output validation results as JSON")
+	validateCmd.Flags().Bool("quiet", false, "Only show errors and warnings")
 
 	statusCmd := &cobra.Command{
 		Use:   "status [run_id]",
@@ -171,6 +175,10 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 		}
 	}
 
+	// Add source phantom nodes
+	sourceNodes := graph.SourcePhantomNodes(cfg)
+	inputs = append(inputs, sourceNodes...)
+
 	// Generate check nodes and merge into graph
 	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
 	inputs = append(inputs, checkNodes...)
@@ -242,6 +250,32 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		Prefix:         cfg.Prefix,
 	})
 	funcMap["ref"] = refFunc
+
+	// Build source() function with pipeline context
+	if len(cfg.Sources) > 0 {
+		resolvedSources := make(map[string]runner.ResolvedSource, len(cfg.Sources))
+		for name, src := range cfg.Sources {
+			rs := runner.ResolvedSource{Identifier: src.Identifier}
+			if src.Connection != "" {
+				if conn, ok := cfg.Connections[src.Connection]; ok {
+					rs.ConnectionType = conn.Type
+					rs.Project = conn.Properties["project"]
+				}
+			} else {
+				// Default to first bigquery connection
+				for _, conn := range cfg.Connections {
+					if conn.Type == "bigquery" {
+						rs.ConnectionType = "bigquery"
+						rs.Project = conn.Properties["project"]
+						break
+					}
+				}
+			}
+			resolvedSources[name] = rs
+		}
+		sourceFunc := runner.BuildSourceFunc(runner.SourceContext{Sources: resolvedSources})
+		funcMap["source"] = sourceFunc
+	}
 
 	// Register runners per connection type
 	if cfg.Connections != nil {
@@ -589,66 +623,64 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 func runValidate(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
+	strict, _ := cmd.Flags().GetBool("strict")
+	asJSON, _ := cmd.Flags().GetBool("json")
+	quiet, _ := cmd.Flags().GetBool("quiet")
 
 	cfg, g, missingFiles, err := loadAndBuild(args[0], projectRoot)
 
 	if cfg == nil {
 		if err != nil {
+			if asJSON {
+				outputValidateJSON(cfg, nil, true)
+			}
 			return err
 		}
 		return fmt.Errorf("failed to load config")
 	}
 
-	fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
-	fmt.Printf("Assets: %d\n", len(cfg.Assets))
-
-	if g != nil {
-		depCount := 0
-		for _, a := range g.Assets {
-			depCount += len(a.DependsOn)
-		}
-		fmt.Printf("Dependencies: %d\n", depCount)
-		fmt.Printf("Root nodes: %d\n", len(g.RootNodes))
-	}
-
-	fmt.Println("\nValidation:")
-
+	var allResults []validate.ValidationResult
 	hasErrors := false
+	hasWarnings := false
 
+	// Phase 1: graph-level checks (from loadAndBuild)
 	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "cycle") {
-			fmt.Printf("  %s Cycle detected: %s\n", redCross, errStr)
-			hasErrors = true
-		}
-		if strings.Contains(errStr, "depends on") {
-			fmt.Printf("  %s %s\n", redCross, errStr)
-			hasErrors = true
-		}
-		if strings.Contains(errStr, "missing source") {
-			fmt.Printf("  %s %s\n", redCross, errStr)
-			hasErrors = true
-		}
-		if !hasErrors {
-			fmt.Printf("  %s %s\n", redCross, errStr)
-			hasErrors = true
-		}
+		allResults = append(allResults, validate.ValidationResult{
+			Name:   "graph",
+			Status: validate.StatusError,
+			Items:  []string{err.Error()},
+		})
+		hasErrors = true
 	} else {
-		fmt.Printf("  %s No cycles detected\n", greenCheck)
-		fmt.Printf("  %s All dependencies resolved\n", greenCheck)
+		allResults = append(allResults, validate.ValidationResult{
+			Name:   "cycles",
+			Status: validate.StatusPass,
+		})
+		allResults = append(allResults, validate.ValidationResult{
+			Name:   "dependencies",
+			Status: validate.StatusPass,
+		})
 
 		if len(missingFiles) > 0 {
-			for _, f := range missingFiles {
-				fmt.Printf("  %s Source file not found: %s\n", redCross, f)
-			}
+			allResults = append(allResults, validate.ValidationResult{
+				Name:   "source_files",
+				Status: validate.StatusError,
+				Items:  missingFiles,
+			})
 			hasErrors = true
 		} else {
-			fmt.Printf("  %s All source files exist\n", greenCheck)
+			allResults = append(allResults, validate.ValidationResult{
+				Name:   "source_files",
+				Status: validate.StatusPass,
+			})
 		}
 
-		fmt.Printf("  %s No duplicate asset names\n", greenCheck)
+		allResults = append(allResults, validate.ValidationResult{
+			Name:   "duplicates",
+			Status: validate.StatusPass,
+		})
 
-		// Report functions
+		// Functions check
 		funcMap := runner.BuiltinFuncMap()
 		if cfg.FunctionsDir != "" {
 			funcDir := cfg.FunctionsDir
@@ -657,27 +689,171 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			}
 			userFuncs, fErr := runner.LoadFunctions(funcDir)
 			if fErr != nil {
-				fmt.Printf("  %s Functions dir error: %v\n", redCross, fErr)
+				allResults = append(allResults, validate.ValidationResult{
+					Name:   "functions",
+					Status: validate.StatusError,
+					Items:  []string{fErr.Error()},
+				})
 				hasErrors = true
 			} else {
 				funcMap = runner.MergeFuncMaps(funcMap, userFuncs)
+				var funcNames []string
+				for name := range funcMap {
+					funcNames = append(funcNames, name)
+				}
+				allResults = append(allResults, validate.ValidationResult{
+					Name:   "functions",
+					Status: validate.StatusPass,
+					Details: map[string]string{
+						"count": fmt.Sprintf("%d", len(funcNames)),
+						"names": strings.Join(funcNames, ", "),
+					},
+				})
 			}
 		}
-		funcNames := make([]string, 0, len(funcMap))
-		for name := range funcMap {
-			funcNames = append(funcNames, name)
+
+		// Phase 2: template parsing + ref/source resolution
+		templateResults := validate.ValidateTemplates(cfg, g, projectRoot)
+		allResults = append(allResults, templateResults...)
+
+		// Phase 3: orphan files
+		orphanResults := validate.DetectOrphanFiles(cfg, projectRoot)
+		allResults = append(allResults, orphanResults...)
+
+		// Phase 4: layer direction checks
+		layerResults := validate.CheckLayerDirection(g)
+		allResults = append(allResults, layerResults...)
+
+		// Phase 5: hardcoded ref detection
+		hardcodedResults := validate.DetectHardcodedRefs(cfg, projectRoot)
+		allResults = append(allResults, hardcodedResults...)
+	}
+
+	// Check for errors/warnings
+	for _, r := range allResults {
+		switch r.Status {
+		case validate.StatusError:
+			hasErrors = true
+		case validate.StatusWarn:
+			hasWarnings = true
 		}
-		if len(funcNames) > 0 {
-			fmt.Printf("  %s Functions: %d (%s)\n", greenCheck, len(funcNames), strings.Join(funcNames, ", "))
+	}
+
+	if strict && hasWarnings {
+		hasErrors = true
+	}
+
+	// Output
+	if asJSON {
+		return outputValidateJSON(cfg, allResults, hasErrors)
+	}
+
+	if !quiet {
+		fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
+		fmt.Printf("Assets: %d\n", len(cfg.Assets))
+		if len(cfg.Sources) > 0 {
+			fmt.Printf("Sources: %d\n", len(cfg.Sources))
+		}
+		if g != nil {
+			depCount := 0
+			for _, a := range g.Assets {
+				depCount += len(a.DependsOn)
+			}
+			fmt.Printf("Dependencies: %d\n", depCount)
+			fmt.Printf("Root nodes: %d\n", len(g.RootNodes))
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("Validation:")
+	for _, r := range allResults {
+		if quiet && r.Status == validate.StatusPass {
+			continue
+		}
+
+		var icon string
+		switch r.Status {
+		case validate.StatusPass:
+			icon = greenCheck
+		case validate.StatusWarn:
+			icon = yellowCirc
+		case validate.StatusError:
+			icon = redCross
+		}
+
+		detail := ""
+		if r.Details != nil {
+			var parts []string
+			for k, v := range r.Details {
+				parts = append(parts, k+"="+v)
+			}
+			if len(parts) > 0 {
+				detail = " (" + strings.Join(parts, ", ") + ")"
+			}
+		}
+
+		fmt.Printf("  %s %s%s\n", icon, r.Name, detail)
+		if r.Status != validate.StatusPass {
+			for _, item := range r.Items {
+				fmt.Printf("      %s\n", item)
+			}
 		}
 	}
 
 	if hasErrors {
-		fmt.Println("\nGraph is invalid.")
+		fmt.Println("\nValidation failed.")
 		return fmt.Errorf("validation failed")
 	}
 
-	fmt.Println("\nGraph is valid.")
+	if hasWarnings && !quiet {
+		fmt.Println("\nValid with warnings.")
+	} else if !quiet {
+		fmt.Println("\nValid.")
+	}
+	return nil
+}
+
+type jsonValidateOutput struct {
+	Pipeline      string               `json:"pipeline"`
+	AssetCount    int                  `json:"asset_count"`
+	SourceCount   int                  `json:"source_count,omitempty"`
+	DepCount      int                  `json:"dependency_count"`
+	Valid         bool                 `json:"valid"`
+	Checks        []jsonValidateCheck  `json:"checks"`
+}
+
+type jsonValidateCheck struct {
+	Name    string            `json:"name"`
+	Status  string            `json:"status"`
+	Details map[string]string `json:"details,omitempty"`
+	Items   []string          `json:"items,omitempty"`
+}
+
+func outputValidateJSON(cfg *config.PipelineConfig, results []validate.ValidationResult, hasErrors bool) error {
+	out := jsonValidateOutput{
+		Valid: !hasErrors,
+	}
+	if cfg != nil {
+		out.Pipeline = cfg.Pipeline
+		out.AssetCount = len(cfg.Assets)
+		out.SourceCount = len(cfg.Sources)
+	}
+	for _, r := range results {
+		c := jsonValidateCheck{
+			Name:    r.Name,
+			Status:  string(r.Status),
+			Details: r.Details,
+		}
+		if len(r.Items) > 0 {
+			c.Items = r.Items
+		}
+		out.Checks = append(out.Checks, c)
+	}
+	data, _ := json.MarshalIndent(out, "", "  ")
+	fmt.Println(string(data))
+	if hasErrors {
+		return fmt.Errorf("validation failed")
+	}
 	return nil
 }
 

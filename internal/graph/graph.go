@@ -107,6 +107,8 @@ type AssetInput struct {
 	InlineSQL             string
 }
 
+const AssetTypeSource = "source"
+
 const (
 	white = 0
 	gray  = 1

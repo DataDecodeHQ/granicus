@@ -113,6 +113,18 @@ func ParseAllDirectives(cfg *config.PipelineConfig, projectRoot string) (map[str
 	return deps, directives, nil
 }
 
+func SourcePhantomNodes(cfg *config.PipelineConfig) []AssetInput {
+	var inputs []AssetInput
+	for name := range cfg.Sources {
+		inputs = append(inputs, AssetInput{
+			Name:  "source:" + name,
+			Type:  AssetTypeSource,
+			Layer: "source",
+		})
+	}
+	return inputs
+}
+
 func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 	inputs := make([]AssetInput, len(cfg.Assets))
 	for i, a := range cfg.Assets {

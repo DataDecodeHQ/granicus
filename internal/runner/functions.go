@@ -59,6 +59,43 @@ func BuildRefFunc(ctx RefContext) func(string) (string, error) {
 	}
 }
 
+type ResolvedSource struct {
+	ConnectionType string
+	Project        string
+	Identifier     string
+}
+
+type SourceContext struct {
+	Sources map[string]ResolvedSource
+}
+
+func BuildSourceFunc(ctx SourceContext) func(string, string) (string, error) {
+	return func(sourceName, tableName string) (string, error) {
+		src, ok := ctx.Sources[sourceName]
+		if !ok {
+			return "", fmt.Errorf("source(%q, %q): source not declared in pipeline", sourceName, tableName)
+		}
+		return formatSourceRef(src, tableName), nil
+	}
+}
+
+func formatSourceRef(src ResolvedSource, tableName string) string {
+	switch src.ConnectionType {
+	case "bigquery":
+		return fmt.Sprintf("`%s.%s.%s`", src.Project, src.Identifier, tableName)
+	case "gcs":
+		return fmt.Sprintf("gs://%s/%s", src.Identifier, tableName)
+	case "s3":
+		return fmt.Sprintf("s3://%s/%s", src.Identifier, tableName)
+	case "iceberg":
+		return fmt.Sprintf("%s.%s", src.Identifier, tableName)
+	case "postgres", "mysql":
+		return fmt.Sprintf("%s.%s", src.Identifier, tableName)
+	default:
+		return fmt.Sprintf("`%s.%s.%s`", src.Project, src.Identifier, tableName)
+	}
+}
+
 func LoadFunctions(dir string) (template.FuncMap, error) {
 	funcs := make(template.FuncMap)
 
