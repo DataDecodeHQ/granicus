@@ -16,7 +16,13 @@ func GenerateSourceCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, m
 	for sourceName, src := range cfg.Sources {
 		project := resolveSourceProject(cfg, src)
 
-		checks := sourceChecksFor(sourceName, src, project)
+		var checks []graph.AssetInput
+		if len(src.Tables) > 0 {
+			checks = sourceChecksForTables(sourceName, src, project)
+		} else if strings.Contains(src.Identifier, ".") {
+			checks = sourceChecksForLegacy(sourceName, src, project)
+		}
+
 		for _, c := range checks {
 			nodes = append(nodes, c)
 			deps[c.Name] = []string{"source:" + sourceName}
@@ -37,37 +43,63 @@ func resolveSourceProject(cfg *config.PipelineConfig, src config.SourceConfig) s
 	return conn.Properties["project"]
 }
 
-func sourceChecksFor(sourceName string, src config.SourceConfig, project string) []graph.AssetInput {
+func sourceChecksForTables(sourceName string, src config.SourceConfig, project string) []graph.AssetInput {
 	var checks []graph.AssetInput
 	destConn := src.Connection
 
-	// exists_not_empty (always)
-	checks = append(checks, sourceCheckNode(sourceName, "exists_not_empty", destConn,
-		sourceExistsNotEmptySQL(src.Identifier)))
+	for _, table := range src.Tables {
+		checks = append(checks, sourceCheckNodeForTable(sourceName, table, "exists_not_empty", destConn,
+			sourceExistsNotEmptySQL(sourceName, table)))
+	}
 
-	// freshness (when ExpectedFresh is set)
 	if src.ExpectedFresh != "" {
 		d, err := time.ParseDuration(src.ExpectedFresh)
 		if err == nil {
 			minutes := int(d.Minutes())
 			checks = append(checks, sourceCheckNode(sourceName, "freshness", destConn,
-				sourceFreshnessSQL(src.Identifier, minutes)))
+				sourceFreshnessSQL(sourceName, src.Tables[0], minutes)))
 		}
 	}
 
-	// pk_not_null (when PrimaryKey is set)
+	if src.PrimaryKey != "" && len(src.Tables) == 1 {
+		table := src.Tables[0]
+		checks = append(checks, sourceCheckNode(sourceName, "pk_not_null", destConn,
+			sourcePKNotNullSQL(sourceName, table, src.PrimaryKey)))
+		checks = append(checks, sourceCheckNode(sourceName, "pk_unique", destConn,
+			sourcePKUniqueSQL(sourceName, table, src.PrimaryKey)))
+	}
+
+	if len(src.ExpectedColumns) > 0 && len(src.Tables) == 1 {
+		checks = append(checks, sourceCheckNode(sourceName, "expected_columns", destConn,
+			sourceExpectedColumnsSQL(project, src.Identifier, src.Tables[0], src.ExpectedColumns)))
+	}
+
+	return checks
+}
+
+func sourceChecksForLegacy(sourceName string, src config.SourceConfig, project string) []graph.AssetInput {
+	var checks []graph.AssetInput
+	destConn := src.Connection
+
+	checks = append(checks, sourceCheckNode(sourceName, "exists_not_empty", destConn,
+		legacyExistsNotEmptySQL(src.Identifier)))
+
+	if src.ExpectedFresh != "" {
+		d, err := time.ParseDuration(src.ExpectedFresh)
+		if err == nil {
+			minutes := int(d.Minutes())
+			checks = append(checks, sourceCheckNode(sourceName, "freshness", destConn,
+				legacyFreshnessSQL(src.Identifier, minutes)))
+		}
+	}
+
 	if src.PrimaryKey != "" {
 		checks = append(checks, sourceCheckNode(sourceName, "pk_not_null", destConn,
-			sourcePKNotNullSQL(src.Identifier, src.PrimaryKey)))
-	}
-
-	// pk_unique (when PrimaryKey is set)
-	if src.PrimaryKey != "" {
+			legacyPKNotNullSQL(src.Identifier, src.PrimaryKey)))
 		checks = append(checks, sourceCheckNode(sourceName, "pk_unique", destConn,
-			sourcePKUniqueSQL(src.Identifier, src.PrimaryKey)))
+			legacyPKUniqueSQL(src.Identifier, src.PrimaryKey)))
 	}
 
-	// expected_columns (when ExpectedColumns is set)
 	if len(src.ExpectedColumns) > 0 {
 		dataset, tableName := parseIdentifierDatasetTable(src.Identifier)
 		checks = append(checks, sourceCheckNode(sourceName, "expected_columns", destConn,
@@ -75,6 +107,16 @@ func sourceChecksFor(sourceName string, src config.SourceConfig, project string)
 	}
 
 	return checks
+}
+
+func sourceCheckNodeForTable(sourceName, tableName, checkName, destConn, sql string) graph.AssetInput {
+	return graph.AssetInput{
+		Name:                  fmt.Sprintf("check:source:%s:%s:%s", sourceName, tableName, checkName),
+		Type:                  "sql_check",
+		DestinationConnection: destConn,
+		SourceAsset:           sourceName,
+		InlineSQL:             sql,
+	}
 }
 
 func sourceCheckNode(sourceName, checkName, destConn, sql string) graph.AssetInput {
@@ -87,28 +129,57 @@ func sourceCheckNode(sourceName, checkName, destConn, sql string) graph.AssetInp
 	}
 }
 
-func sourceExistsNotEmptySQL(identifier string) string {
+func sourceExistsNotEmptySQL(sourceName, tableName string) string {
+	return fmt.Sprintf(
+		`SELECT 'EMPTY_OR_MISSING' AS issue_type, 0 AS row_count FROM (SELECT 1) WHERE NOT EXISTS (SELECT 1 FROM {{ source "%s" "%s" }})`,
+		sourceName, tableName,
+	)
+}
+
+func sourceFreshnessSQL(sourceName, tableName string, minutes int) string {
+	return fmt.Sprintf(
+		`SELECT MAX(datastream_metadata.source_timestamp) AS latest_source_timestamp, TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) AS staleness_minutes, 'STALE_SOURCE' AS issue_type FROM {{ source "%s" "%s" }} HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) > %d`,
+		sourceName, tableName, minutes,
+	)
+}
+
+func sourcePKNotNullSQL(sourceName, tableName, pk string) string {
+	return fmt.Sprintf(
+		`SELECT 'NULL_PK' AS issue_type, COUNT(*) AS null_count FROM {{ source "%s" "%s" }} WHERE %s IS NULL HAVING COUNT(*) > 0`,
+		sourceName, tableName, pk,
+	)
+}
+
+func sourcePKUniqueSQL(sourceName, tableName, pk string) string {
+	return fmt.Sprintf(
+		`SELECT %s, COUNT(*) AS dupe_count FROM {{ source "%s" "%s" }} GROUP BY %s HAVING COUNT(*) > 1`,
+		pk, sourceName, tableName, pk,
+	)
+}
+
+// Legacy SQL functions use {{.Project}}.identifier format for backward compat
+func legacyExistsNotEmptySQL(identifier string) string {
 	return fmt.Sprintf(
 		"SELECT 'EMPTY_OR_MISSING' AS issue_type, 0 AS row_count FROM (SELECT 1) WHERE NOT EXISTS (SELECT 1 FROM `{{.Project}}.%s`)",
 		identifier,
 	)
 }
 
-func sourceFreshnessSQL(identifier string, minutes int) string {
+func legacyFreshnessSQL(identifier string, minutes int) string {
 	return fmt.Sprintf(
 		"SELECT MAX(datastream_metadata.source_timestamp) AS latest_source_timestamp, TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) AS staleness_minutes, 'STALE_SOURCE' AS issue_type FROM `{{.Project}}.%s` HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) > %d",
 		identifier, minutes,
 	)
 }
 
-func sourcePKNotNullSQL(identifier, pk string) string {
+func legacyPKNotNullSQL(identifier, pk string) string {
 	return fmt.Sprintf(
 		"SELECT 'NULL_PK' AS issue_type, COUNT(*) AS null_count FROM `{{.Project}}.%s` WHERE %s IS NULL HAVING COUNT(*) > 0",
 		identifier, pk,
 	)
 }
 
-func sourcePKUniqueSQL(identifier, pk string) string {
+func legacyPKUniqueSQL(identifier, pk string) string {
 	return fmt.Sprintf(
 		"SELECT %s, COUNT(*) AS dupe_count FROM `{{.Project}}.%s` GROUP BY %s HAVING COUNT(*) > 1",
 		pk, identifier, pk,
@@ -127,9 +198,6 @@ func sourceExpectedColumnsSQL(project, dataset, tableName string, columns []stri
 	)
 }
 
-// parseIdentifierDatasetTable extracts the dataset and table_name from a
-// project.dataset.table identifier string. Returns empty strings if the
-// identifier does not contain at least two dot-separated parts.
 func parseIdentifierDatasetTable(identifier string) (dataset, tableName string) {
 	parts := strings.Split(identifier, ".")
 	if len(parts) < 2 {

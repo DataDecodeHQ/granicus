@@ -446,15 +446,29 @@ func CheckDefaultChecks(cfg *config.PipelineConfig) []ValidationResult {
 
 	// Count source checks
 	for _, src := range cfg.Sources {
-		n := 1 // exists_not_empty always
-		if src.PrimaryKey != "" {
-			n += 2 // pk_not_null + pk_unique
-		}
-		if src.ExpectedFresh != "" {
-			n++
-		}
-		if len(src.ExpectedColumns) > 0 {
-			n++
+		n := 0
+		if len(src.Tables) > 0 {
+			n += len(src.Tables) // exists_not_empty per table
+			if src.ExpectedFresh != "" {
+				n++ // freshness once per source
+			}
+			if src.PrimaryKey != "" && len(src.Tables) == 1 {
+				n += 2 // pk_not_null + pk_unique only for single-table
+			}
+			if len(src.ExpectedColumns) > 0 && len(src.Tables) == 1 {
+				n++ // expected_columns only for single-table
+			}
+		} else if strings.Contains(src.Identifier, ".") {
+			n = 1 // exists_not_empty
+			if src.PrimaryKey != "" {
+				n += 2
+			}
+			if src.ExpectedFresh != "" {
+				n++
+			}
+			if len(src.ExpectedColumns) > 0 {
+				n++
+			}
 		}
 		countsByLayer["source"] += n
 	}

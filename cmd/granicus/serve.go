@@ -294,6 +294,34 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		deps[k] = v
 	}
 
+	// Add source phantom nodes
+	sourceNodes := graph.SourcePhantomNodes(cfg)
+	inputs = append(inputs, sourceNodes...)
+
+	// Generate source check nodes
+	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(cfg)
+	inputs = append(inputs, sourceCheckNodes...)
+	for k, v := range sourceCheckDeps {
+		deps[k] = v
+	}
+
+	// Wire source checks to gate staging assets
+	if len(sourceCheckNodes) > 0 {
+		var sourceCheckNames []string
+		for _, sc := range sourceCheckNodes {
+			sourceCheckNames = append(sourceCheckNames, sc.Name)
+		}
+		for i := range inputs {
+			if inputs[i].Layer == "staging" {
+				if deps[inputs[i].Name] == nil {
+					deps[inputs[i].Name] = sourceCheckNames
+				} else {
+					deps[inputs[i].Name] = append(deps[inputs[i].Name], sourceCheckNames...)
+				}
+			}
+		}
+	}
+
 	g, err := graph.BuildGraph(inputs, deps)
 	if err != nil {
 		log.Printf("run %s: graph build error: %v", runID, err)

@@ -86,6 +86,7 @@ var validLayers = map[string]bool{
 type SourceConfig struct {
 	Connection      string   `yaml:"connection"`
 	Identifier      string   `yaml:"identifier"`
+	Tables          []string `yaml:"tables,omitempty"`
 	PrimaryKey      string   `yaml:"primary_key,omitempty"`
 	ExpectedFresh   string   `yaml:"expected_freshness,omitempty"`
 	ExpectedColumns []string `yaml:"expected_columns,omitempty"`
