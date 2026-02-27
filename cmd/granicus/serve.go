@@ -352,6 +352,30 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			}
 		}
 
+		assetCfg := findAssetConfig(cfg, asset.Name)
+		resolvedDataset := ""
+		if assetCfg != nil {
+			defaultDS := ""
+			if conn := connectionForAsset(cfg, assetCfg); conn != nil {
+				defaultDS = conn.Properties["dataset"]
+			}
+			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
+		}
+
+		var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
+		if assetCfg != nil {
+			if assetCfg.DestinationConnection != "" {
+				if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
+					resolvedDestConn = conn
+				}
+			}
+			if assetCfg.SourceConnection != "" {
+				if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
+					resolvedSourceConn = conn
+				}
+			}
+		}
+
 		ra := &runner.Asset{
 			Name:                  asset.Name,
 			Type:                  asset.Type,
@@ -364,6 +388,10 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			InlineSQL:             asset.InlineSQL,
 			DependsOn:             asset.DependsOn,
 			Timeout:               asset.Timeout,
+			Dataset:               resolvedDataset,
+			Layer:                 asset.Layer,
+			ResolvedDestConn:      resolvedDestConn,
+			ResolvedSourceConn:    resolvedSourceConn,
 		}
 
 		r := registry.Run(ra, pr, rid)
@@ -386,6 +414,10 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			if len(stdout) > 10*1024 {
 				stdout = stdout[:10*1024] + "[truncated]"
 			}
+			stderr := r.Stderr
+			if len(stderr) > 10*1024 {
+				stderr = stderr[:10*1024] + "[truncated]"
+			}
 			_ = eventStore.Emit(events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_failed", Severity: "error",
@@ -397,6 +429,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 					"source_file":   asset.Source,
 					"metadata":      r.Metadata,
 					"stdout":        stdout,
+					"stderr":        stderr,
 				},
 			})
 		}

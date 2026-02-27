@@ -104,6 +104,9 @@ func ParseAllDirectives(cfg *config.PipelineConfig, projectRoot string) (map[str
 		if len(d.DependsOn) > 0 {
 			deps[asset.Name] = d.DependsOn
 		}
+		if len(asset.DependsOn) > 0 {
+			deps[asset.Name] = append(deps[asset.Name], asset.DependsOn...)
+		}
 		directives[asset.Name] = &d
 	}
 

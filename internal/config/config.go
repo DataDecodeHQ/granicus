@@ -74,6 +74,7 @@ type AssetConfig struct {
 	Standards             *StandardsConfig    `yaml:"standards,omitempty"`
 	StandardsBlocking     bool                `yaml:"standards_blocking,omitempty"`
 	Timeout               string              `yaml:"timeout,omitempty"`
+	DependsOn             []string            `yaml:"depends_on,omitempty"`
 }
 
 var validPartitionTypes = map[string]bool{
