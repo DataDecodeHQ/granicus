@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 const (
@@ -30,6 +32,8 @@ type Asset struct {
 	Layer                 string
 	DependsOn             []string
 	Timeout               time.Duration
+	ResolvedDestConn      *config.ConnectionConfig
+	ResolvedSourceConn    *config.ConnectionConfig
 }
 
 type NodeResult struct {

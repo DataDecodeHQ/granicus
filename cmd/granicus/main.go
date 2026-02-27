@@ -505,6 +505,21 @@ func runRun(cmd *cobra.Command, args []string) error {
 			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
 		}
 
+		// Resolve per-asset connections for Python/shell runners
+		var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
+		if assetCfg != nil {
+			if assetCfg.DestinationConnection != "" {
+				if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
+					resolvedDestConn = conn
+				}
+			}
+			if assetCfg.SourceConnection != "" {
+				if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
+					resolvedSourceConn = conn
+				}
+			}
+		}
+
 		ra := &runner.Asset{
 			Name:                  asset.Name,
 			Type:                  asset.Type,
@@ -521,6 +536,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Layer:                 asset.Layer,
 			DependsOn:             asset.DependsOn,
 			Timeout:               asset.Timeout,
+			ResolvedDestConn:      resolvedDestConn,
+			ResolvedSourceConn:    resolvedSourceConn,
 		}
 
 		r := registry.Run(ra, pr, rid)

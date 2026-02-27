@@ -60,12 +60,20 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
 	}
 
-	if r.DestinationConnection != nil {
-		connJSON, _ := json.Marshal(r.DestinationConnection)
+	destConn := r.DestinationConnection
+	if destConn == nil {
+		destConn = asset.ResolvedDestConn
+	}
+	srcConn := r.SourceConnection
+	if srcConn == nil {
+		srcConn = asset.ResolvedSourceConn
+	}
+	if destConn != nil {
+		connJSON, _ := json.Marshal(flattenConnection(destConn))
 		env = append(env, "GRANICUS_DEST_CONNECTION="+string(connJSON))
 	}
-	if r.SourceConnection != nil {
-		connJSON, _ := json.Marshal(r.SourceConnection)
+	if srcConn != nil {
+		connJSON, _ := json.Marshal(flattenConnection(srcConn))
 		env = append(env, "GRANICUS_SOURCE_CONNECTION="+string(connJSON))
 	}
 
@@ -157,10 +165,22 @@ func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, do
 	}
 }
 
+func flattenConnection(conn *config.ConnectionConfig) map[string]string {
+	flat := make(map[string]string, len(conn.Properties)+2)
+	flat["name"] = conn.Name
+	flat["type"] = conn.Type
+	for k, v := range conn.Properties {
+		flat[k] = v
+	}
+	return flat
+}
+
 func findPython(projectRoot string) string {
 	venvPython := filepath.Join(projectRoot, ".venv", "bin", "python3")
-	if _, err := os.Stat(venvPython); err == nil {
-		return venvPython
+	if absPath, err := filepath.Abs(venvPython); err == nil {
+		if _, err := os.Stat(absPath); err == nil {
+			return absPath
+		}
 	}
 	return "python3"
 }
