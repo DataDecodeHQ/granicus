@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -532,5 +533,213 @@ func TestExecute_SourcePhantomNodeNotInvolvedInSkip(t *testing.T) {
 	}
 	if rm["B"] != "skipped" {
 		t.Errorf("B should be skipped, got %s", rm["B"])
+	}
+}
+
+func TestExecute_BlockingCheckFailureSkipsDownstream(t *testing.T) {
+	// A (asset) -> check:A:validate (blocking check, fails)
+	// A -> B (downstream of A)
+	// B -> C (downstream of B)
+	// When blocking check fails, B and C should be skipped
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "A", Type: "shell", Source: "a.sh"},
+			{Name: "check:A:validate", Type: "sql_check", Blocking: true},
+			{Name: "B", Type: "shell", Source: "b.sh"},
+			{Name: "C", Type: "shell", Source: "c.sh"},
+		},
+		map[string][]string{
+			"check:A:validate": {"A"},
+			"B":                {"A"},
+			"C":                {"B"},
+		},
+	)
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		if asset.Name == "check:A:validate" {
+			return NodeResult{AssetName: asset.Name, Status: "failed", Error: "check failed", ExitCode: 1}
+		}
+		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 1}, runner)
+	rm := resultMap(rr)
+
+	if rm["A"] != "success" {
+		t.Errorf("A should succeed, got %s", rm["A"])
+	}
+	if rm["check:A:validate"] != "failed" {
+		t.Errorf("check should fail, got %s", rm["check:A:validate"])
+	}
+	if rm["B"] != "skipped" {
+		t.Errorf("B should be skipped due to blocking check, got %s", rm["B"])
+	}
+	if rm["C"] != "skipped" {
+		t.Errorf("C should be skipped due to blocking check, got %s", rm["C"])
+	}
+
+	// Verify skip reason metadata
+	for _, r := range rr.Results {
+		if r.AssetName == "B" {
+			if r.Metadata == nil || r.Metadata["blocked_by_check"] != "check:A:validate" {
+				t.Errorf("B metadata should contain blocked_by_check:check:A:validate, got %v", r.Metadata)
+			}
+			if !strings.Contains(r.Error, "blocked_by_check:check:A:validate") {
+				t.Errorf("B error should contain blocked_by_check:check:A:validate, got %s", r.Error)
+			}
+		}
+	}
+}
+
+func TestExecute_NonBlockingCheckFailureDoesNotAffectDownstream(t *testing.T) {
+	// A (asset) -> check:A:validate (non-blocking check, fails)
+	// A -> B (downstream of A)
+	// Non-blocking check failure should NOT skip B
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "A", Type: "shell", Source: "a.sh"},
+			{Name: "check:A:validate", Type: "sql_check", Blocking: false},
+			{Name: "B", Type: "shell", Source: "b.sh"},
+		},
+		map[string][]string{
+			"check:A:validate": {"A"},
+			"B":                {"A"},
+		},
+	)
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		if asset.Name == "check:A:validate" {
+			return NodeResult{AssetName: asset.Name, Status: "failed", Error: "check failed", ExitCode: 1}
+		}
+		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 1}, runner)
+	rm := resultMap(rr)
+
+	if rm["A"] != "success" {
+		t.Errorf("A should succeed, got %s", rm["A"])
+	}
+	if rm["check:A:validate"] != "failed" {
+		t.Errorf("check should fail, got %s", rm["check:A:validate"])
+	}
+	if rm["B"] != "success" {
+		t.Errorf("B should succeed (non-blocking check), got %s", rm["B"])
+	}
+}
+
+func TestExecute_BlockingCheckPassAllowsDownstream(t *testing.T) {
+	// A -> check:A:validate (blocking, passes) -> B depends on A
+	// When blocking check passes, B should still run
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "A", Type: "shell", Source: "a.sh"},
+			{Name: "check:A:validate", Type: "sql_check", Blocking: true},
+			{Name: "B", Type: "shell", Source: "b.sh"},
+		},
+		map[string][]string{
+			"check:A:validate": {"A"},
+			"B":                {"A"},
+		},
+	)
+
+	rr := Execute(g, RunConfig{MaxParallel: 1}, successRunner(0))
+	rm := resultMap(rr)
+
+	if rm["A"] != "success" {
+		t.Errorf("A should succeed, got %s", rm["A"])
+	}
+	if rm["check:A:validate"] != "success" {
+		t.Errorf("check should succeed, got %s", rm["check:A:validate"])
+	}
+	if rm["B"] != "success" {
+		t.Errorf("B should succeed, got %s", rm["B"])
+	}
+}
+
+func TestExecute_BlockingCheckSkipsEntireSubtree(t *testing.T) {
+	// source:s -> A -> check:A:block (blocking, fails)
+	// A -> B -> C -> D
+	// All of B, C, D should be skipped
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "source:s", Type: graph.AssetTypeSource},
+			{Name: "A", Type: "shell", Source: "a.sh"},
+			{Name: "check:A:block", Type: "sql_check", Blocking: true},
+			{Name: "B", Type: "shell", Source: "b.sh"},
+			{Name: "C", Type: "shell", Source: "c.sh"},
+			{Name: "D", Type: "shell", Source: "d.sh"},
+		},
+		map[string][]string{
+			"A":              {"source:s"},
+			"check:A:block":  {"A"},
+			"B":              {"A"},
+			"C":              {"B"},
+			"D":              {"C"},
+		},
+	)
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		if asset.Name == "check:A:block" {
+			return NodeResult{AssetName: asset.Name, Status: "failed", Error: "check failed", ExitCode: 1}
+		}
+		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 10}, runner)
+	rm := resultMap(rr)
+
+	if rm["source:s"] != "success" {
+		t.Errorf("source:s should succeed, got %s", rm["source:s"])
+	}
+	if rm["A"] != "success" {
+		t.Errorf("A should succeed, got %s", rm["A"])
+	}
+	if rm["check:A:block"] != "failed" {
+		t.Errorf("check should fail, got %s", rm["check:A:block"])
+	}
+	for _, name := range []string{"B", "C", "D"} {
+		if rm[name] != "skipped" {
+			t.Errorf("%s should be skipped, got %s", name, rm[name])
+		}
+	}
+}
+
+func TestExecute_BlockingCheckDoesNotAffectUnrelatedBranches(t *testing.T) {
+	// A -> check:A:block (blocking, fails), A -> B (skipped)
+	// X -> Y (independent branch, should succeed)
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "A", Type: "shell", Source: "a.sh"},
+			{Name: "check:A:block", Type: "sql_check", Blocking: true},
+			{Name: "B", Type: "shell", Source: "b.sh"},
+			{Name: "X", Type: "shell", Source: "x.sh"},
+			{Name: "Y", Type: "shell", Source: "y.sh"},
+		},
+		map[string][]string{
+			"check:A:block": {"A"},
+			"B":             {"A"},
+			"Y":             {"X"},
+		},
+	)
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		if asset.Name == "check:A:block" {
+			return NodeResult{AssetName: asset.Name, Status: "failed", Error: "check failed", ExitCode: 1}
+		}
+		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
+	}
+
+	rr := Execute(g, RunConfig{MaxParallel: 10}, runner)
+	rm := resultMap(rr)
+
+	if rm["B"] != "skipped" {
+		t.Errorf("B should be skipped, got %s", rm["B"])
+	}
+	if rm["X"] != "success" {
+		t.Errorf("X should succeed, got %s", rm["X"])
+	}
+	if rm["Y"] != "success" {
+		t.Errorf("Y should succeed, got %s", rm["Y"])
 	}
 }

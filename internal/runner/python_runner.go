@@ -5,22 +5,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 type PythonRunner struct {
-	Timeout              time.Duration
+	Timeout               time.Duration
 	DestinationConnection *config.ConnectionConfig
 	SourceConnection      *config.ConnectionConfig
+	EventStore            *events.Store
+	Pipeline              string
+	RefFunc               func(string) (string, error)
 }
 
-func NewPythonRunner(destConn, srcConn *config.ConnectionConfig) *PythonRunner {
+func NewPythonRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *PythonRunner {
 	return &PythonRunner{
-		Timeout:              DefaultTimeout,
+		Timeout:               DefaultTimeout,
 		DestinationConnection: destConn,
 		SourceConnection:      srcConn,
+		EventStore:            eventStore,
+		Pipeline:              pipeline,
 	}
 }
 
@@ -62,12 +69,31 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		env = append(env, "GRANICUS_SOURCE_CONNECTION="+string(connJSON))
 	}
 
+	if r.RefFunc != nil && len(asset.DependsOn) > 0 {
+		refs := make(map[string]string, len(asset.DependsOn))
+		for _, dep := range asset.DependsOn {
+			resolved, err := r.RefFunc(dep)
+			if err == nil {
+				refs[dep] = strings.ReplaceAll(resolved, "`", "")
+			}
+		}
+		if refsJSON, err := json.Marshal(refs); err == nil {
+			env = append(env, "GRANICUS_REFS="+string(refsJSON))
+		}
+	}
+
+	done := make(chan struct{})
+	if r.EventStore != nil {
+		go r.monitorProgress(metadataPath, asset.Name, runID, done)
+	}
+
 	sub := RunSubprocess(SubprocessConfig{
 		Command: []string{pythonBin, asset.Source},
 		Env:     env,
 		WorkDir: projectRoot,
-		Timeout: r.Timeout,
+		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
+	close(done)
 	end := time.Now()
 
 	result := NodeResult{
@@ -96,6 +122,39 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 	}
 
 	return result
+}
+
+func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, done <-chan struct{}) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			data, err := os.ReadFile(metadataPath)
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			var meta map[string]string
+			if json.Unmarshal(data, &meta) != nil {
+				continue
+			}
+			details := make(map[string]any, len(meta))
+			for k, v := range meta {
+				details[k] = v
+			}
+			r.EventStore.Emit(events.Event{
+				RunID:     runID,
+				Pipeline:  r.Pipeline,
+				Asset:     assetName,
+				EventType: "asset_progress",
+				Summary:   meta["step"],
+				Details:   details,
+			})
+		}
+	}
 }
 
 func findPython(projectRoot string) string {

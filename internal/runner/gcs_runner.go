@@ -49,7 +49,7 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		Command: inferCommand(asset.Source, projectRoot),
 		Env:     env,
 		WorkDir: projectRoot,
-		Timeout: r.Timeout,
+		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 	end := time.Now()
 
@@ -118,7 +118,7 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 		Command: inferCommand(asset.Source, projectRoot),
 		Env:     env,
 		WorkDir: projectRoot,
-		Timeout: r.Timeout,
+		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 	end := time.Now()
 

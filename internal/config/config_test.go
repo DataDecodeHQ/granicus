@@ -866,3 +866,87 @@ func TestResolveAssetPool(t *testing.T) {
 		})
 	}
 }
+
+func TestOutputDatasets(t *testing.T) {
+	cfg := &PipelineConfig{
+		Pipeline: "test",
+		Connections: map[string]*ConnectionConfig{
+			"bq": {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "dev_default"}},
+			"bq2": {Name: "bq2", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "dev_other"}},
+			"bq_nods": {Name: "bq_nods", Type: "bigquery", Properties: map[string]string{"project": "p"}},
+		},
+		Datasets: map[string]string{
+			"intermediate": "dev_intermediate",
+		},
+		Assets: []AssetConfig{
+			{Name: "a1", Type: "sql", Source: "a.sql", DestinationConnection: "bq"},
+			{Name: "a2", Type: "sql", Source: "b.sql", DestinationConnection: "bq_nods", Layer: "intermediate"},
+			{Name: "a3", Type: "sql", Source: "c.sql", DestinationConnection: "bq2"},
+			{Name: "a4", Type: "python", Source: "d.py"},
+		},
+	}
+
+	datasets := cfg.OutputDatasets()
+	got := make(map[string]bool)
+	for _, ds := range datasets {
+		got[ds] = true
+	}
+
+	expected := map[string]bool{
+		"dev_default":      true,
+		"dev_intermediate": true,
+		"dev_other":        true,
+	}
+
+	if len(got) != len(expected) {
+		t.Errorf("expected %d datasets, got %d: %v", len(expected), len(got), datasets)
+	}
+	for ds := range expected {
+		if !got[ds] {
+			t.Errorf("missing expected dataset %q in %v", ds, datasets)
+		}
+	}
+}
+
+func TestParseConfig_AssetTimeout(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: slow_model
+    type: sql
+    source: sql/slow.sql
+    destination_connection: bq
+    timeout: 30m
+  - name: fast_model
+    type: shell
+    source: scripts/fast.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].Timeout != "30m" {
+		t.Errorf("expected timeout 30m, got %q", cfg.Assets[0].Timeout)
+	}
+	if cfg.Assets[1].Timeout != "" {
+		t.Errorf("expected empty timeout, got %q", cfg.Assets[1].Timeout)
+	}
+}
+
+func TestParseConfig_AssetTimeoutInvalid(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: bad
+    type: shell
+    source: x.sh
+    timeout: not-a-duration
+`))
+	if err == nil {
+		t.Error("expected error for invalid timeout")
+	}
+}

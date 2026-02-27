@@ -22,6 +22,7 @@ import (
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/gc"
 	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/monitor"
 	"github.com/analytehealth/granicus/internal/pool"
 	"github.com/analytehealth/granicus/internal/rerun"
 	"github.com/analytehealth/granicus/internal/runner"
@@ -325,10 +326,16 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		}
 	}
 
-	// Register python/dlt runners
-	reg.Register("python", runner.NewPythonRunner(nil, nil))
-	reg.Register("python_check", runner.NewPythonCheckRunner(nil, nil))
-	reg.Register("dlt", runner.NewDLTRunner(nil, nil))
+	// Register python/dlt runners with ref resolution
+	pyRunner := runner.NewPythonRunner(nil, nil, nil, "")
+	pyRunner.RefFunc = refFunc
+	reg.Register("python", pyRunner)
+	pyCheckRunner := runner.NewPythonCheckRunner(nil, nil, nil, "")
+	pyCheckRunner.SetRefFunc(refFunc)
+	reg.Register("python_check", pyCheckRunner)
+	dltRunner := runner.NewDLTRunner(nil, nil, nil, "")
+	dltRunner.SetRefFunc(refFunc)
+	reg.Register("dlt", dltRunner)
 
 	return reg
 }
@@ -512,6 +519,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			TestEnd:               asset.TestEnd,
 			Dataset:               resolvedDataset,
 			Layer:                 asset.Layer,
+			DependsOn:             asset.DependsOn,
+			Timeout:               asset.Timeout,
 		}
 
 		r := registry.Run(ra, pr, rid)
@@ -646,6 +655,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nRun complete: %d succeeded, %d failed, %d skipped (%.0fs total)\n", succeeded, failed, skipped, totalDuration.Seconds())
 	fmt.Printf("Run ID: %s\n", runID)
+
+	// Post-run hooks: context.db + monitor.db
+	bqClient := newBQClientForContext(cfg)
+	if bqClient != nil {
+		defer bqClient.Close()
+	}
+	hooks := []executor.PostRunHook{
+		executor.WriteContextHook(bqClient),
+		monitorHook(bqClient),
+	}
+	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
 
 	if failed > 0 {
 		return fmt.Errorf("%d node(s) failed", failed)
@@ -1309,6 +1329,91 @@ func parseDuration(s string) (time.Duration, error) {
 		}
 	}
 	return 0, fmt.Errorf("invalid duration: %q (use e.g., 24h, 7d, 30d)", s)
+}
+
+func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
+	return func(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *executor.RunResult) error {
+		monitorCfgPath := filepath.Join(projectRoot, "monitoring.yaml")
+		monCfg, err := monitor.LoadMonitorConfig(monitorCfgPath)
+		if err != nil {
+			return fmt.Errorf("loading monitoring.yaml: %w", err)
+		}
+		if monCfg == nil {
+			return nil
+		}
+
+		dbPath := filepath.Join(projectRoot, ".granicus", "monitor.db")
+
+		// Collect check errors
+		if err := monitor.CollectCheckErrors(dbPath, cfg.Pipeline, rr); err != nil {
+			log.Printf("WARNING: monitor check error collection failed: %v", err)
+		}
+
+		// Collect structural metrics
+		now := time.Now().UTC()
+		tables := make(map[string]string)
+		_, defaultDS := primaryBQProjectDataset(cfg)
+		for _, a := range cfg.Assets {
+			ds := cfg.DatasetForAsset(a, defaultDS)
+			if ds != "" {
+				tables[a.Name] = ds
+			}
+		}
+		structural := monitor.CollectStructuralMetrics(bqClient, monCfg.Monitoring.Structural, cfg.Pipeline, tables, now)
+
+		// Collect business metrics
+		project, dataset := primaryBQProjectDataset(cfg)
+		business := monitor.CollectBusinessMetrics(context.Background(), bqClient, monCfg, cfg.Pipeline, project, dataset)
+
+		// Append all snapshots
+		allSnapshots := append(structural, business...)
+		if len(allSnapshots) > 0 {
+			if err := monitor.AppendSnapshots(dbPath, allSnapshots); err != nil {
+				log.Printf("WARNING: monitor snapshot append failed: %v", err)
+			}
+		}
+
+		// Compare and flag drift
+		flags, err := monitor.CompareSnapshots(dbPath, monCfg, allSnapshots)
+		if err != nil {
+			log.Printf("WARNING: monitor comparison failed: %v", err)
+		}
+		if len(flags) > 0 {
+			if err := monitor.AppendFlags(dbPath, flags); err != nil {
+				log.Printf("WARNING: monitor flag append failed: %v", err)
+			}
+		}
+
+		return nil
+	}
+}
+
+func primaryBQProjectDataset(cfg *config.PipelineConfig) (string, string) {
+	for _, conn := range cfg.Connections {
+		if conn.Type == "bigquery" {
+			return conn.Properties["project"], conn.Properties["dataset"]
+		}
+	}
+	return "", ""
+}
+
+func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
+	for _, conn := range cfg.Connections {
+		if conn.Type != "bigquery" {
+			continue
+		}
+		var opts []option.ClientOption
+		if creds := conn.Properties["credentials"]; creds != "" {
+			opts = append(opts, option.WithCredentialsFile(creds))
+		}
+		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
+		if err != nil {
+			log.Printf("WARNING: could not create BQ client for context: %v", err)
+			return nil
+		}
+		return client
+	}
+	return nil
 }
 
 func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID string) error {

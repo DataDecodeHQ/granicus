@@ -91,6 +91,17 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		maxP = 10
 	}
 
+	// Pre-compute blocking checks per asset: asset -> list of blocking check node names
+	blockingChecks := make(map[string][]string)
+	for name := range nodesToRun {
+		asset := g.Assets[name]
+		if asset.Blocking && strings.HasPrefix(name, "check:") {
+			for _, parent := range asset.DependsOn {
+				blockingChecks[parent] = append(blockingChecks[parent], name)
+			}
+		}
+	}
+
 	var mu sync.Mutex
 	results := make(map[string]*NodeResult)
 	resolved := make(map[string]bool)
@@ -164,6 +175,64 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}()
 	}
 
+	// allBlockingChecksPassed returns true if every blocking check for the given
+	// asset has completed successfully. Must be called with mu held.
+	allBlockingChecksPassed := func(assetName string) bool {
+		checks, has := blockingChecks[assetName]
+		if !has {
+			return true
+		}
+		for _, chk := range checks {
+			r, ok := results[chk]
+			if !ok || r.Status != "success" {
+				return false
+			}
+		}
+		return true
+	}
+
+	// tryDispatchDownstream attempts to dispatch a downstream node if all its
+	// dependencies have succeeded AND all blocking checks on each dependency
+	// have passed. Must be called with mu held; temporarily releases mu to
+	// dispatch. Returns true if mu was temporarily released.
+	tryDispatchDownstream := func(downstream string) bool {
+		if !nodesToRun[downstream] || resolved[downstream] {
+			return false
+		}
+		if unresolved[downstream] != 0 {
+			return false
+		}
+		// All graph deps resolved — verify each dep succeeded
+		for _, dep := range g.Assets[downstream].DependsOn {
+			if !nodesToRun[dep] {
+				continue
+			}
+			r, ok := results[dep]
+			if !ok || r.Status != "success" {
+				return false
+			}
+		}
+		// Gate on blocking checks: for each dependency that has blocking
+		// checks, all must have passed before we dispatch this downstream.
+		// (Check nodes themselves are not gated — they run as soon as their
+		// parent asset succeeds.)
+		if !strings.HasPrefix(downstream, "check:") {
+			for _, dep := range g.Assets[downstream].DependsOn {
+				if !nodesToRun[dep] {
+					continue
+				}
+				if !allBlockingChecksPassed(dep) {
+					return false
+				}
+			}
+		}
+		resolved[downstream] = true
+		mu.Unlock()
+		dispatch(downstream)
+		mu.Lock()
+		return true
+	}
+
 	// Find and dispatch root nodes
 	for name := range nodesToRun {
 		if unresolved[name] == 0 {
@@ -179,31 +248,30 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		pending--
 
 		if result.Status == "success" {
+			// Decrement unresolved counts and try dispatching downstream nodes
 			for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
 				if !nodesToRun[downstream] || resolved[downstream] {
 					continue
 				}
 				unresolved[downstream]--
-				if unresolved[downstream] == 0 {
-					allOK := true
-					for _, dep := range g.Assets[downstream].DependsOn {
-						if !nodesToRun[dep] {
-							continue
-						}
-						if r, ok := results[dep]; !ok || r.Status != "success" {
-							allOK = false
-							break
-						}
+				tryDispatchDownstream(downstream)
+			}
+
+			// If this is a successful blocking check, its parent's other
+			// downstream nodes may now be unblocked. Re-evaluate them.
+			asset := g.Assets[result.AssetName]
+			if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
+				for _, parentName := range asset.DependsOn {
+					if !allBlockingChecksPassed(parentName) {
+						continue
 					}
-					if allOK {
-						resolved[downstream] = true
-						mu.Unlock()
-						dispatch(downstream)
-						mu.Lock()
+					for _, downstream := range g.Assets[parentName].DependedOnBy {
+						tryDispatchDownstream(downstream)
 					}
 				}
 			}
 		} else {
+			// Skip all direct descendants of the failed node
 			descendants := g.Descendants(result.AssetName)
 			for _, desc := range descendants {
 				if !nodesToRun[desc] || resolved[desc] {
@@ -217,6 +285,31 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 					ExitCode:  -1,
 				}
 				pending--
+			}
+
+			// Blocking check failure: skip descendants of the parent asset
+			asset := g.Assets[result.AssetName]
+			if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
+				for _, parentName := range asset.DependsOn {
+					parentDescendants := g.Descendants(parentName)
+					for _, desc := range parentDescendants {
+						if desc == result.AssetName {
+							continue
+						}
+						if !nodesToRun[desc] || resolved[desc] {
+							continue
+						}
+						resolved[desc] = true
+						results[desc] = &NodeResult{
+							AssetName: desc,
+							Status:    "skipped",
+							Error:     "skipped: blocked_by_check:" + result.AssetName,
+							ExitCode:  -1,
+							Metadata:  map[string]string{"blocked_by_check": result.AssetName},
+						}
+						pending--
+					}
+				}
 			}
 		}
 		mu.Unlock()

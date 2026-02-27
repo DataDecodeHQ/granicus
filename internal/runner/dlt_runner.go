@@ -2,16 +2,21 @@ package runner
 
 import (
 	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 type DLTRunner struct {
 	inner *PythonRunner
 }
 
-func NewDLTRunner(destConn, srcConn *config.ConnectionConfig) *DLTRunner {
+func NewDLTRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *DLTRunner {
 	return &DLTRunner{
-		inner: NewPythonRunner(destConn, srcConn),
+		inner: NewPythonRunner(destConn, srcConn, eventStore, pipeline),
 	}
+}
+
+func (r *DLTRunner) SetRefFunc(f func(string) (string, error)) {
+	r.inner.RefFunc = f
 }
 
 func (r *DLTRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {

@@ -362,6 +362,8 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			IntervalEnd:           asset.IntervalEnd,
 			Prefix:                cfg.Prefix,
 			InlineSQL:             asset.InlineSQL,
+			DependsOn:             asset.DependsOn,
+			Timeout:               asset.Timeout,
 		}
 
 		r := registry.Run(ra, pr, rid)
@@ -474,4 +476,15 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 
 	log.Printf("run %s: %s — %d succeeded, %d failed, %d skipped (%.0fs)",
 		runID, cfg.Pipeline, succeeded, failed, skipped, totalDuration.Seconds())
+
+	// Post-run hooks: context.db + monitor.db
+	bqClient := newBQClientForContext(cfg)
+	if bqClient != nil {
+		defer bqClient.Close()
+	}
+	hooks := []executor.PostRunHook{
+		executor.WriteContextHook(bqClient),
+		monitorHook(bqClient),
+	}
+	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
 }

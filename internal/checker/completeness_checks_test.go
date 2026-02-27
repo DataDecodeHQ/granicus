@@ -512,11 +512,11 @@ func TestGenerateCompletenessCheckNodes_SQLStructure(t *testing.T) {
 		t.Errorf("SQL missing unexpected_count: %s", sql)
 	}
 
-	// Verify template placeholders
-	if !strings.Contains(sql, "{{.Project}}") {
-		t.Errorf("SQL missing {{.Project}} template: %s", sql)
+	// Verify ref() calls are used for table references
+	if !strings.Contains(sql, `ref "stg_patients"`) {
+		t.Errorf("SQL missing ref call for source table: %s", sql)
 	}
-	if !strings.Contains(sql, "{{.Dataset}}") {
-		t.Errorf("SQL missing {{.Dataset}} template: %s", sql)
+	if !strings.Contains(sql, `ref "ent_patient"`) {
+		t.Errorf("SQL missing ref call for entity table: %s", sql)
 	}
 }

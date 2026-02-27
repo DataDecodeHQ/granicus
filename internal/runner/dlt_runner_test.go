@@ -16,7 +16,7 @@ print("dlt done")
 `
 	os.WriteFile(filepath.Join(dir, "dlt_test.py"), []byte(script), 0644)
 
-	r := NewDLTRunner(nil, nil)
+	r := NewDLTRunner(nil, nil, nil, "")
 	result := r.Run(&Asset{Name: "dlt_test", Type: "dlt", Source: "dlt_test.py"}, dir, "run1")
 
 	if result.Status != "success" {
@@ -35,7 +35,7 @@ func TestDLTRunner_FallbackNoMetadata(t *testing.T) {
 	script := `print("no dlt metadata")`
 	os.WriteFile(filepath.Join(dir, "plain.py"), []byte(script), 0644)
 
-	r := NewDLTRunner(nil, nil)
+	r := NewDLTRunner(nil, nil, nil, "")
 	result := r.Run(&Asset{Name: "plain", Type: "dlt", Source: "plain.py"}, dir, "run1")
 
 	if result.Status != "success" {

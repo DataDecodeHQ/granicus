@@ -105,9 +105,9 @@ assets:
 	}
 
 	reg := runner.NewRunnerRegistry(nil)
-	reg.Register("python", runner.NewPythonRunner(nil, nil))
-	reg.Register("python_check", runner.NewPythonCheckRunner(nil, nil))
-	reg.Register("dlt", runner.NewDLTRunner(nil, nil))
+	reg.Register("python", runner.NewPythonRunner(nil, nil, nil, ""))
+	reg.Register("python_check", runner.NewPythonCheckRunner(nil, nil, nil, ""))
+	reg.Register("dlt", runner.NewDLTRunner(nil, nil, nil, ""))
 
 	runID := events.GenerateRunID()
 	eventStore := newTestEventStore(t)

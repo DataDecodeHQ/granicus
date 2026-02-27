@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/analytehealth/granicus/internal/config"
 )
@@ -128,6 +129,10 @@ func SourcePhantomNodes(cfg *config.PipelineConfig) []AssetInput {
 func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 	inputs := make([]AssetInput, len(cfg.Assets))
 	for i, a := range cfg.Assets {
+		var timeout time.Duration
+		if a.Timeout != "" {
+			timeout, _ = time.ParseDuration(a.Timeout)
+		}
 		inputs[i] = AssetInput{
 			Name:                  a.Name,
 			Type:                  a.Type,
@@ -137,6 +142,7 @@ func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 			Layer:                 a.Layer,
 			Grain:                 a.Grain,
 			DefaultChecks:         a.DefaultChecks,
+			Timeout:               timeout,
 		}
 	}
 	return inputs

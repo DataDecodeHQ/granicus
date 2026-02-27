@@ -28,6 +28,8 @@ type Asset struct {
 	TestEnd               string
 	Dataset               string
 	Layer                 string
+	DependsOn             []string
+	Timeout               time.Duration
 }
 
 type NodeResult struct {
@@ -45,6 +47,16 @@ type NodeResult struct {
 
 type Runner interface {
 	Run(asset *Asset, projectRoot string, runID string) NodeResult
+}
+
+func effectiveTimeout(assetTimeout, runnerTimeout time.Duration) time.Duration {
+	if assetTimeout > 0 {
+		return assetTimeout
+	}
+	if runnerTimeout > 0 {
+		return runnerTimeout
+	}
+	return DefaultTimeout
 }
 
 type ShellRunner struct {
@@ -89,7 +101,7 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		Command: []string{"bash", asset.Source},
 		Env:     env,
 		WorkDir: projectRoot,
-		Timeout: r.Timeout,
+		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 	end := time.Now()
 

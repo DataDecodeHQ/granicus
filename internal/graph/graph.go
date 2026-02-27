@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Asset struct {
@@ -27,6 +28,8 @@ type Asset struct {
 	Grain                 string
 	DefaultChecks         *bool
 	InlineSQL             string
+	Blocking              bool
+	Timeout               time.Duration
 }
 
 type Graph struct {
@@ -59,6 +62,8 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			Grain:                 a.Grain,
 			DefaultChecks:         a.DefaultChecks,
 			InlineSQL:             a.InlineSQL,
+			Blocking:              a.Blocking,
+			Timeout:               a.Timeout,
 		}
 	}
 
@@ -105,6 +110,8 @@ type AssetInput struct {
 	Grain                 string
 	DefaultChecks         *bool
 	InlineSQL             string
+	Blocking              bool
+	Timeout               time.Duration
 }
 
 const AssetTypeSource = "source"

@@ -104,10 +104,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	// Prepend DROP TABLE to avoid partition spec conflicts on CREATE OR REPLACE
 	rendered = prependDropForReplace(rendered)
 
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = DefaultTimeout
-	}
+	timeout := effectiveTimeout(asset.Timeout, r.Timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -264,10 +261,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	checkSQL := substituteIntervalVars(buf.Bytes(), asset)
 	checkSQL = SubstituteTestVars(checkSQL, asset.TestStart, asset.TestEnd)
 
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = DefaultTimeout
-	}
+	timeout := effectiveTimeout(asset.Timeout, r.Timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

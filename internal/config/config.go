@@ -40,7 +40,14 @@ type ConnectionConfig struct {
 type CheckConfig struct {
 	Name   string `yaml:"name"`
 	Type   string `yaml:"type"`
-	Source string `yaml:"source"`
+	Source   string `yaml:"source"`
+	Blocking bool   `yaml:"blocking,omitempty"`
+}
+
+type StandardsConfig struct {
+	Email    []string `yaml:"email,omitempty"`
+	Phone    []string `yaml:"phone,omitempty"`
+	Currency []string `yaml:"currency,omitempty"`
 }
 
 type AssetConfig struct {
@@ -54,6 +61,7 @@ type AssetConfig struct {
 	Layer                 string              `yaml:"layer,omitempty"`
 	Grain                 string              `yaml:"grain,omitempty"`
 	DefaultChecks         *bool               `yaml:"default_checks,omitempty"`
+	DefaultChecksBlocking bool                `yaml:"default_checks_blocking,omitempty"`
 	PartitionBy           string              `yaml:"partition_by,omitempty"`
 	PartitionType         string              `yaml:"partition_type,omitempty"`
 	ClusterBy             []string            `yaml:"cluster_by,omitempty"`
@@ -63,6 +71,9 @@ type AssetConfig struct {
 	MinRetentionRatio     *float64            `yaml:"min_retention_ratio,omitempty"`
 	FanOutCheck           *bool               `yaml:"fan_out_check,omitempty"`
 	Completeness          *CompletenessConfig `yaml:"completeness,omitempty"`
+	Standards             *StandardsConfig    `yaml:"standards,omitempty"`
+	StandardsBlocking     bool                `yaml:"standards_blocking,omitempty"`
+	Timeout               string              `yaml:"timeout,omitempty"`
 }
 
 var validPartitionTypes = map[string]bool{
@@ -125,6 +136,30 @@ func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset str
 		}
 	}
 	return defaultDataset
+}
+
+func (cfg *PipelineConfig) OutputDatasets() []string {
+	seen := make(map[string]bool)
+	for _, asset := range cfg.Assets {
+		connName := asset.DestinationConnection
+		if connName == "" {
+			continue
+		}
+		conn, ok := cfg.Connections[connName]
+		if !ok {
+			continue
+		}
+		defaultDS := conn.Properties["dataset"]
+		ds := cfg.DatasetForAsset(asset, defaultDS)
+		if ds != "" && !seen[ds] {
+			seen[ds] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for ds := range seen {
+		result = append(result, ds)
+	}
+	return result
 }
 
 var connectionRequirements = map[string][]string{
@@ -191,6 +226,12 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 
 		if a.PartitionType != "" && a.PartitionBy == "" {
 			return nil, fmt.Errorf("asset %q: partition_type requires partition_by", a.Name)
+		}
+
+		if a.Timeout != "" {
+			if _, err := time.ParseDuration(a.Timeout); err != nil {
+				return nil, fmt.Errorf("asset %q: invalid timeout %q: %w", a.Name, a.Timeout, err)
+			}
 		}
 
 		if seen[a.Name] {
