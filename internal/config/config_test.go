@@ -271,6 +271,10 @@ assets:
     type: shell
     source: y.sh
     layer: entity
+  - name: z
+    type: shell
+    source: z.sh
+    layer: publish
 `))
 	if err != nil {
 		t.Fatalf("valid layers should pass: %v", err)

@@ -518,6 +518,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	hooks := []executor.PostRunHook{
 		executor.WriteContextHook(bqClient),
 		monitorHook(bqClient),
+		executor.DuckDBAssemblyHook(),
 	}
 	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
 }

@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"path/filepath"
 
 	"cloud.google.com/go/bigquery"
@@ -24,6 +27,50 @@ func WriteContextHook(bqClient *bigquery.Client) PostRunHook {
 
 		return gctx.CreateOrReplace(dbPath, schemas, lineage, assets)
 	}
+}
+
+func DuckDBAssemblyHook() PostRunHook {
+	return func(_ *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) error {
+		if !assetSucceeded(rr, "publish_dashboard_parquet") {
+			log.Printf("INFO: skipping DuckDB assembly (publish_dashboard_parquet did not succeed)")
+			return nil
+		}
+
+		scriptPath := filepath.Join(projectRoot, "python", "build_dashboard_duckdb.py")
+		conn := cfg.Connections["gcs_dashboard"]
+		if conn == nil {
+			return fmt.Errorf("DuckDB assembly: gcs_dashboard connection not found")
+		}
+
+		cmd := exec.Command("python3", scriptPath)
+		cmd.Env = append(os.Environ(),
+			"GRANICUS_GCS_BUCKET="+conn.Properties["bucket"],
+			"GRANICUS_GCS_PREFIX="+conn.Properties["prefix"],
+		)
+		if creds, ok := conn.Properties["credentials"]; ok {
+			cmd.Env = append(cmd.Env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
+		}
+		cmd.Dir = projectRoot
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("DuckDB assembly failed: %w", err)
+		}
+		return nil
+	}
+}
+
+func assetSucceeded(rr *RunResult, name string) bool {
+	if rr == nil {
+		return false
+	}
+	for _, r := range rr.Results {
+		if r.AssetName == name && r.Status == "success" {
+			return true
+		}
+	}
+	return false
 }
 
 func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) {

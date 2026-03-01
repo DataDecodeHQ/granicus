@@ -681,6 +681,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	hooks := []executor.PostRunHook{
 		executor.WriteContextHook(bqClient),
 		monitorHook(bqClient),
+		executor.DuckDBAssemblyHook(),
 	}
 	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
 

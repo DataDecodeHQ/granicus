@@ -93,6 +93,7 @@ var validLayers = map[string]bool{
 	"analytics":    true,
 	"entity":       true,
 	"report":       true,
+	"publish":      true,
 }
 
 type SourceConfig struct {
@@ -218,7 +219,7 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		}
 
 		if !validLayers[a.Layer] {
-			return nil, fmt.Errorf("asset %q: invalid layer %q (must be staging, intermediate, entity, or report)", a.Name, a.Layer)
+			return nil, fmt.Errorf("asset %q: invalid layer %q (must be staging, intermediate, entity, report, or publish)", a.Name, a.Layer)
 		}
 
 		if !validPartitionTypes[a.PartitionType] {

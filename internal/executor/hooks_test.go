@@ -62,6 +62,73 @@ func TestWriteContextHook_NilClient(t *testing.T) {
 	}
 }
 
+func TestDuckDBAssemblyHook_SkipsWhenAssetNotInResults(t *testing.T) {
+	g, cfg := testHookGraph(t)
+	projectRoot := t.TempDir()
+
+	rr := &RunResult{
+		Results: []NodeResult{
+			{AssetName: "stg_orders", Status: "success"},
+		},
+	}
+
+	hook := DuckDBAssemblyHook()
+	err := hook(g, cfg, projectRoot, rr)
+	if err != nil {
+		t.Fatalf("expected nil error when asset not in results, got: %v", err)
+	}
+}
+
+func TestDuckDBAssemblyHook_SkipsWhenAssetFailed(t *testing.T) {
+	g, cfg := testHookGraph(t)
+	projectRoot := t.TempDir()
+
+	rr := &RunResult{
+		Results: []NodeResult{
+			{AssetName: "publish_dashboard_parquet", Status: "failed"},
+		},
+	}
+
+	hook := DuckDBAssemblyHook()
+	err := hook(g, cfg, projectRoot, rr)
+	if err != nil {
+		t.Fatalf("expected nil error when asset failed, got: %v", err)
+	}
+}
+
+func TestDuckDBAssemblyHook_SkipsWhenNilRunResult(t *testing.T) {
+	g, cfg := testHookGraph(t)
+	projectRoot := t.TempDir()
+
+	hook := DuckDBAssemblyHook()
+	err := hook(g, cfg, projectRoot, nil)
+	if err != nil {
+		t.Fatalf("expected nil error with nil RunResult, got: %v", err)
+	}
+}
+
+func TestAssetSucceeded(t *testing.T) {
+	tests := []struct {
+		name     string
+		rr       *RunResult
+		asset    string
+		expected bool
+	}{
+		{"nil result", nil, "x", false},
+		{"not found", &RunResult{Results: []NodeResult{{AssetName: "y", Status: "success"}}}, "x", false},
+		{"failed", &RunResult{Results: []NodeResult{{AssetName: "x", Status: "failed"}}}, "x", false},
+		{"skipped", &RunResult{Results: []NodeResult{{AssetName: "x", Status: "skipped"}}}, "x", false},
+		{"success", &RunResult{Results: []NodeResult{{AssetName: "x", Status: "success"}}}, "x", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := assetSucceeded(tt.rr, tt.asset); got != tt.expected {
+				t.Errorf("assetSucceeded() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestRunPostHooks_ContinuesOnError(t *testing.T) {
 	g, cfg := testHookGraph(t)
 	projectRoot := t.TempDir()
