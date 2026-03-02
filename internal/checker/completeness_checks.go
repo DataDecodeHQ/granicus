@@ -50,11 +50,11 @@ func completenessSQL(assetName, grain string, comp *config.CompletenessConfig) s
 
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("WITH source_pks AS (\n  SELECT DISTINCT %s AS pk\n  FROM `{{ ref \"%s\" }}`\n)",
+	b.WriteString(fmt.Sprintf("WITH source_pks AS (\n  SELECT DISTINCT %s AS pk\n  FROM {{ ref \"%s\" }}\n)",
 		comp.SourcePK, comp.SourceTable))
 
 	for i, excl := range comp.Exclusions {
-		b.WriteString(fmt.Sprintf(",\nexclusion_%d AS (\n  SELECT DISTINCT %s AS pk\n  FROM `{{ ref \"%s\" }}`",
+		b.WriteString(fmt.Sprintf(",\nexclusion_%d AS (\n  SELECT DISTINCT %s AS pk\n  FROM {{ ref \"%s\" }}",
 			i+1, excl.PK, excl.Table))
 		if excl.Filter != "" {
 			b.WriteString(fmt.Sprintf("\n  WHERE %s", excl.Filter))
@@ -63,7 +63,7 @@ func completenessSQL(assetName, grain string, comp *config.CompletenessConfig) s
 	}
 
 	for i, add := range comp.Additions {
-		b.WriteString(fmt.Sprintf(",\naddition_%d AS (\n  SELECT DISTINCT %s AS pk\n  FROM `{{ ref \"%s\" }}`",
+		b.WriteString(fmt.Sprintf(",\naddition_%d AS (\n  SELECT DISTINCT %s AS pk\n  FROM {{ ref \"%s\" }}",
 			i+1, add.PK, add.Table))
 		if add.Filter != "" {
 			b.WriteString(fmt.Sprintf("\n  WHERE %s", add.Filter))
@@ -80,7 +80,7 @@ func completenessSQL(assetName, grain string, comp *config.CompletenessConfig) s
 	}
 	b.WriteString("\n)")
 
-	b.WriteString(fmt.Sprintf(",\nentity_pks AS (\n  SELECT DISTINCT %s AS pk\n  FROM `{{ ref \"%s\" }}`\n)",
+	b.WriteString(fmt.Sprintf(",\nentity_pks AS (\n  SELECT DISTINCT %s AS pk\n  FROM {{ ref \"%s\" }}\n)",
 		grain, assetName))
 
 	b.WriteString(",\nstats AS (\n  SELECT\n    (SELECT COUNT(*) FROM expected_pks) AS expected_count,\n    (SELECT COUNT(*) FROM entity_pks) AS entity_count,\n    (SELECT COUNT(*) FROM expected_pks WHERE pk NOT IN (SELECT pk FROM entity_pks)) AS missing_count,\n    (SELECT COUNT(*) FROM entity_pks WHERE pk NOT IN (SELECT pk FROM expected_pks)) AS unexpected_count\n)")

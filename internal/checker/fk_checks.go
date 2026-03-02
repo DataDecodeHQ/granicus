@@ -66,14 +66,14 @@ func splitFKReference(references string) (table, column string) {
 
 func fkNotNullSQL(assetName, grain, fkColumn string) string {
 	return fmt.Sprintf(
-		"SELECT %s, '%s' AS fk_column, 'FK_IS_NULL' AS issue_type FROM `{{ ref \"%s\" }}` WHERE %s IS NULL LIMIT 10",
+		"SELECT %s, '%s' AS fk_column, 'FK_IS_NULL' AS issue_type FROM {{ ref \"%s\" }} WHERE %s IS NULL LIMIT 10",
 		grain, fkColumn, assetName, fkColumn,
 	)
 }
 
 func fkIntegritySQL(assetName, grain, fkColumn, referencedTable, referencedColumn string) string {
 	return fmt.Sprintf(
-		"SELECT child.%s, child.%s, 'ORPHAN_FK' AS issue_type FROM `{{ ref \"%s\" }}` child LEFT JOIN `{{ ref \"%s\" }}` parent ON child.%s = parent.%s WHERE parent.%s IS NULL AND child.%s IS NOT NULL LIMIT 10",
+		"SELECT child.%s, child.%s, 'ORPHAN_FK' AS issue_type FROM {{ ref \"%s\" }} child LEFT JOIN {{ ref \"%s\" }} parent ON child.%s = parent.%s WHERE parent.%s IS NULL AND child.%s IS NOT NULL LIMIT 10",
 		grain, fkColumn, assetName, referencedTable, fkColumn, referencedColumn, referencedColumn, fkColumn,
 	)
 }

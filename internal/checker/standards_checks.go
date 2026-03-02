@@ -69,21 +69,21 @@ func GenerateStandardsCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput
 
 func emailStandardSQL(assetName, col string) string {
 	return fmt.Sprintf(
-		"SELECT %s, 'EMAIL_NOT_NORMALIZED' AS issue_type FROM `{{ ref \"%s\" }}` WHERE %s IS NOT NULL AND %s != LOWER(TRIM(%s)) LIMIT 10",
+		"SELECT %s, 'EMAIL_NOT_NORMALIZED' AS issue_type FROM {{ ref \"%s\" }} WHERE %s IS NOT NULL AND %s != LOWER(TRIM(%s)) LIMIT 10",
 		col, assetName, col, col, col,
 	)
 }
 
 func phoneStandardSQL(assetName, col string) string {
 	return fmt.Sprintf(
-		"SELECT %s, 'PHONE_FORMAT_INVALID' AS issue_type FROM `{{ ref \"%s\" }}` WHERE %s IS NOT NULL AND NOT REGEXP_CONTAINS(%s, r'^1-\\d{3}-\\d{3}-\\d{4}$') LIMIT 10",
+		"SELECT %s, 'PHONE_FORMAT_INVALID' AS issue_type FROM {{ ref \"%s\" }} WHERE %s IS NOT NULL AND NOT REGEXP_CONTAINS(%s, r'^1-\\d{3}-\\d{3}-\\d{4}$') LIMIT 10",
 		col, assetName, col, col,
 	)
 }
 
 func currencyStandardSQL(assetName, col string) string {
 	return fmt.Sprintf(
-		"SELECT %s, 'CURRENCY_NOT_ROUNDED' AS issue_type FROM `{{ ref \"%s\" }}` WHERE %s IS NOT NULL AND %s != ROUND(%s, 2) LIMIT 10",
+		"SELECT %s, 'CURRENCY_NOT_ROUNDED' AS issue_type FROM {{ ref \"%s\" }} WHERE %s IS NOT NULL AND %s != ROUND(%s, 2) LIMIT 10",
 		col, assetName, col, col, col,
 	)
 }
