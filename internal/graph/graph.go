@@ -250,3 +250,16 @@ func (g *Graph) collectAncestors(name string, visited map[string]bool) {
 		g.collectAncestors(dep, visited)
 	}
 }
+
+func (g *Graph) DownstreamSubgraph(targets []string) []string {
+	visited := make(map[string]bool)
+	for _, t := range targets {
+		g.collectDescendants(t, visited)
+	}
+
+	var result []string
+	for n := range visited {
+		result = append(result, n)
+	}
+	return result
+}

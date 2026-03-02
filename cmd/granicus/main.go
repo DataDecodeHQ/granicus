@@ -63,6 +63,7 @@ func main() {
 	runCmd.Flags().Bool("test", false, "Run in test mode (creates temporary dataset)")
 	runCmd.Flags().String("test-window", "", "Test window duration (e.g., 7d, 4w, 3m)")
 	runCmd.Flags().Bool("keep-test-data", false, "Preserve test dataset after run")
+	runCmd.Flags().Bool("downstream-only", false, "With --assets, run only downstream dependents (skip upstream)")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -364,6 +365,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
 	assetsFlag, _ := cmd.Flags().GetString("assets")
+	downstreamOnly, _ := cmd.Flags().GetBool("downstream-only")
 	fromFailure, _ := cmd.Flags().GetString("from-failure")
 	fromDate, _ := cmd.Flags().GetString("from-date")
 	toDate, _ := cmd.Flags().GetString("to-date")
@@ -395,6 +397,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	if maxParallel > 0 {
 		cfg.MaxParallel = maxParallel
+	}
+
+	if downstreamOnly && assetsFlag == "" {
+		return fmt.Errorf("--downstream-only requires --assets")
 	}
 
 	var assetFilter []string
@@ -606,20 +612,21 @@ func runRun(cmd *cobra.Command, args []string) error {
 	poolMgr, assetPools := buildPoolManager(cfg)
 
 	runCfg := executor.RunConfig{
-		MaxParallel:  cfg.MaxParallel,
-		Assets:       assetFilter,
-		ProjectRoot:  projectRoot,
-		RunID:        runID,
-		FromDate:     fromDate,
-		ToDate:       toDate,
-		FullRefresh:  fullRefresh,
-		StateStore:   stateStore,
-		TestMode:     testMode,
-		TestStart:    testStart,
-		TestEnd:      testEnd,
-		KeepTestData: keepTestData,
-		PoolManager:  poolMgr,
-		AssetPools:   assetPools,
+		MaxParallel:    cfg.MaxParallel,
+		Assets:         assetFilter,
+		ProjectRoot:    projectRoot,
+		RunID:          runID,
+		FromDate:       fromDate,
+		ToDate:         toDate,
+		FullRefresh:    fullRefresh,
+		StateStore:     stateStore,
+		TestMode:       testMode,
+		TestStart:      testStart,
+		TestEnd:        testEnd,
+		KeepTestData:   keepTestData,
+		DownstreamOnly: downstreamOnly,
+		PoolManager:    poolMgr,
+		AssetPools:     assetPools,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)

@@ -39,10 +39,11 @@ type RunConfig struct {
 	TestMode     bool
 	TestStart    string
 	TestEnd      string
-	KeepTestData bool
-	TestDataset  string // set by test mode setup (the created dataset name)
-	PoolManager  *pool.PoolManager
-	AssetPools   map[string]string // asset name -> pool name
+	KeepTestData   bool
+	TestDataset    string // set by test mode setup (the created dataset name)
+	DownstreamOnly bool
+	PoolManager    *pool.PoolManager
+	AssetPools     map[string]string // asset name -> pool name
 }
 
 type RunnerFunc func(asset *graph.Asset, projectRoot string, runID string) NodeResult
@@ -66,7 +67,12 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	// Determine which nodes to run
 	nodesToRun := make(map[string]bool)
 	if len(cfg.Assets) > 0 {
-		subgraph := g.Subgraph(cfg.Assets)
+		var subgraph []string
+		if cfg.DownstreamOnly {
+			subgraph = g.DownstreamSubgraph(cfg.Assets)
+		} else {
+			subgraph = g.Subgraph(cfg.Assets)
+		}
 		for _, n := range subgraph {
 			nodesToRun[n] = true
 		}
