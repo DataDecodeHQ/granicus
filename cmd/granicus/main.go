@@ -24,6 +24,7 @@ import (
 	"github.com/analytehealth/granicus/internal/executor"
 	"github.com/analytehealth/granicus/internal/gc"
 	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/migrate"
 	"github.com/analytehealth/granicus/internal/monitor"
 	"github.com/analytehealth/granicus/internal/pool"
 	"github.com/analytehealth/granicus/internal/rerun"
@@ -206,7 +207,16 @@ func main() {
 	modelsCmd.Flags().String("diff", "", "Show diff between two versions (e.g., 1,2)")
 	modelsCmd.Flags().String("output", "", "Output format (json)")
 
-	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd)
+	migrateCmd := &cobra.Command{
+		Use:   "migrate <config.yaml>",
+		Short: "Migrate a pipeline config to the latest format version",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runMigrate,
+	}
+	migrateCmd.Flags().Bool("dry-run", false, "Show what would change without modifying the file")
+	migrateCmd.Flags().String("from-version", "", "Override detected config version (e.g., 0.2)")
+
+	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1768,5 +1778,54 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 			})
 		}
 	}
+	return nil
+}
+
+func runMigrate(cmd *cobra.Command, args []string) error {
+	configPath := args[0]
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	fromVersionFlag, _ := cmd.Flags().GetString("from-version")
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+
+	fromVersion := fromVersionFlag
+	if fromVersion == "" {
+		fromVersion = migrate.DetectVersion(content)
+	}
+
+	result, err := migrate.Migrate(content, fromVersion)
+	if err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	if result.AlreadyCurrent {
+		fmt.Printf("Config is already at version %s, nothing to do.\n", migrate.LatestVersion)
+		return nil
+	}
+
+	fmt.Printf("Migrating %s: %s -> %s\n", configPath, result.FromVersion, result.ToVersion)
+	for _, c := range result.Changes {
+		fmt.Printf("  - %s\n", c.Description)
+	}
+
+	if dryRun {
+		fmt.Println("\n(dry-run: no changes written)")
+		return nil
+	}
+
+	backupPath, err := migrate.WriteBackup(configPath)
+	if err != nil {
+		return fmt.Errorf("creating backup: %w", err)
+	}
+	fmt.Printf("Backup written: %s\n", backupPath)
+
+	if err := os.WriteFile(configPath, result.Content, 0644); err != nil {
+		return fmt.Errorf("writing migrated config: %w", err)
+	}
+
+	fmt.Printf("Migration complete: %s\n", configPath)
 	return nil
 }
