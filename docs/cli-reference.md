@@ -6,6 +6,8 @@ Granicus is a lightweight asset-oriented data pipeline orchestrator. All command
 granicus <command> [arguments] [flags]
 ```
 
+Pipeline configuration is defined in `pipeline.yaml`. The full JSON Schema for `pipeline.yaml` is at [`schemas/pipeline.schema.json`](../schemas/pipeline.schema.json).
+
 ---
 
 ## Commands
