@@ -20,6 +20,8 @@ granicus <command> [arguments] [flags]
 - [backup](#backup)
 - [serve](#serve)
 - [migrate](#migrate)
+- [completion](#completion)
+- [doctor](#doctor)
 - [version](#version)
 
 ---
@@ -484,6 +486,106 @@ granicus migrate pipeline.yaml --dry-run
 
 # Force migration from a specific version
 granicus migrate pipeline.yaml --from-version 0.2
+```
+
+---
+
+## completion
+
+Generate shell completion scripts for bash, zsh, fish, and PowerShell.
+
+```
+granicus completion <bash|zsh|fish|powershell>
+```
+
+**Arguments:** Shell type (required). One of: `bash`, `zsh`, `fish`, or `powershell`.
+
+**Description:**
+
+Generates a completion script for the specified shell. Pipe the output to the appropriate command to install the completion:
+
+- **bash**: `granicus completion bash | sudo tee /etc/bash_completion.d/granicus`
+- **zsh**: `granicus completion zsh | sudo tee /usr/share/zsh/site-functions/_granicus`
+- **fish**: `granicus completion fish | sudo tee /usr/share/fish/vendor_completions.d/granicus.fish`
+- **powershell**: `granicus completion powershell | Out-String | Invoke-Expression`
+
+Or temporarily source the completion in your current session:
+
+- **bash**: `source <(granicus completion bash)`
+- **zsh**: `source <(granicus completion zsh)`
+- **fish**: `granicus completion fish | source`
+- **powershell**: `granicus completion powershell | Out-String | Invoke-Expression`
+
+**Examples:**
+
+```bash
+# Generate bash completion and install
+granicus completion bash | sudo tee /etc/bash_completion.d/granicus
+
+# Temporarily enable for zsh
+source <(granicus completion zsh)
+
+# View powershell completion
+granicus completion powershell
+```
+
+---
+
+## doctor
+
+Run environment health checks and report pass/fail/warn status for each check.
+
+```
+granicus doctor [config.yaml] [flags]
+```
+
+**Arguments:** Path to pipeline config file (optional). When provided, connectivity checks are run for each declared connection.
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--project-root <string>` | `.` | Project root directory |
+| `--output <string>` | | Output format (`json`) |
+
+**Checks performed:**
+
+| Check | Description |
+|-------|-------------|
+| `go_version` | Reports the Go runtime version the binary was compiled with |
+| `bq:<name>` | Verifies BigQuery connectivity for each `bigquery` connection (requires config) |
+| `gcs:<name>` | Validates GCS connection config (bucket set, credentials file accessible) for each `gcs` connection (requires config) |
+| `state.db` | Verifies `.granicus/state.db` is writable and passes SQLite integrity check |
+| `events.db` | Verifies `.granicus/events.db` is writable |
+| `disk_space` | Reports available disk space; warns below 1 GB, fails below 100 MB |
+
+**Exit code:** Non-zero if any check has `fail` status.
+
+**Examples:**
+
+```bash
+# Check local environment only (no connections)
+granicus doctor --project-root .
+
+# Check including BigQuery/GCS connectivity
+granicus doctor pipeline.yaml --project-root .
+
+# JSON output for scripting
+granicus doctor --output json | jq '.checks[] | select(.status != "pass")'
+```
+
+**JSON output shape:**
+
+```json
+{
+  "healthy": true,
+  "checks": [
+    {"name": "go_version", "status": "pass", "message": "go1.26.0"},
+    {"name": "state.db",   "status": "pass", "message": "writable, integrity ok"},
+    {"name": "events.db",  "status": "pass", "message": "writable"},
+    {"name": "disk_space", "status": "pass", "message": "17.5 GB available"}
+  ]
+}
 ```
 
 ---

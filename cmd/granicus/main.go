@@ -20,6 +20,7 @@ import (
 	"github.com/Andrew-DataDecode/Granicus/internal/backup"
 	"github.com/Andrew-DataDecode/Granicus/internal/checker"
 	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/doctor"
 	"github.com/Andrew-DataDecode/Granicus/internal/events"
 	"github.com/Andrew-DataDecode/Granicus/internal/executor"
 	"github.com/Andrew-DataDecode/Granicus/internal/gc"
@@ -223,7 +224,25 @@ func main() {
 	migrateCmd.Flags().Bool("dry-run", false, "Show what would change without modifying the file")
 	migrateCmd.Flags().String("from-version", "", "Override detected config version (e.g., 0.2)")
 
-	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd)
+	completionCmd := &cobra.Command{
+		Use:   "completion <bash|zsh|fish|powershell>",
+		Short: "Generate shell completion script",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCompletion(rootCmd, args[0])
+		},
+	}
+
+	doctorCmd := &cobra.Command{
+		Use:   "doctor [config.yaml]",
+		Short: "Run health checks on the Granicus environment",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  runDoctor,
+	}
+	doctorCmd.Flags().String("project-root", ".", "Project root directory")
+	doctorCmd.Flags().String("output", "", "Output format (json)")
+
+	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd, completionCmd, doctorCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1970,5 +1989,93 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Migration complete: %s\n", configPath)
+	return nil
+}
+
+func runCompletion(rootCmd *cobra.Command, shell string) error {
+	switch shell {
+	case "bash":
+		return rootCmd.GenBashCompletion(os.Stdout)
+	case "zsh":
+		return rootCmd.GenZshCompletion(os.Stdout)
+	case "fish":
+		return rootCmd.GenFishCompletion(os.Stdout, true)
+	case "powershell":
+		return rootCmd.GenPowerShellCompletion(os.Stdout)
+	default:
+		return fmt.Errorf("unsupported shell: %s (supported: bash, zsh, fish, powershell)", shell)
+	}
+}
+
+type jsonDoctorOutput struct {
+	Healthy bool                  `json:"healthy"`
+	Checks  []doctor.CheckResult  `json:"checks"`
+}
+
+func runDoctor(cmd *cobra.Command, args []string) error {
+	projectRoot, _ := cmd.Flags().GetString("project-root")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	outputJSON := outputFormat == "json"
+
+	var cfg *config.PipelineConfig
+	if len(args) > 0 {
+		var err error
+		cfg, err = config.LoadConfig(args[0])
+		if err != nil {
+			if outputJSON {
+				printJSONError("CONFIG_ERROR", err.Error(), "Check your pipeline configuration file", nil)
+			}
+			return fmt.Errorf("config: %w", err)
+		}
+	}
+
+	results := doctor.RunChecks(cfg, projectRoot)
+
+	hasFailures := false
+	for _, r := range results {
+		if r.Status == doctor.StatusFail {
+			hasFailures = true
+			break
+		}
+	}
+
+	if outputJSON {
+		out := jsonDoctorOutput{
+			Healthy: !hasFailures,
+			Checks:  results,
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		if hasFailures {
+			return fmt.Errorf("health check failed")
+		}
+		return nil
+	}
+
+	const nameW = 28
+	fmt.Printf("  %-*s  %s\n", nameW, "Check", "Details")
+	fmt.Printf("  %-*s  %s\n", nameW, strings.Repeat("-", nameW), strings.Repeat("-", 40))
+
+	for _, r := range results {
+		var icon string
+		switch r.Status {
+		case doctor.StatusPass:
+			icon = greenCheck
+		case doctor.StatusFail:
+			icon = redCross
+		case doctor.StatusWarn:
+			icon = yellowCirc
+		default:
+			icon = whiteBullet
+		}
+		fmt.Printf("  %s %-*s  %s\n", icon, nameW, r.Name, r.Message)
+	}
+
+	fmt.Println()
+	if hasFailures {
+		fmt.Println("Health check failed.")
+		return fmt.Errorf("health check failed")
+	}
+	fmt.Println("All checks passed.")
 	return nil
 }
