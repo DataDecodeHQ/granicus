@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )

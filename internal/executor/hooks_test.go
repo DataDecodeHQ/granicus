@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
 )
 
 func testHookGraph(t *testing.T) (*graph.Graph, *config.PipelineConfig) {

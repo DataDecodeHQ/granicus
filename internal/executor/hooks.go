@@ -9,9 +9,9 @@ import (
 
 	"cloud.google.com/go/bigquery"
 
-	"github.com/analytehealth/granicus/internal/config"
-	gctx "github.com/analytehealth/granicus/internal/context"
-	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	gctx "github.com/Andrew-DataDecode/Granicus/internal/context"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
 )
 
 type PostRunHook func(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) error

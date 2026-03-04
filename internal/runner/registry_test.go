@@ -3,7 +3,7 @@ package runner
 import (
 	"testing"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 func TestRegistry_DispatchShell(t *testing.T) {

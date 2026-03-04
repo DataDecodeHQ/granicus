@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 var depPattern = regexp.MustCompile(`^\s*(?:--|#)\s*depends_on:\s*(\S+)\s*$`)

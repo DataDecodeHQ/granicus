@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 func TestIntegration_ScheduledRunsAndLocking(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/pool"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/pool"
 )
 
 func successRunner(delay time.Duration) RunnerFunc {

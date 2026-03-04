@@ -16,16 +16,16 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/analytehealth/granicus/internal/checker"
-	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/events"
-	"github.com/analytehealth/granicus/internal/executor"
-	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/pool"
-	"github.com/analytehealth/granicus/internal/runner"
-	"github.com/analytehealth/granicus/internal/scheduler"
-	"github.com/analytehealth/granicus/internal/server"
-	"github.com/analytehealth/granicus/internal/state"
+	"github.com/Andrew-DataDecode/Granicus/internal/checker"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/Andrew-DataDecode/Granicus/internal/executor"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/pool"
+	"github.com/Andrew-DataDecode/Granicus/internal/runner"
+	"github.com/Andrew-DataDecode/Granicus/internal/scheduler"
+	"github.com/Andrew-DataDecode/Granicus/internal/server"
+	"github.com/Andrew-DataDecode/Granicus/internal/state"
 )
 
 func init() {

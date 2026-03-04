@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/pool"
-	"github.com/analytehealth/granicus/internal/state"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/pool"
+	"github.com/Andrew-DataDecode/Granicus/internal/state"
 )
 
 const DefaultShutdownTimeout = 5 * time.Minute

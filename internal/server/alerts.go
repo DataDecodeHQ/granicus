@@ -9,7 +9,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/events"
+	"github.com/Andrew-DataDecode/Granicus/internal/events"
 )
 
 type AlertConfig struct {
