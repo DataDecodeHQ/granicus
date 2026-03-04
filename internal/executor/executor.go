@@ -211,8 +211,8 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 				result := executeIncremental(asset, cfg, runner, &dedupMu, dedupResults)
 				done <- result
 			} else {
-				// Full refresh or no state store — run once
-				result := executeWithDedup(asset, cfg, runner, &dedupMu, dedupResults, "", "")
+				// Full refresh or no state store — run once, with retry
+				result := runWithRetry(asset, cfg, runner, &dedupMu, dedupResults, "", "")
 				done <- result
 			}
 		}()
@@ -485,19 +485,28 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 	var lastResult NodeResult
 	processed := 0
 
+	maxAttempts := asset.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	backoffBase := asset.BackoffBase
+	if backoffBase <= 0 {
+		backoffBase = 10 * time.Second
+	}
+	maxRetries := maxAttempts - 1
+
 	for _, iv := range missing {
 		cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID)
 
 		var result NodeResult
-		maxRetries := 3
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			result = executeWithDedup(asset, cfg, runner, dedupMu, dedupResults, iv.Start, iv.End)
-			if result.Status == "success" || !isRetryableError(result.Error) || attempt == maxRetries {
+			if result.Status == "success" || !isRetryableForPolicy(result.Error, asset.RetryableErrors) || attempt == maxRetries {
 				break
 			}
-			backoff := time.Duration(1<<uint(attempt)) * 10 * time.Second
+			backoff := time.Duration(1<<uint(attempt)) * backoffBase
 			log.Printf("executor: retrying %s interval %s after %v (attempt %d/%d): %s",
-				asset.Name, iv.Start, backoff, attempt+1, maxRetries, result.Error)
+				asset.Name, iv.Start, backoff, attempt+1, maxAttempts, result.Error)
 			time.Sleep(backoff)
 		}
 
@@ -568,4 +577,30 @@ func mergeMetadata(base, extra map[string]string) map[string]string {
 
 func itoa(i int) string {
 	return strconv.Itoa(i)
+}
+
+// runWithRetry executes an asset once (non-incremental path) with per-asset retry policy.
+func runWithRetry(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedupMu *sync.Mutex, dedupResults map[string]*NodeResult, intervalStart, intervalEnd string) NodeResult {
+	maxAttempts := asset.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	backoffBase := asset.BackoffBase
+	if backoffBase <= 0 {
+		backoffBase = 10 * time.Second
+	}
+	maxRetries := maxAttempts - 1
+
+	var result NodeResult
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		result = executeWithDedup(asset, cfg, runner, dedupMu, dedupResults, intervalStart, intervalEnd)
+		if result.Status == "success" || !isRetryableForPolicy(result.Error, asset.RetryableErrors) || attempt == maxRetries {
+			break
+		}
+		backoff := time.Duration(1<<uint(attempt)) * backoffBase
+		log.Printf("executor: retrying %s after %v (attempt %d/%d): %s",
+			asset.Name, backoff, attempt+1, maxAttempts, result.Error)
+		time.Sleep(backoff)
+	}
+	return result
 }

@@ -30,6 +30,9 @@ type Asset struct {
 	InlineSQL             string
 	Blocking              bool
 	Timeout               time.Duration
+	MaxAttempts           int
+	BackoffBase           time.Duration
+	RetryableErrors       []string
 }
 
 type Graph struct {
@@ -64,6 +67,9 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			InlineSQL:             a.InlineSQL,
 			Blocking:              a.Blocking,
 			Timeout:               a.Timeout,
+			MaxAttempts:           a.MaxAttempts,
+			BackoffBase:           a.BackoffBase,
+			RetryableErrors:       a.RetryableErrors,
 		}
 	}
 
@@ -98,6 +104,9 @@ type AssetInput struct {
 	Name                  string
 	Type                  string
 	Source                string
+	MaxAttempts           int
+	BackoffBase           time.Duration
+	RetryableErrors       []string
 	DestinationConnection string
 	SourceConnection      string
 	TimeColumn            string

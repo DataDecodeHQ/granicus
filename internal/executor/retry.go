@@ -115,3 +115,21 @@ func ClassifyError(errMsg string) ErrorCategory {
 func isRetryableError(errMsg string) bool {
 	return ClassifyError(errMsg) != CategoryNone
 }
+
+// isRetryableForPolicy returns true if the error matches a category in the
+// given retryableErrors list. If the list is empty, falls back to isRetryableError.
+func isRetryableForPolicy(errMsg string, retryableErrors []string) bool {
+	if len(retryableErrors) == 0 {
+		return isRetryableError(errMsg)
+	}
+	cat := ClassifyError(errMsg)
+	if cat == CategoryNone {
+		return false
+	}
+	for _, allowed := range retryableErrors {
+		if string(cat) == allowed {
+			return true
+		}
+	}
+	return false
+}
