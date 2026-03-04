@@ -75,7 +75,26 @@ type AssetConfig struct {
 	StandardsBlocking     bool                `yaml:"standards_blocking,omitempty"`
 	Timeout               string              `yaml:"timeout,omitempty"`
 	DependsOn             []string            `yaml:"depends_on,omitempty"`
+	Retry                 *RetryConfig        `yaml:"retry,omitempty"`
 }
+
+// RetryConfig configures per-asset retry behaviour.
+type RetryConfig struct {
+	MaxAttempts     int      `yaml:"max_attempts"`
+	BackoffBase     string   `yaml:"backoff_base"`
+	RetryableErrors []string `yaml:"retryable_errors"`
+}
+
+// validErrorCategories are the error taxonomy values accepted in retryable_errors.
+var validErrorCategories = map[string]bool{
+	"rate_limit": true,
+	"quota":      true,
+	"network":    true,
+	"timeout":    true,
+	"server":     true,
+}
+
+var defaultRetryableErrors = []string{"rate_limit", "quota", "network"}
 
 var validPartitionTypes = map[string]bool{
 	"":      true,
@@ -178,6 +197,41 @@ var validTypes = map[string]bool{
 	"dlt":    true,
 }
 
+// validateAndApplyRetryDefaults validates the retry block and fills in defaults.
+// If no retry block is set, a default policy is applied.
+func validateAndApplyRetryDefaults(a *AssetConfig) error {
+	if a.Retry == nil {
+		a.Retry = &RetryConfig{}
+	}
+	r := a.Retry
+
+	if r.MaxAttempts == 0 {
+		r.MaxAttempts = 3
+	} else if r.MaxAttempts < 1 {
+		return fmt.Errorf("retry.max_attempts must be >= 1")
+	}
+
+	if r.BackoffBase == "" {
+		r.BackoffBase = "10s"
+	} else {
+		if _, err := time.ParseDuration(r.BackoffBase); err != nil {
+			return fmt.Errorf("retry.backoff_base %q is not a valid duration: %w", r.BackoffBase, err)
+		}
+	}
+
+	if len(r.RetryableErrors) == 0 {
+		r.RetryableErrors = append([]string(nil), defaultRetryableErrors...)
+	} else {
+		for _, cat := range r.RetryableErrors {
+			if !validErrorCategories[cat] {
+				return fmt.Errorf("retry.retryable_errors contains unknown category %q (valid: rate_limit, quota, network, timeout, server)", cat)
+			}
+		}
+	}
+
+	return nil
+}
+
 func LoadConfig(path string) (*PipelineConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -234,6 +288,10 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 			if _, err := time.ParseDuration(a.Timeout); err != nil {
 				return nil, fmt.Errorf("asset %q: invalid timeout %q: %w", a.Name, a.Timeout, err)
 			}
+		}
+
+		if err := validateAndApplyRetryDefaults(a); err != nil {
+			return nil, fmt.Errorf("asset %q: %w", a.Name, err)
 		}
 
 		if seen[a.Name] {
