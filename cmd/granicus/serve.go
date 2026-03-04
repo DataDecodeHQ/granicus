@@ -43,6 +43,7 @@ func newServeCmd() *cobra.Command {
 	serveCmd.Flags().String("env-config", "", "Path to granicus-env.yaml")
 	serveCmd.Flags().String("env", "dev", "Environment name (default: dev)")
 	serveCmd.Flags().String("project-root", ".", "Project root directory")
+	serveCmd.Flags().Duration("orphan-timeout", 2*time.Hour, "Timeout before an in_progress interval is considered orphaned and recovered")
 	serveCmd.MarkFlagRequired("config-dir")
 	return serveCmd
 }
@@ -53,6 +54,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	envConfigPath, _ := cmd.Flags().GetString("env-config")
 	envName, _ := cmd.Flags().GetString("env")
 	projectRoot, _ := cmd.Flags().GetString("project-root")
+	orphanTimeout, _ := cmd.Flags().GetDuration("orphan-timeout")
 
 	// Load server config
 	var serverCfg *config.ServerConfig
@@ -110,6 +112,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Summary: fmt.Sprintf("Recovered %d stale locks on startup", recovered),
 			Details: map[string]any{"recovered_count": recovered},
 		})
+	}
+
+	// Recover orphaned intervals (in_progress longer than orphan_timeout)
+	intervalStateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
+	if stateStore, serr := state.New(intervalStateDBPath); serr != nil {
+		log.Printf("orphan recovery: could not open state db: %v", serr)
+	} else {
+		orphans, rerr := stateStore.RecoverOrphans(orphanTimeout)
+		stateStore.Close()
+		if rerr != nil {
+			log.Printf("orphan interval recovery error: %v", rerr)
+		} else if len(orphans) > 0 {
+			log.Printf("recovered %d orphaned intervals", len(orphans))
+			for _, iv := range orphans {
+				_ = eventStore.Emit(events.Event{
+					EventType: "interval_recovered", Severity: "warning",
+					Summary: fmt.Sprintf("Recovered orphaned interval %s/%s (was in_progress since %s)", iv.AssetName, iv.IntervalStart, iv.StartedAt),
+					Details: map[string]any{
+						"asset_name":     iv.AssetName,
+						"interval_start": iv.IntervalStart,
+						"interval_end":   iv.IntervalEnd,
+						"run_id":         iv.RunID,
+						"started_at":     iv.StartedAt,
+					},
+				})
+			}
+		}
 	}
 
 	// Shutdown context: cancelled on SIGTERM/SIGINT to drain executor runs.
