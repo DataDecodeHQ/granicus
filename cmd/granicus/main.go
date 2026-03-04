@@ -132,6 +132,7 @@ func main() {
 	runCmd.Flags().Bool("keep-test-data", false, "Preserve test dataset after run")
 	runCmd.Flags().Bool("downstream-only", false, "With --assets, run only downstream dependents (skip upstream)")
 	runCmd.Flags().String("output", "", "Output format (json)")
+	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running (assets, intervals, checks)")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -443,6 +444,132 @@ func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *
 	return nil
 }
 
+func runDryRun(g *graph.Graph, cfg *config.PipelineConfig, assetFilter []string, downstreamOnly bool, fromDate, toDate string, fullRefresh bool, projectRoot string) error {
+	// Determine which nodes to run
+	nodesToRun := make(map[string]bool)
+	if len(assetFilter) > 0 {
+		var subgraph []string
+		if downstreamOnly {
+			subgraph = g.DownstreamSubgraph(assetFilter)
+		} else {
+			subgraph = g.Subgraph(assetFilter)
+		}
+		for _, n := range subgraph {
+			nodesToRun[n] = true
+		}
+	} else {
+		for name := range g.Assets {
+			nodesToRun[name] = true
+		}
+	}
+
+	// Topological order, excluding check nodes (shown inline per asset)
+	allSorted := g.TopologicalSort()
+	var sorted []string
+	for _, name := range allSorted {
+		if nodesToRun[name] && !strings.HasPrefix(name, "check:") {
+			sorted = append(sorted, name)
+		}
+	}
+
+	// Try to open state store for interval counts (read-only, ignore errors if missing)
+	var stateStore *state.Store
+	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
+	if _, statErr := os.Stat(stateDBPath); statErr == nil {
+		stateStore, _ = state.New(stateDBPath)
+		if stateStore != nil {
+			defer stateStore.Close()
+		}
+	}
+
+	endDate := toDate
+	if endDate == "" {
+		endDate = time.Now().UTC().Format("2006-01-02")
+	}
+
+	fmt.Printf("Dry run: %s\n", cfg.Pipeline)
+	fmt.Printf("Assets to run: %d\n\n", len(sorted))
+
+	const (
+		numW       = 4
+		nameW      = 32
+		typeW      = 10
+		intervalW  = 22
+	)
+	sep := strings.Repeat("-", numW+2+nameW+2+typeW+2+intervalW+2+40)
+	fmt.Printf("%-*s  %-*s  %-*s  %-*s  %s\n", numW, "#", nameW, "Asset", typeW, "Type", intervalW, "Intervals", "Checks")
+	fmt.Println(sep)
+
+	for i, name := range sorted {
+		asset := g.Assets[name]
+
+		typeLabel := asset.Type
+		if typeLabel == "" {
+			typeLabel = "sql"
+		}
+		if asset.Type == graph.AssetTypeSource {
+			typeLabel = "source"
+		}
+
+		intervalsLabel := "full"
+		if asset.TimeColumn != "" {
+			startDate := asset.StartDate
+			if fromDate != "" {
+				startDate = fromDate
+			}
+			unit := asset.IntervalUnit
+			if unit == "" {
+				unit = "day"
+			}
+			if startDate != "" {
+				allIntervals, err := state.GenerateIntervals(startDate, endDate, unit)
+				if err == nil {
+					if fullRefresh {
+						intervalsLabel = fmt.Sprintf("%d total (%s)", len(allIntervals), unit)
+					} else {
+						pending := len(allIntervals)
+						if stateStore != nil {
+							completed, cerr := stateStore.GetIntervals(name)
+							if cerr == nil {
+								missing := state.ComputeMissing(allIntervals, completed, asset.Lookback)
+								missing = state.ApplyBatchSize(missing, asset.BatchSize)
+								pending = len(missing)
+							}
+						}
+						intervalsLabel = fmt.Sprintf("%d pending (%s)", pending, unit)
+					}
+				}
+			}
+		}
+
+		var checkNames []string
+		for _, downstream := range asset.DependedOnBy {
+			if nodesToRun[downstream] && strings.HasPrefix(downstream, "check:") {
+				parts := strings.SplitN(downstream, ":", 3)
+				if len(parts) == 3 {
+					checkNames = append(checkNames, parts[2])
+				} else {
+					checkNames = append(checkNames, downstream)
+				}
+			}
+		}
+		checksStr := strings.Join(checkNames, ", ")
+		if checksStr == "" {
+			checksStr = "(none)"
+		}
+
+		fmt.Printf("%-*d  %-*s  %-*s  %-*s  %s\n",
+			numW, i+1,
+			nameW, name,
+			typeW, typeLabel,
+			intervalW, intervalsLabel,
+			checksStr,
+		)
+	}
+	fmt.Println(sep)
+	return nil
+}
+
 func runRun(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
@@ -457,6 +584,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	keepTestData, _ := cmd.Flags().GetBool("keep-test-data")
 	outputFormat, _ := cmd.Flags().GetString("output")
 	outputJSON := outputFormat == "json"
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	if testWindow != "" && !testMode {
 		if outputJSON {
@@ -525,6 +653,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 		}
 	} else if assetsFlag != "" {
 		assetFilter = strings.Split(assetsFlag, ",")
+	}
+
+	if dryRun {
+		return runDryRun(g, cfg, assetFilter, downstreamOnly, fromDate, toDate, fullRefresh, projectRoot)
 	}
 
 	if !outputJSON {
