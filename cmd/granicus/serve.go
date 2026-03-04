@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -111,9 +112,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	// Shutdown context: cancelled on SIGTERM/SIGINT to drain executor runs.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	defer shutdownCancel()
+
 	// Build run function
 	runFunc := func(cfg *config.PipelineConfig, pr string) {
-		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore)
+		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore, shutdownCtx)
 	}
 
 	// Create scheduler
@@ -155,9 +160,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, eventStore,
 		func(cfg *config.PipelineConfig, pr string, runID string, req server.TriggerRequest) {
-			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req)
+			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req, shutdownCtx)
 		},
 	)
+	srv.SetShutdownCtx(shutdownCtx)
 
 	// Set pipeline configs on the server
 	configMap := make(map[string]*config.PipelineConfig)
@@ -187,27 +193,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Wait for interrupt
+	// Wait for SIGTERM or SIGINT
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
 
 	log.Println("shutting down...")
 
-	// Graceful shutdown: stop accepting new work, wait for in-progress
+	// Signal all in-progress executor runs to drain.
+	shutdownCancel()
+
+	// Stop the scheduler from starting new runs.
 	sched.Stop()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer shutdownCancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+	// Stop accepting new HTTP requests and drain in-flight HTTP connections.
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer drainCancel()
+	if err := httpSrv.Shutdown(drainCtx); err != nil {
 		log.Printf("HTTP shutdown error: %v", err)
 	}
+
+	// Wait for in-progress triggered pipeline runs to finish (same timeout).
+	srv.WaitForRuns(drainCtx)
 
 	log.Println("shutdown complete")
 	return nil
 }
 
-func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store) {
+func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, ctx context.Context) {
 	if envCfg != nil {
 		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
 		if err == nil {
@@ -218,10 +231,10 @@ func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName st
 	runID := events.GenerateRunID()
 	log.Printf("scheduled run: %s (run_id=%s)", cfg.Pipeline, runID)
 	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools)
+	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools, ctx)
 }
 
-func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest) {
+func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest, ctx context.Context) {
 	if envCfg != nil {
 		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
 		if err == nil {
@@ -239,10 +252,10 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 	})
 
 	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools)
+	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools, ctx)
 }
 
-func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string) {
+func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string, ctx context.Context) {
 	start := time.Now()
 
 	_ = eventStore.Emit(events.Event{
@@ -458,6 +471,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		StateStore:  stateStore,
 		PoolManager: poolMgr,
 		AssetPools:  assetPools,
+		Ctx:         ctx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
