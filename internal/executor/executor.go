@@ -92,7 +92,9 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		for name := range nodesToRun {
 			asset := g.Assets[name]
 			if asset.TimeColumn != "" {
-				cfg.StateStore.InvalidateAll(name)
+				if err := cfg.StateStore.InvalidateAll(name); err != nil {
+					log.Printf("executor: state store InvalidateAll failed for %s: %v", name, err)
+				}
 			}
 		}
 	}
@@ -458,7 +460,16 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 		}
 	}
 
-	completed, _ := cfg.StateStore.GetIntervals(asset.Name)
+	completed, err := cfg.StateStore.GetIntervals(asset.Name)
+	if err != nil {
+		log.Printf("executor: state store GetIntervals failed for %s: %v", asset.Name, err)
+		return NodeResult{
+			AssetName: asset.Name,
+			Status:    "failed",
+			Error:     fmt.Sprintf("state store GetIntervals: %v", err),
+			ExitCode:  -1,
+		}
+	}
 	missing := state.ComputeMissing(allIntervals, completed, asset.Lookback)
 	missing = state.ApplyBatchSize(missing, asset.BatchSize)
 
@@ -496,7 +507,9 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 	maxRetries := maxAttempts - 1
 
 	for _, iv := range missing {
-		cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID)
+		if err := cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID); err != nil {
+			log.Printf("executor: state store MarkInProgress failed for %s interval %s: %v", asset.Name, iv.Start, err)
+		}
 
 		var result NodeResult
 		for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -511,11 +524,15 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 		}
 
 		if result.Status == "success" {
-			cfg.StateStore.MarkComplete(asset.Name, iv.Start, iv.End)
+			if err := cfg.StateStore.MarkComplete(asset.Name, iv.Start, iv.End); err != nil {
+				log.Printf("executor: state store MarkComplete failed for %s interval %s: %v", asset.Name, iv.Start, err)
+			}
 			processed++
 			lastResult = result
 		} else {
-			cfg.StateStore.MarkFailed(asset.Name, iv.Start, iv.End)
+			if err := cfg.StateStore.MarkFailed(asset.Name, iv.Start, iv.End); err != nil {
+				log.Printf("executor: state store MarkFailed failed for %s interval %s: %v", asset.Name, iv.Start, err)
+			}
 			result.Metadata = mergeMetadata(result.Metadata, map[string]string{
 				"intervals_processed":  itoa(processed),
 				"interval_failed_at":   iv.Start,

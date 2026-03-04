@@ -88,6 +88,12 @@ type jsonErrorDetail struct {
 	Context    map[string]any `json:"context,omitempty"`
 }
 
+func logEmit(es *events.Store, event events.Event) {
+	if err := es.Emit(event); err != nil {
+		log.Printf("WARNING: failed to emit %s event: %v", event.EventType, err)
+	}
+}
+
 func printJSONError(code, message, suggestion string, ctx map[string]any) {
 	out := jsonErrorOutput{
 		Error: jsonErrorDetail{
@@ -580,7 +586,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	defer signal.Stop(sigCh)
 
 	// Emit run_started event
-	_ = eventStore.Emit(events.Event{
+	logEmit(eventStore, events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started", Severity: "info",
 		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
 		Details: map[string]any{
@@ -599,7 +605,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
 		}
 
-		_ = eventStore.Emit(events.Event{
+		logEmit(eventStore, events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
 			EventType: "node_started", Severity: "info",
 			Summary: fmt.Sprintf("Node %s started", asset.Name),
@@ -609,7 +615,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 		if asset.Source != "" {
 			srcPath := filepath.Join(pr, asset.Source)
 			if hash, herr := events.HashFile(srcPath); herr == nil {
-				eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID)
+				if _, _, mvErr := eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID); mvErr != nil {
+					log.Printf("WARNING: failed to record model version for %s: %v", asset.Name, mvErr)
+				}
 			}
 		}
 
@@ -662,7 +670,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		r := registry.Run(ra, pr, rid)
 
 		if r.Status == "success" {
-			_ = eventStore.Emit(events.Event{
+			logEmit(eventStore, events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_succeeded", Severity: "info",
 				DurationMs: r.Duration.Milliseconds(),
@@ -683,7 +691,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			if len(stderr) > 10*1024 {
 				stderr = stderr[:10*1024] + "[truncated]"
 			}
-			_ = eventStore.Emit(events.Event{
+			logEmit(eventStore, events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_failed", Severity: "error",
 				DurationMs: r.Duration.Milliseconds(),
@@ -754,7 +762,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 				fmt.Printf("[%s] %s %-24s skipped -- dependency failed\n", ts, yellowCirc, r.AssetName)
 			}
 
-			_ = eventStore.Emit(events.Event{
+			logEmit(eventStore, events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_skipped", Severity: "warning",
 				Summary: fmt.Sprintf("Node %s skipped: dependency failed", r.AssetName),
@@ -778,7 +786,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	totalDuration := rr.EndTime.Sub(rr.StartTime)
 
 	if rr.Interrupted {
-		_ = eventStore.Emit(events.Event{
+		logEmit(eventStore, events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_interrupted", Severity: "warning",
 			DurationMs: totalDuration.Milliseconds(),
 			Summary:    fmt.Sprintf("Run interrupted: %d succeeded, %d failed, %d skipped", succeeded, failed, skipped),
@@ -797,7 +805,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\nRun interrupted: %d succeeded, %d failed, %d skipped (%.0fs)\n", succeeded, failed, skipped, totalDuration.Seconds())
 			fmt.Printf("Run ID: %s\n", runID)
 		}
-		return nil
+		return fmt.Errorf("run interrupted: %d succeeded, %d failed, %d skipped", succeeded, failed, skipped)
 	}
 
 	status := "success"
@@ -805,7 +813,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		status = "completed_with_failures"
 	}
 
-	_ = eventStore.Emit(events.Event{
+	logEmit(eventStore, events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed", Severity: "info",
 		DurationMs: totalDuration.Milliseconds(),
 		Summary:    fmt.Sprintf("Run %s: %d succeeded, %d failed, %d skipped", status, succeeded, failed, skipped),
@@ -837,7 +845,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 		monitorHook(bqClient),
 		executor.DuckDBAssemblyHook(),
 	}
-	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
+	hookFailures := executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
+	if hookFailures > 0 {
+		log.Printf("WARNING: %d post-run hook(s) failed", hookFailures)
+	}
 
 	if failed > 0 {
 		return fmt.Errorf("%d node(s) failed", failed)
@@ -1772,7 +1783,7 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 
 		fmt.Printf("Created dataset %s.%s (%s)\n", key.project, key.dataset, location)
 		if eventStore != nil {
-			_ = eventStore.Emit(events.Event{
+			logEmit(eventStore, events.Event{
 				RunID: runID, EventType: "dataset_created", Severity: "info",
 				Summary: fmt.Sprintf("Created dataset %s.%s (%s)", key.project, key.dataset, location),
 			})

@@ -73,10 +73,13 @@ func assetSucceeded(rr *RunResult, name string) bool {
 	return false
 }
 
-func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) {
+func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) int {
+	failures := 0
 	for _, hook := range hooks {
 		if err := hook(g, cfg, projectRoot, rr); err != nil {
 			log.Printf("WARNING: post-run hook failed: %v", err)
+			failures++
 		}
 	}
+	return failures
 }

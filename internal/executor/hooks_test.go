@@ -143,9 +143,12 @@ func TestRunPostHooks_ContinuesOnError(t *testing.T) {
 		return nil
 	}
 
-	RunPostHooks([]PostRunHook{failHook, okHook}, g, cfg, projectRoot, nil)
+	failures := RunPostHooks([]PostRunHook{failHook, okHook}, g, cfg, projectRoot, nil)
 
 	if called != 2 {
 		t.Errorf("expected both hooks to run, got %d calls", called)
+	}
+	if failures != 1 {
+		t.Errorf("expected 1 failure, got %d", failures)
 	}
 }
