@@ -556,12 +556,6 @@ func executeWithDedup(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedu
 	return result
 }
 
-func isRetryableError(errMsg string) bool {
-	return strings.Contains(errMsg, "rate limit") ||
-		strings.Contains(errMsg, "Exceeded rate limits") ||
-		strings.Contains(errMsg, "rateLimitExceeded")
-}
-
 func mergeMetadata(base, extra map[string]string) map[string]string {
 	if base == nil {
 		base = make(map[string]string)
