@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"cloud.google.com/go/bigquery"
@@ -40,6 +42,64 @@ var (
 	whiteBullet = color.New(color.FgWhite).Sprint("\u25CF")
 )
 
+type jsonRunOutput struct {
+	RunID           string        `json:"run_id"`
+	Pipeline        string        `json:"pipeline"`
+	Status          string        `json:"status"`
+	DurationSeconds float64       `json:"duration_seconds"`
+	Succeeded       int           `json:"succeeded"`
+	Failed          int           `json:"failed"`
+	Skipped         int           `json:"skipped"`
+	TotalNodes      int           `json:"total_nodes"`
+	Interrupted     bool          `json:"interrupted,omitempty"`
+	Nodes           []jsonRunNode `json:"nodes"`
+}
+
+type jsonRunNode struct {
+	Asset           string  `json:"asset"`
+	Status          string  `json:"status"`
+	DurationSeconds float64 `json:"duration_seconds,omitempty"`
+	Error           string  `json:"error,omitempty"`
+}
+
+type jsonStatusOutput struct {
+	RunID           string            `json:"run_id"`
+	Pipeline        string            `json:"pipeline"`
+	Status          string            `json:"status"`
+	StartTime       time.Time         `json:"start_time"`
+	EndTime         time.Time         `json:"end_time"`
+	DurationSeconds float64           `json:"duration_seconds"`
+	Succeeded       int               `json:"succeeded"`
+	Failed          int               `json:"failed"`
+	Skipped         int               `json:"skipped"`
+	TotalNodes      int               `json:"total_nodes"`
+	Nodes           []events.NodeResult `json:"nodes,omitempty"`
+}
+
+type jsonErrorOutput struct {
+	Error jsonErrorDetail `json:"error"`
+}
+
+type jsonErrorDetail struct {
+	Code       string         `json:"code"`
+	Message    string         `json:"message"`
+	Suggestion string         `json:"suggestion,omitempty"`
+	Context    map[string]any `json:"context,omitempty"`
+}
+
+func printJSONError(code, message, suggestion string, ctx map[string]any) {
+	out := jsonErrorOutput{
+		Error: jsonErrorDetail{
+			Code:       code,
+			Message:    message,
+			Suggestion: suggestion,
+			Context:    ctx,
+		},
+	}
+	data, _ := json.MarshalIndent(out, "", "  ")
+	fmt.Println(string(data))
+}
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:          "granicus",
@@ -64,6 +124,7 @@ func main() {
 	runCmd.Flags().String("test-window", "", "Test window duration (e.g., 7d, 4w, 3m)")
 	runCmd.Flags().Bool("keep-test-data", false, "Preserve test dataset after run")
 	runCmd.Flags().Bool("downstream-only", false, "With --assets, run only downstream dependents (skip upstream)")
+	runCmd.Flags().String("output", "", "Output format (json)")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -74,6 +135,7 @@ func main() {
 	validateCmd.Flags().String("project-root", ".", "Project root directory")
 	validateCmd.Flags().Bool("strict", false, "Promote warnings to errors")
 	validateCmd.Flags().Bool("json", false, "Output validation results as JSON")
+	validateCmd.Flags().String("output", "", "Output format (json)")
 	validateCmd.Flags().Bool("quiet", false, "Only show errors and warnings")
 
 	statusCmd := &cobra.Command{
@@ -83,6 +145,7 @@ func main() {
 		RunE:  runStatus,
 	}
 	statusCmd.Flags().String("project-root", ".", "Project root directory")
+	statusCmd.Flags().String("output", "", "Output format (json)")
 
 	historyCmd := &cobra.Command{
 		Use:   "history",
@@ -91,6 +154,7 @@ func main() {
 	}
 	historyCmd.Flags().Int("limit", 10, "Number of runs to show")
 	historyCmd.Flags().String("project-root", ".", "Project root directory")
+	historyCmd.Flags().String("output", "", "Output format (json)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -130,6 +194,7 @@ func main() {
 	eventsCmd.Flags().String("since", "", "Show events since duration (e.g., 24h, 7d)")
 	eventsCmd.Flags().Int("limit", 50, "Maximum events to show")
 	eventsCmd.Flags().Bool("json", false, "Output as JSON")
+	eventsCmd.Flags().String("output", "", "Output format (json)")
 
 	modelsCmd := &cobra.Command{
 		Use:   "models [asset_name]",
@@ -139,6 +204,7 @@ func main() {
 	}
 	modelsCmd.Flags().String("project-root", ".", "Project root directory")
 	modelsCmd.Flags().String("diff", "", "Show diff between two versions (e.g., 1,2)")
+	modelsCmd.Flags().String("output", "", "Output format (json)")
 
 	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd)
 
@@ -373,11 +439,19 @@ func runRun(cmd *cobra.Command, args []string) error {
 	testMode, _ := cmd.Flags().GetBool("test")
 	testWindow, _ := cmd.Flags().GetString("test-window")
 	keepTestData, _ := cmd.Flags().GetBool("keep-test-data")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	outputJSON := outputFormat == "json"
 
 	if testWindow != "" && !testMode {
+		if outputJSON {
+			printJSONError("INVALID_FLAGS", "--test-window requires --test", "Add --test flag to use --test-window", nil)
+		}
 		return fmt.Errorf("--test-window requires --test")
 	}
 	if keepTestData && !testMode {
+		if outputJSON {
+			printJSONError("INVALID_FLAGS", "--keep-test-data requires --test", "Add --test flag to use --keep-test-data", nil)
+		}
 		return fmt.Errorf("--keep-test-data requires --test")
 	}
 
@@ -392,6 +466,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	cfg, g, _, err := loadAndBuild(args[0], projectRoot)
 	if err != nil {
+		if outputJSON {
+			printJSONError("CONFIG_ERROR", err.Error(), "Check your pipeline configuration file", nil)
+		}
 		return err
 	}
 
@@ -421,18 +498,24 @@ func runRun(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("from-failure: %w", err)
 		}
-		for _, w := range warnings {
-			fmt.Printf("Warning: %s\n", w)
+		if !outputJSON {
+			for _, w := range warnings {
+				fmt.Printf("Warning: %s\n", w)
+			}
 		}
 		assetFilter = rerunAssets
-		fmt.Printf("Re-running from failure %s: %d nodes\n\n", fromFailure, len(assetFilter))
+		if !outputJSON {
+			fmt.Printf("Re-running from failure %s: %d nodes\n\n", fromFailure, len(assetFilter))
+		}
 	} else if assetsFlag != "" {
 		assetFilter = strings.Split(assetsFlag, ",")
 	}
 
-	fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
-	fmt.Printf("Assets: %d (%d root nodes)\n", len(g.Assets), len(g.RootNodes))
-	fmt.Printf("Max parallel: %d\n\n", cfg.MaxParallel)
+	if !outputJSON {
+		fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
+		fmt.Printf("Assets: %d (%d root nodes)\n", len(g.Assets), len(g.RootNodes))
+		fmt.Printf("Max parallel: %d\n\n", cfg.MaxParallel)
+	}
 
 	runID := events.GenerateRunID()
 	registry := buildRegistry(cfg, projectRoot)
@@ -455,7 +538,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 			if conn.Type == "bigquery" {
 				baseDataset := conn.Properties["dataset"]
 				testDatasetName := testmode.TestDatasetName(baseDataset, runID)
+				if !outputJSON {
 				fmt.Printf("Test mode: using dataset %s\n", testDatasetName)
+			}
 				conn.Properties["dataset"] = testDatasetName
 				break
 			}
@@ -468,6 +553,21 @@ func runRun(cmd *cobra.Command, args []string) error {
 	if err := ensureDatasets(cfg, eventStore, runID); err != nil {
 		return fmt.Errorf("ensuring datasets: %w", err)
 	}
+
+	// Set up graceful shutdown on SIGTERM/SIGINT
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	defer shutdownCancel()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		select {
+		case sig := <-sigCh:
+			log.Printf("received signal %v, initiating graceful shutdown", sig)
+			shutdownCancel()
+		case <-shutdownCtx.Done():
+		}
+	}()
+	defer signal.Stop(sigCh)
 
 	// Emit run_started event
 	_ = eventStore.Emit(events.Event{
@@ -483,8 +583,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 	})
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
-		ts := time.Now().Format("15:04:05")
-		fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
+		var ts string
+		if !outputJSON {
+			ts = time.Now().Format("15:04:05")
+			fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
+		}
 
 		_ = eventStore.Emit(events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
@@ -586,12 +689,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 			})
 		}
 
-		ts = time.Now().Format("15:04:05")
-		switch r.Status {
-		case "success":
-			fmt.Printf("[%s] %s %-24s success (%.1fs)\n", ts, greenCheck, r.AssetName, r.Duration.Seconds())
-		case "failed":
-			fmt.Printf("[%s] %s %-24s failed (%.1fs) -- %s\n", ts, redCross, r.AssetName, r.Duration.Seconds(), r.Error)
+		if !outputJSON {
+			ts = time.Now().Format("15:04:05")
+			switch r.Status {
+			case "success":
+				fmt.Printf("[%s] %s %-24s success (%.1fs)\n", ts, greenCheck, r.AssetName, r.Duration.Seconds())
+			case "failed":
+				fmt.Printf("[%s] %s %-24s failed (%.1fs) -- %s\n", ts, redCross, r.AssetName, r.Duration.Seconds(), r.Error)
+			}
 		}
 
 		return executor.NodeResult{
@@ -627,14 +732,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 		DownstreamOnly: downstreamOnly,
 		PoolManager:    poolMgr,
 		AssetPools:     assetPools,
+		Ctx:            shutdownCtx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
 
 	for _, r := range rr.Results {
 		if r.Status == "skipped" {
-			ts := time.Now().Format("15:04:05")
-			fmt.Printf("[%s] %s %-24s skipped -- dependency failed\n", ts, yellowCirc, r.AssetName)
+			if !outputJSON {
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("[%s] %s %-24s skipped -- dependency failed\n", ts, yellowCirc, r.AssetName)
+			}
 
 			_ = eventStore.Emit(events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
@@ -658,6 +766,30 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	totalDuration := rr.EndTime.Sub(rr.StartTime)
+
+	if rr.Interrupted {
+		_ = eventStore.Emit(events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_interrupted", Severity: "warning",
+			DurationMs: totalDuration.Milliseconds(),
+			Summary:    fmt.Sprintf("Run interrupted: %d succeeded, %d failed, %d skipped", succeeded, failed, skipped),
+			Details: map[string]any{
+				"succeeded":        succeeded,
+				"failed":           failed,
+				"skipped":          skipped,
+				"total_nodes":      len(rr.Results),
+				"duration_seconds": totalDuration.Seconds(),
+			},
+		})
+		if outputJSON {
+			data, _ := json.MarshalIndent(buildRunJSON(runID, cfg.Pipeline, "interrupted", totalDuration.Seconds(), succeeded, failed, skipped, rr), "", "  ")
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("\nRun interrupted: %d succeeded, %d failed, %d skipped (%.0fs)\n", succeeded, failed, skipped, totalDuration.Seconds())
+			fmt.Printf("Run ID: %s\n", runID)
+		}
+		return nil
+	}
+
 	status := "success"
 	if failed > 0 || skipped > 0 {
 		status = "completed_with_failures"
@@ -677,8 +809,13 @@ func runRun(cmd *cobra.Command, args []string) error {
 		},
 	})
 
-	fmt.Printf("\nRun complete: %d succeeded, %d failed, %d skipped (%.0fs total)\n", succeeded, failed, skipped, totalDuration.Seconds())
-	fmt.Printf("Run ID: %s\n", runID)
+	if outputJSON {
+		data, _ := json.MarshalIndent(buildRunJSON(runID, cfg.Pipeline, status, totalDuration.Seconds(), succeeded, failed, skipped, rr), "", "  ")
+		fmt.Println(string(data))
+	} else {
+		fmt.Printf("\nRun complete: %d succeeded, %d failed, %d skipped (%.0fs total)\n", succeeded, failed, skipped, totalDuration.Seconds())
+		fmt.Printf("Run ID: %s\n", runID)
+	}
 
 	// Post-run hooks: context.db + monitor.db
 	bqClient := newBQClientForContext(cfg)
@@ -698,10 +835,43 @@ func runRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func buildRunJSON(runID, pipeline, status string, durationSeconds float64, succeeded, failed, skipped int, rr *executor.RunResult) jsonRunOutput {
+	var nodes []jsonRunNode
+	for _, r := range rr.Results {
+		node := jsonRunNode{
+			Asset:  r.AssetName,
+			Status: r.Status,
+		}
+		if r.Duration > 0 {
+			node.DurationSeconds = r.Duration.Seconds()
+		}
+		if r.Error != "" {
+			node.Error = r.Error
+		}
+		nodes = append(nodes, node)
+	}
+	return jsonRunOutput{
+		RunID:           runID,
+		Pipeline:        pipeline,
+		Status:          status,
+		DurationSeconds: durationSeconds,
+		Succeeded:       succeeded,
+		Failed:          failed,
+		Skipped:         skipped,
+		TotalNodes:      len(rr.Results),
+		Interrupted:     rr.Interrupted,
+		Nodes:           nodes,
+	}
+}
+
 func runValidate(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	strict, _ := cmd.Flags().GetBool("strict")
 	asJSON, _ := cmd.Flags().GetBool("json")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	if outputFormat == "json" {
+		asJSON = true
+	}
 	quiet, _ := cmd.Flags().GetBool("quiet")
 
 	cfg, g, missingFiles, err := loadAndBuild(args[0], projectRoot)
@@ -948,9 +1118,15 @@ func outputValidateJSON(cfg *config.PipelineConfig, results []validate.Validatio
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	outputJSON := outputFormat == "json"
+
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	eventStore, err := events.New(eventsDBPath)
 	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", fmt.Sprintf("event store: %s", err), "", nil)
+		}
 		return fmt.Errorf("event store: %w", err)
 	}
 	defer eventStore.Close()
@@ -961,6 +1137,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		runs, err := eventStore.ListRuns(1)
 		if err != nil || len(runs) == 0 {
+			if outputJSON {
+				printJSONError("NO_RUNS", "no runs found", "Run a pipeline first with: granicus run <config>", nil)
+			}
 			return fmt.Errorf("no runs found")
 		}
 		runID = runs[0].RunID
@@ -968,7 +1147,34 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	summary, err := eventStore.GetRunSummary(runID)
 	if err != nil {
+		if outputJSON {
+			printJSONError("RUN_NOT_FOUND", fmt.Sprintf("reading run %s: %s", runID, err), "Check the run ID with: granicus history", map[string]any{"run_id": runID})
+		}
 		return fmt.Errorf("reading run %s: %w", runID, err)
+	}
+
+	nodes, err := eventStore.GetNodeResults(runID)
+	if err != nil {
+		nodes = nil
+	}
+
+	if outputJSON {
+		out := jsonStatusOutput{
+			RunID:           summary.RunID,
+			Pipeline:        summary.Pipeline,
+			Status:          summary.Status,
+			StartTime:       summary.StartTime,
+			EndTime:         summary.EndTime,
+			DurationSeconds: summary.DurationSeconds,
+			Succeeded:       summary.Succeeded,
+			Failed:          summary.Failed,
+			Skipped:         summary.Skipped,
+			TotalNodes:      summary.TotalNodes,
+			Nodes:           nodes,
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return nil
 	}
 
 	fmt.Printf("Run: %s\n", summary.RunID)
@@ -976,11 +1182,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Status: %s\n", summary.Status)
 	fmt.Printf("Duration: %.0fs\n", summary.DurationSeconds)
 	fmt.Printf("Nodes: %d succeeded, %d failed, %d skipped\n", summary.Succeeded, summary.Failed, summary.Skipped)
-
-	nodes, err := eventStore.GetNodeResults(runID)
-	if err != nil {
-		return nil
-	}
 
 	var failedNodes, skippedNodes []events.NodeResult
 	for _, n := range nodes {
@@ -1008,19 +1209,42 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type jsonHistoryOutput struct {
+	Runs []events.RunSummary `json:"runs"`
+}
+
 func runHistory(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	limit, _ := cmd.Flags().GetInt("limit")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	outputJSON := outputFormat == "json"
+
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	eventStore, err := events.New(eventsDBPath)
 	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", fmt.Sprintf("event store: %s", err), "", nil)
+		}
 		return fmt.Errorf("event store: %w", err)
 	}
 	defer eventStore.Close()
 
 	runs, err := eventStore.ListRuns(limit)
 	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
+		}
 		return err
+	}
+
+	if outputJSON {
+		out := jsonHistoryOutput{Runs: runs}
+		if out.Runs == nil {
+			out.Runs = []events.RunSummary{}
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return nil
 	}
 
 	if len(runs) == 0 {
@@ -1132,6 +1356,10 @@ func runEvents(cmd *cobra.Command, args []string) error {
 	since, _ := cmd.Flags().GetString("since")
 	limit, _ := cmd.Flags().GetInt("limit")
 	asJSON, _ := cmd.Flags().GetBool("json")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	if outputFormat == "json" {
+		asJSON = true
+	}
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	if _, err := os.Stat(eventsDBPath); os.IsNotExist(err) {
@@ -1195,18 +1423,36 @@ func runEvents(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type jsonModelsListOutput struct {
+	Models []events.ModelVersion `json:"models"`
+}
+
+type jsonModelsHistoryOutput struct {
+	Asset   string                `json:"asset"`
+	History []events.ModelVersion `json:"history"`
+}
+
 func runModels(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	diffFlag, _ := cmd.Flags().GetString("diff")
+	outputFormat, _ := cmd.Flags().GetString("output")
+	outputJSON := outputFormat == "json"
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	if _, err := os.Stat(eventsDBPath); os.IsNotExist(err) {
+		if outputJSON {
+			printJSONError("NO_EVENTS_DB", "events.db does not exist", "Run a pipeline first with: granicus run <config>", nil)
+			return nil
+		}
 		fmt.Println("No models found (events.db does not exist).")
 		return nil
 	}
 
 	eventStore, err := events.New(eventsDBPath)
 	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", fmt.Sprintf("event store: %s", err), "", nil)
+		}
 		return fmt.Errorf("event store: %w", err)
 	}
 	defer eventStore.Close()
@@ -1214,8 +1460,22 @@ func runModels(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		models, err := eventStore.ListModels()
 		if err != nil {
+			if outputJSON {
+				printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
+			}
 			return err
 		}
+
+		if outputJSON {
+			out := jsonModelsListOutput{Models: models}
+			if out.Models == nil {
+				out.Models = []events.ModelVersion{}
+			}
+			data, _ := json.MarshalIndent(out, "", "  ")
+			fmt.Println(string(data))
+			return nil
+		}
+
 		if len(models) == 0 {
 			fmt.Println("No models registered.")
 			return nil
@@ -1287,10 +1547,24 @@ func runModels(cmd *cobra.Command, args []string) error {
 
 	history, err := eventStore.GetModelHistory(assetName)
 	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
+		}
 		return err
 	}
 	if len(history) == 0 {
+		if outputJSON {
+			printJSONError("NOT_FOUND", fmt.Sprintf("no history for %s", assetName), "Check the asset name with: granicus models", map[string]any{"asset": assetName})
+			return nil
+		}
 		return fmt.Errorf("no history for %s", assetName)
+	}
+
+	if outputJSON {
+		out := jsonModelsHistoryOutput{Asset: assetName, History: history}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return nil
 	}
 
 	fmt.Printf("Model: %s\n\n", assetName)

@@ -14,6 +14,8 @@ import (
 	"github.com/analytehealth/granicus/internal/state"
 )
 
+const DefaultShutdownTimeout = 5 * time.Minute
+
 type NodeResult struct {
 	AssetName string
 	Status    string // "success", "failed", "skipped"
@@ -39,19 +41,22 @@ type RunConfig struct {
 	TestMode     bool
 	TestStart    string
 	TestEnd      string
-	KeepTestData   bool
-	TestDataset    string // set by test mode setup (the created dataset name)
-	DownstreamOnly bool
-	PoolManager    *pool.PoolManager
-	AssetPools     map[string]string // asset name -> pool name
+	KeepTestData    bool
+	TestDataset     string // set by test mode setup (the created dataset name)
+	DownstreamOnly  bool
+	PoolManager     *pool.PoolManager
+	AssetPools      map[string]string // asset name -> pool name
+	Ctx             context.Context   // cancelled on SIGTERM/SIGINT for graceful shutdown
+	ShutdownTimeout time.Duration     // max wait for in-progress nodes; 0 = DefaultShutdownTimeout
 }
 
 type RunnerFunc func(asset *graph.Asset, projectRoot string, runID string) NodeResult
 
 type RunResult struct {
-	Results   []NodeResult
-	StartTime time.Time
-	EndTime   time.Time
+	Results     []NodeResult
+	StartTime   time.Time
+	EndTime     time.Time
+	Interrupted bool // true if run was stopped by a shutdown signal
 }
 
 func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
@@ -95,6 +100,38 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	maxP := cfg.MaxParallel
 	if maxP <= 0 {
 		maxP = 10
+	}
+
+	shutdownTimeout := cfg.ShutdownTimeout
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = DefaultShutdownTimeout
+	}
+
+	// shutdownCh is closed when a shutdown signal is received.
+	shutdownCh := make(chan struct{})
+	var shutdownOnce sync.Once
+	triggerShutdown := func() {
+		shutdownOnce.Do(func() { close(shutdownCh) })
+	}
+	defer triggerShutdown() // clean up watcher goroutine on return
+
+	if cfg.Ctx != nil {
+		go func() {
+			select {
+			case <-cfg.Ctx.Done():
+				triggerShutdown()
+			case <-shutdownCh:
+			}
+		}()
+	}
+
+	isShuttingDown := func() bool {
+		select {
+		case <-shutdownCh:
+			return true
+		default:
+			return false
+		}
 	}
 
 	// Pre-compute blocking checks per asset: asset -> list of blocking check node names
@@ -181,6 +218,21 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}()
 	}
 
+	// dispatchOrSkip dispatches a node, or immediately emits a skipped result
+	// if a shutdown signal has been received.
+	dispatchOrSkip := func(name string) {
+		if isShuttingDown() {
+			done <- NodeResult{
+				AssetName: name,
+				Status:    "skipped",
+				Error:     "skipped: run interrupted",
+				ExitCode:  -1,
+			}
+			return
+		}
+		dispatch(name)
+	}
+
 	// allBlockingChecksPassed returns true if every blocking check for the given
 	// asset has completed successfully. Must be called with mu held.
 	allBlockingChecksPassed := func(assetName string) bool {
@@ -234,7 +286,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}
 		resolved[downstream] = true
 		mu.Unlock()
-		dispatch(downstream)
+		dispatchOrSkip(downstream)
 		mu.Lock()
 		return true
 	}
@@ -243,85 +295,117 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	for name := range nodesToRun {
 		if unresolved[name] == 0 {
 			resolved[name] = true
-			dispatch(name)
+			dispatchOrSkip(name)
 		}
 	}
 
+	// activeShutdownCh starts as shutdownCh; set to nil once we've started the
+	// shutdown timer so the select doesn't spin on the closed channel.
+	activeShutdownCh := shutdownCh
+	var shutdownTimer <-chan time.Time // nil = never fires
+
 	for pending > 0 {
-		result := <-done
-		mu.Lock()
-		results[result.AssetName] = &result
-		pending--
+		select {
+		case result := <-done:
+			mu.Lock()
+			results[result.AssetName] = &result
+			pending--
 
-		if result.Status == "success" {
-			// Decrement unresolved counts and try dispatching downstream nodes
-			for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
-				if !nodesToRun[downstream] || resolved[downstream] {
-					continue
-				}
-				unresolved[downstream]--
-				tryDispatchDownstream(downstream)
-			}
-
-			// If this is a successful blocking check, its parent's other
-			// downstream nodes may now be unblocked. Re-evaluate them.
-			asset := g.Assets[result.AssetName]
-			if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
-				for _, parentName := range asset.DependsOn {
-					if !allBlockingChecksPassed(parentName) {
+			if result.Status == "success" {
+				// Decrement unresolved counts and try dispatching downstream nodes
+				for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
+					if !nodesToRun[downstream] || resolved[downstream] {
 						continue
 					}
-					for _, downstream := range g.Assets[parentName].DependedOnBy {
-						tryDispatchDownstream(downstream)
-					}
+					unresolved[downstream]--
+					tryDispatchDownstream(downstream)
 				}
-			}
-		} else {
-			// Skip all direct descendants of the failed node
-			descendants := g.Descendants(result.AssetName)
-			for _, desc := range descendants {
-				if !nodesToRun[desc] || resolved[desc] {
-					continue
-				}
-				resolved[desc] = true
-				results[desc] = &NodeResult{
-					AssetName: desc,
-					Status:    "skipped",
-					Error:     "skipped: dependency " + result.AssetName + " failed",
-					ExitCode:  -1,
-				}
-				pending--
-			}
 
-			// Blocking check failure: skip descendants of the parent asset
-			asset := g.Assets[result.AssetName]
-			if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
-				for _, parentName := range asset.DependsOn {
-					parentDescendants := g.Descendants(parentName)
-					for _, desc := range parentDescendants {
-						if desc == result.AssetName {
+				// If this is a successful blocking check, its parent's other
+				// downstream nodes may now be unblocked. Re-evaluate them.
+				asset := g.Assets[result.AssetName]
+				if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
+					for _, parentName := range asset.DependsOn {
+						if !allBlockingChecksPassed(parentName) {
 							continue
 						}
-						if !nodesToRun[desc] || resolved[desc] {
-							continue
+						for _, downstream := range g.Assets[parentName].DependedOnBy {
+							tryDispatchDownstream(downstream)
 						}
-						resolved[desc] = true
-						results[desc] = &NodeResult{
-							AssetName: desc,
-							Status:    "skipped",
-							Error:     "skipped: blocked_by_check:" + result.AssetName,
-							ExitCode:  -1,
-							Metadata:  map[string]string{"blocked_by_check": result.AssetName},
+					}
+				}
+			} else {
+				// Skip all direct descendants of the failed/skipped node
+				descendants := g.Descendants(result.AssetName)
+				for _, desc := range descendants {
+					if !nodesToRun[desc] || resolved[desc] {
+						continue
+					}
+					resolved[desc] = true
+					results[desc] = &NodeResult{
+						AssetName: desc,
+						Status:    "skipped",
+						Error:     "skipped: dependency " + result.AssetName + " failed",
+						ExitCode:  -1,
+					}
+					pending--
+				}
+
+				// Blocking check failure: skip descendants of the parent asset
+				asset := g.Assets[result.AssetName]
+				if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
+					for _, parentName := range asset.DependsOn {
+						parentDescendants := g.Descendants(parentName)
+						for _, desc := range parentDescendants {
+							if desc == result.AssetName {
+								continue
+							}
+							if !nodesToRun[desc] || resolved[desc] {
+								continue
+							}
+							resolved[desc] = true
+							results[desc] = &NodeResult{
+								AssetName: desc,
+								Status:    "skipped",
+								Error:     "skipped: blocked_by_check:" + result.AssetName,
+								ExitCode:  -1,
+								Metadata:  map[string]string{"blocked_by_check": result.AssetName},
+							}
+							pending--
 						}
-						pending--
 					}
 				}
 			}
+			mu.Unlock()
+
+		case <-activeShutdownCh:
+			// Shutdown signal received: start timeout and stop listening on
+			// this channel (closed channels would spin the select).
+			log.Printf("executor: shutdown signal received, waiting up to %v for in-progress nodes", shutdownTimeout)
+			shutdownTimer = time.After(shutdownTimeout)
+			activeShutdownCh = nil
+
+		case <-shutdownTimer:
+			// Timeout expired: force-resolve all nodes not yet in results.
+			mu.Lock()
+			for name := range nodesToRun {
+				if _, ok := results[name]; !ok {
+					results[name] = &NodeResult{
+						AssetName: name,
+						Status:    "skipped",
+						Error:     "skipped: shutdown timeout exceeded",
+						ExitCode:  -1,
+					}
+					pending--
+				}
+			}
+			mu.Unlock()
+			shutdownTimer = nil // prevent re-firing
 		}
-		mu.Unlock()
 	}
 
 	runResult.EndTime = time.Now()
+	runResult.Interrupted = isShuttingDown()
 
 	for name := range nodesToRun {
 		if r, ok := results[name]; ok {
