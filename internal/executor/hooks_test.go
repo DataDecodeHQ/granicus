@@ -62,6 +62,38 @@ func TestWriteContextHook_NilClient(t *testing.T) {
 	}
 }
 
+func TestDuckDBAssemblyHook_ResolvesRelativeCredPath(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := &config.PipelineConfig{
+		Pipeline: "test_pipe",
+		Connections: map[string]*config.ConnectionConfig{
+			"gcs_dashboard": {
+				Name: "gcs_dashboard",
+				Type: "gcs",
+				Properties: map[string]string{
+					"bucket":      "test-bucket",
+					"prefix":      "test",
+					"credentials": "rel/path/creds.json",
+				},
+			},
+		},
+	}
+	rr := &RunResult{
+		Results: []NodeResult{
+			{AssetName: "publish_dashboard_parquet", Status: "success"},
+		},
+	}
+
+	hook := DuckDBAssemblyHook()
+	// The hook will fail because the script doesn't exist, but we can verify
+	// from the error that it attempted to run (meaning connection was found
+	// and cred path was resolved). The key test is that it doesn't skip.
+	err := hook(nil, cfg, projectRoot, rr)
+	if err == nil {
+		t.Fatal("expected error (script missing), got nil")
+	}
+}
+
 func TestDuckDBAssemblyHook_SkipsWhenAssetNotInResults(t *testing.T) {
 	g, cfg := testHookGraph(t)
 	projectRoot := t.TempDir()

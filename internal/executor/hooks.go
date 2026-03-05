@@ -42,12 +42,19 @@ func DuckDBAssemblyHook() PostRunHook {
 			return fmt.Errorf("DuckDB assembly: gcs_dashboard connection not found")
 		}
 
-		cmd := exec.Command("python3", scriptPath)
+		pythonBin := "python3"
+		if venvPy := filepath.Join(projectRoot, ".venv", "bin", "python3"); fileExists(venvPy) {
+			pythonBin = venvPy
+		}
+		cmd := exec.Command(pythonBin, scriptPath)
 		cmd.Env = append(os.Environ(),
 			"GRANICUS_GCS_BUCKET="+conn.Properties["bucket"],
 			"GRANICUS_GCS_PREFIX="+conn.Properties["prefix"],
 		)
-		if creds, ok := conn.Properties["credentials"]; ok {
+		if creds, ok := conn.Properties["credentials"]; ok && creds != "" {
+			if !filepath.IsAbs(creds) {
+				creds = filepath.Join(projectRoot, creds)
+			}
 			cmd.Env = append(cmd.Env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
 		}
 		cmd.Dir = projectRoot
@@ -71,6 +78,11 @@ func assetSucceeded(rr *RunResult, name string) bool {
 		}
 	}
 	return false
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) int {
