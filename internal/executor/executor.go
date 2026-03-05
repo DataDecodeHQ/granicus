@@ -3,7 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,7 +96,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 			asset := g.Assets[name]
 			if asset.TimeColumn != "" {
 				if err := cfg.StateStore.InvalidateAll(name); err != nil {
-					log.Printf("executor: state store InvalidateAll failed for %s: %v", name, err)
+					slog.Error("state store InvalidateAll failed", "asset", name, "error", err)
 				}
 			}
 		}
@@ -135,8 +135,16 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		case <-shutdownCh:
 			return true
 		default:
-			return false
 		}
+		if cfg.Ctx != nil {
+			select {
+			case <-cfg.Ctx.Done():
+				triggerShutdown()
+				return true
+			default:
+			}
+		}
+		return false
 	}
 
 	// Pre-compute blocking checks per asset: asset -> list of blocking check node names.
@@ -198,7 +206,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 			if cfg.PoolManager != nil && cfg.AssetPools != nil {
 				if poolName, ok := cfg.AssetPools[name]; ok && poolName != "" {
 					if err := cfg.PoolManager.Acquire(context.Background(), poolName); err != nil {
-						log.Printf("pool acquire failed for %s: %v", name, err)
+						slog.Error("pool acquire failed", "asset", name, "error", err)
 						done <- NodeResult{
 							AssetName: name,
 							Status:    "failed",
@@ -392,7 +400,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		case <-activeShutdownCh:
 			// Shutdown signal received: start timeout and stop listening on
 			// this channel (closed channels would spin the select).
-			log.Printf("executor: shutdown signal received, waiting up to %v for in-progress nodes", shutdownTimeout)
+			slog.Info("shutdown signal received, waiting for in-progress nodes", "timeout", shutdownTimeout)
 			shutdownTimer = time.After(shutdownTimeout)
 			activeShutdownCh = nil
 
@@ -471,7 +479,7 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 
 	completed, err := cfg.StateStore.GetIntervals(asset.Name)
 	if err != nil {
-		log.Printf("executor: state store GetIntervals failed for %s: %v", asset.Name, err)
+		slog.Error("state store GetIntervals failed", "asset", asset.Name, "error", err)
 		return NodeResult{
 			AssetName: asset.Name,
 			Status:    "failed",
@@ -517,7 +525,7 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 
 	for _, iv := range missing {
 		if err := cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID); err != nil {
-			log.Printf("executor: state store MarkInProgress failed for %s interval %s: %v", asset.Name, iv.Start, err)
+			slog.Error("state store MarkInProgress failed", "asset", asset.Name, "interval", iv.Start, "error", err)
 		}
 
 		var result NodeResult
@@ -527,20 +535,19 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 				break
 			}
 			backoff := time.Duration(1<<uint(attempt)) * backoffBase
-			log.Printf("executor: retrying %s interval %s after %v (attempt %d/%d): %s",
-				asset.Name, iv.Start, backoff, attempt+1, maxAttempts, result.Error)
+			slog.Warn("retrying asset interval", "asset", asset.Name, "interval", iv.Start, "backoff", backoff, "attempt", attempt+1, "max_attempts", maxAttempts, "error", result.Error)
 			time.Sleep(backoff)
 		}
 
 		if result.Status == "success" {
 			if err := cfg.StateStore.MarkComplete(asset.Name, iv.Start, iv.End); err != nil {
-				log.Printf("executor: state store MarkComplete failed for %s interval %s: %v", asset.Name, iv.Start, err)
+				slog.Error("state store MarkComplete failed", "asset", asset.Name, "interval", iv.Start, "error", err)
 			}
 			processed++
 			lastResult = result
 		} else {
 			if err := cfg.StateStore.MarkFailed(asset.Name, iv.Start, iv.End); err != nil {
-				log.Printf("executor: state store MarkFailed failed for %s interval %s: %v", asset.Name, iv.Start, err)
+				slog.Error("state store MarkFailed failed", "asset", asset.Name, "interval", iv.Start, "error", err)
 			}
 			result.Metadata = mergeMetadata(result.Metadata, map[string]string{
 				"intervals_processed":  itoa(processed),
@@ -612,18 +619,18 @@ func itoa(i int) string {
 func applySeverityToCheckResult(result NodeResult, asset *graph.Asset, triggerShutdown func()) NodeResult {
 	switch asset.Severity {
 	case "info":
-		log.Printf("CHECK INFO: %s failed (severity=info, treated as pass): %s", result.AssetName, result.Error)
+		slog.Info("check failed (treated as pass)", "check", result.AssetName, "severity", "info", "error", result.Error)
 		result.Status = "success"
 		result.ExitCode = 0
 	case "warning":
-		log.Printf("CHECK WARNING: %s failed (severity=warning, treated as pass): %s", result.AssetName, result.Error)
+		slog.Warn("check failed (treated as pass)", "check", result.AssetName, "severity", "warning", "error", result.Error)
 		result.Status = "success"
 		result.ExitCode = 0
 	case "critical":
-		log.Printf("CHECK CRITICAL: %s failed, halting run: %s", result.AssetName, result.Error)
+		slog.Error("check failed, halting run", "check", result.AssetName, "severity", "critical", "error", result.Error)
 		triggerShutdown()
 	default: // "error" or empty
-		log.Printf("CHECK ERROR: %s failed: %s", result.AssetName, result.Error)
+		slog.Error("check failed", "check", result.AssetName, "severity", "error", "error", result.Error)
 	}
 	return result
 }
@@ -647,8 +654,7 @@ func runWithRetry(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedupMu 
 			break
 		}
 		backoff := time.Duration(1<<uint(attempt)) * backoffBase
-		log.Printf("executor: retrying %s after %v (attempt %d/%d): %s",
-			asset.Name, backoff, attempt+1, maxAttempts, result.Error)
+		slog.Warn("retrying asset", "asset", asset.Name, "backoff", backoff, "attempt", attempt+1, "max_attempts", maxAttempts, "error", result.Error)
 		time.Sleep(backoff)
 	}
 	return result

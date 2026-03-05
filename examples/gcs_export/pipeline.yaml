@@ -1,0 +1,29 @@
+pipeline: gcs_export_example
+max_parallel: 2
+
+connections:
+  bq:
+    type: bigquery
+    project: my-gcp-project
+    dataset: analytics
+
+  gcs_output:
+    type: gcs
+    bucket: my-data-exports
+    prefix: exports/analytics
+    format: parquet
+    partition_prefix: "true"
+
+assets:
+  - name: export_daily_orders
+    type: gcs_export
+    source: scripts/export_orders.sh
+    source_connection: gcs_output
+    depends_on:
+      - stg_orders
+
+  - name: stg_orders
+    type: sql
+    source: sql/stg_orders.sql
+    destination_connection: bq
+    layer: staging

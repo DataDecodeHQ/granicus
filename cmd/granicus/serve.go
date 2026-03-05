@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +16,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/Andrew-DataDecode/Granicus/internal/logging"
 	"github.com/Andrew-DataDecode/Granicus/internal/checker"
 	"github.com/Andrew-DataDecode/Granicus/internal/config"
 	"github.com/Andrew-DataDecode/Granicus/internal/events"
@@ -49,6 +50,8 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	logging.Init(true)
+
 	configDir, _ := cmd.Flags().GetString("config-dir")
 	serverConfigPath, _ := cmd.Flags().GetString("server-config")
 	envConfigPath, _ := cmd.Flags().GetString("env-config")
@@ -104,9 +107,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Recover stale locks
 	recovered, err := lockStore.RecoverStaleLocks(6 * time.Hour)
 	if err != nil {
-		log.Printf("stale lock recovery error: %v", err)
+		slog.Error("stale lock recovery error", "error", err)
 	} else if recovered > 0 {
-		log.Printf("recovered %d stale locks", recovered)
+		slog.Info("recovered stale locks", "count", recovered)
 		_ = eventStore.Emit(events.Event{
 			EventType: "stale_lock_recovered", Severity: "warning",
 			Summary: fmt.Sprintf("Recovered %d stale locks on startup", recovered),
@@ -117,14 +120,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Recover orphaned intervals (in_progress longer than orphan_timeout)
 	intervalStateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
 	if stateStore, serr := state.New(intervalStateDBPath); serr != nil {
-		log.Printf("orphan recovery: could not open state db: %v", serr)
+		slog.Error("orphan recovery: could not open state db", "error", serr)
 	} else {
 		orphans, rerr := stateStore.RecoverOrphans(orphanTimeout)
 		stateStore.Close()
 		if rerr != nil {
-			log.Printf("orphan interval recovery error: %v", rerr)
+			slog.Error("orphan interval recovery error", "error", rerr)
 		} else if len(orphans) > 0 {
-			log.Printf("recovered %d orphaned intervals", len(orphans))
+			slog.Info("recovered orphaned intervals", "count", len(orphans))
 			for _, iv := range orphans {
 				_ = eventStore.Emit(events.Event{
 					EventType: "interval_recovered", Severity: "warning",
@@ -158,11 +161,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := sched.LoadAndRegister(); err != nil {
 		return fmt.Errorf("load pipelines: %w", err)
 	}
+	sched.RegisterAssetPolls()
 
 	// Start file watcher
 	watcher, err := scheduler.NewWatcher(sched)
 	if err != nil {
-		log.Printf("warning: file watcher not started: %v", err)
+		slog.Warn("file watcher not started", "error", err)
 	} else {
 		watcher.Start()
 		defer watcher.Stop()
@@ -173,11 +177,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.Start()
 
 	pipelines := sched.Pipelines()
-	log.Printf("serve: environment=%s, port=%d, pipelines=%d", envName, serverCfg.Server.Port, len(pipelines))
+	slog.Info("serve started", "environment", envName, "port", serverCfg.Server.Port, "pipelines", len(pipelines))
 	for _, p := range pipelines {
 		cfg := sched.Config(p)
 		if cfg != nil {
-			log.Printf("  %s: schedule=%q", p, cfg.Schedule)
+			slog.Info("registered pipeline", "pipeline", p, "schedule", cfg.Schedule)
 		}
 	}
 
@@ -218,7 +222,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	go func() {
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("HTTP server error: %v", err)
+			slog.Error("HTTP server error", "error", err)
 		}
 	}()
 
@@ -227,7 +231,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("shutting down...")
+	slog.Info("shutting down")
 
 	// Signal all in-progress executor runs to drain.
 	shutdownCancel()
@@ -239,13 +243,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer drainCancel()
 	if err := httpSrv.Shutdown(drainCtx); err != nil {
-		log.Printf("HTTP shutdown error: %v", err)
+		slog.Error("HTTP shutdown error", "error", err)
 	}
 
 	// Wait for in-progress triggered pipeline runs to finish (same timeout).
 	srv.WaitForRuns(drainCtx)
 
-	log.Println("shutdown complete")
+	slog.Info("shutdown complete")
 	return nil
 }
 
@@ -258,7 +262,7 @@ func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName st
 	}
 
 	runID := events.GenerateRunID()
-	log.Printf("scheduled run: %s (run_id=%s)", cfg.Pipeline, runID)
+	slog.Info("scheduled run", "pipeline", cfg.Pipeline, "run_id", runID)
 	poolMgr, assetPools := buildPoolManager(cfg)
 	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools, ctx)
 }
@@ -271,7 +275,7 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 		}
 	}
 
-	log.Printf("triggered run: %s (run_id=%s)", cfg.Pipeline, runID)
+	slog.Info("triggered run", "pipeline", cfg.Pipeline, "run_id", runID)
 
 	_ = eventStore.Emit(events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, EventType: "pipeline_triggered",
@@ -300,7 +304,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 
 	deps, directives, err := graph.ParseAllDirectives(cfg, projectRoot)
 	if err != nil {
-		log.Printf("run %s: dependency parse error: %v", runID, err)
+		slog.Error("dependency parse error", "run_id", runID, "error", err)
 		return
 	}
 
@@ -366,14 +370,14 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 
 	g, err := graph.BuildGraph(inputs, deps)
 	if err != nil {
-		log.Printf("run %s: graph build error: %v", runID, err)
+		slog.Error("graph build error", "run_id", runID, "error", err)
 		return
 	}
 
 	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
 	stateStore, err := state.New(stateDBPath)
 	if err != nil {
-		log.Printf("run %s: state store error: %v", runID, err)
+		slog.Error("state store error", "run_id", runID, "error", err)
 		return
 	}
 	defer stateStore.Close()
@@ -550,8 +554,38 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		server.NodeDuration.WithLabelValues(cfg.Pipeline, r.AssetName, r.Status).Observe(r.Duration.Seconds())
 	}
 
-	log.Printf("run %s: %s — %d succeeded, %d failed, %d skipped (%.0fs)",
-		runID, cfg.Pipeline, succeeded, failed, skipped, totalDuration.Seconds())
+	slog.Info("run completed", "run_id", runID, "pipeline", cfg.Pipeline, "succeeded", succeeded, "failed", failed, "skipped", skipped, "duration_s", totalDuration.Seconds())
+
+	// Send run summary notification
+	if cfg.Alerts != nil {
+		alertMgr := server.NewAlertManager(cfg.Alerts, eventStore)
+		var summaryResults []struct {
+			AssetName string
+			Status    string
+			Error     string
+			Duration  float64
+			Cost      float64
+		}
+		for _, r := range rr.Results {
+			cost := 0.0
+			if r.Metadata != nil {
+				if c, ok := r.Metadata["bq_total_bytes_billed"]; ok {
+					if v, err := fmt.Sscanf(c, "%f", &cost); v == 1 && err == nil {
+						cost = cost / 1e12 * 5.0
+					}
+				}
+			}
+			summaryResults = append(summaryResults, struct {
+				AssetName string
+				Status    string
+				Error     string
+				Duration  float64
+				Cost      float64
+			}{r.AssetName, r.Status, r.Error, r.Duration.Seconds(), cost})
+		}
+		alertData := server.BuildRunSummary(cfg.Pipeline, runID, summaryResults, totalDuration.Seconds())
+		alertMgr.SendRunSummary(alertData)
+	}
 
 	// Post-run hooks: context.db + monitor.db
 	bqClient := newBQClientForContext(cfg)

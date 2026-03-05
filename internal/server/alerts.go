@@ -3,7 +3,7 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"text/template"
@@ -70,26 +70,26 @@ func (m *AlertManager) SendFailureAlerts(data AlertData) {
 func (m *AlertManager) sendAlert(cfg *config.AlertSeverityConfig, severity string, data AlertData) {
 	body, err := renderAlertBody(cfg.Template, data)
 	if err != nil {
-		log.Printf("alert: %v", err)
+		slog.Error("alert template error", "error", err)
 		return
 	}
 
 	req, err := http.NewRequest("POST", cfg.URL, strings.NewReader(body))
 	if err != nil {
-		log.Printf("alert: request error: %v", err)
+		slog.Error("alert request error", "error", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		log.Printf("alert: send error for %s: %v", cfg.URL, err)
+		slog.Error("alert send failed", "url", cfg.URL, "error", err)
 		return
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		log.Printf("alert: webhook %s returned %d", cfg.URL, resp.StatusCode)
+		slog.Warn("alert webhook error", "url", cfg.URL, "status", resp.StatusCode)
 	}
 
 	if m.eventStore != nil {
@@ -110,6 +110,75 @@ func (m *AlertManager) sendAlert(cfg *config.AlertSeverityConfig, severity strin
 				"failed_count":   data.Failed,
 			},
 		})
+	}
+}
+
+// SendRunSummary sends a post-run summary notification at default severity.
+func (m *AlertManager) SendRunSummary(data AlertData) {
+	if m.routing == nil {
+		return
+	}
+	severity := "info"
+	if data.Failed > 0 {
+		severity = "error"
+	}
+	m.SendAlerts(severity, data)
+}
+
+// BuildRunSummary creates AlertData from run results.
+func BuildRunSummary(pipeline, runID string, results []struct {
+	AssetName string
+	Status    string
+	Error     string
+	Duration  float64
+	Cost      float64
+}, totalDuration float64) AlertData {
+	var succeeded, failed, skipped int
+	var failedAssets []string
+	var errorSummary []string
+	var totalCost float64
+
+	for _, r := range results {
+		switch r.Status {
+		case "success":
+			succeeded++
+		case "failed":
+			failed++
+			failedAssets = append(failedAssets, r.AssetName)
+			if r.Error != "" {
+				msg := r.Error
+				if len(msg) > 200 {
+					msg = msg[:200]
+				}
+				errorSummary = append(errorSummary, r.AssetName+": "+msg)
+			}
+		case "skipped":
+			skipped++
+		}
+		totalCost += r.Cost
+	}
+
+	status := "success"
+	if failed > 0 {
+		status = "completed_with_failures"
+	}
+
+	summary := fmt.Sprintf("%s: %d succeeded, %d failed, %d skipped (%.0fs)",
+		pipeline, succeeded, failed, skipped, totalDuration)
+
+	return AlertData{
+		Pipeline:     pipeline,
+		RunID:        runID,
+		Status:       status,
+		Summary:      summary,
+		Duration:     totalDuration,
+		FailedAssets: failedAssets,
+		ErrorMessage: strings.Join(errorSummary, "; "),
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		TotalCost:    totalCost,
+		Failed:       failed,
+		Succeeded:    succeeded,
+		Skipped:      skipped,
 	}
 }
 

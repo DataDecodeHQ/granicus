@@ -1,0 +1,25 @@
+pipeline: gcs_ingest_example
+max_parallel: 2
+
+connections:
+  gcs_input:
+    type: gcs
+    bucket: my-data-inbox
+    prefix: incoming/orders
+    file_pattern: "*.csv"
+    format: csv
+    load_method: append
+    archive_prefix: processed/orders
+
+  bq:
+    type: bigquery
+    project: my-gcp-project
+    dataset: raw
+
+assets:
+  - name: ingest_order_files
+    type: gcs_ingest
+    source: scripts/ingest_orders.sh
+    source_connection: gcs_input
+    destination_connection: bq
+    poll_interval: "*/15 * * * *"

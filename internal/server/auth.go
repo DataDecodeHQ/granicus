@@ -2,7 +2,7 @@ package server
 
 import (
 	"crypto/subtle"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -40,7 +40,7 @@ func AuthMiddleware(keys []APIKey, next http.Handler) http.Handler {
 
 		for _, k := range keys {
 			if subtle.ConstantTimeCompare([]byte(token), []byte(k.Key)) == 1 {
-				log.Printf("auth: request from key %q", k.Name)
+				slog.Info("auth request", "key", k.Name)
 				next.ServeHTTP(w, r)
 				return
 			}

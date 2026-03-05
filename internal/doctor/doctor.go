@@ -109,12 +109,21 @@ func checkGCSConfig(connName string, conn *config.ConnectionConfig) CheckResult 
 	if bucket == "" {
 		return CheckResult{Name: name, Status: StatusFail, Message: "missing bucket property"}
 	}
+
+	credMethod := "ADC (Application Default Credentials)"
 	if creds := conn.Properties["credentials"]; creds != "" {
 		if _, err := os.Stat(creds); os.IsNotExist(err) {
 			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("credentials not found: %s", creds)}
 		}
+		credMethod = "file: " + creds
+	} else if envCreds := os.Getenv("GCS_SERVICE_ACCOUNT"); envCreds != "" {
+		if _, err := os.Stat(envCreds); os.IsNotExist(err) {
+			return CheckResult{Name: name, Status: StatusWarn, Message: fmt.Sprintf("GCS_SERVICE_ACCOUNT set but file not found: %s", envCreds)}
+		}
+		credMethod = "env: GCS_SERVICE_ACCOUNT"
 	}
-	return CheckResult{Name: name, Status: StatusPass, Message: fmt.Sprintf("bucket=%s", bucket)}
+
+	return CheckResult{Name: name, Status: StatusPass, Message: fmt.Sprintf("bucket=%s, credentials=%s", bucket, credMethod)}
 }
 
 func checkStateDB(dbPath string) CheckResult {

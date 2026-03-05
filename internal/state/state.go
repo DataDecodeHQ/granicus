@@ -2,7 +2,7 @@ package state
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -49,8 +49,7 @@ func (s *Store) RecoverOrphans(threshold time.Duration) ([]IntervalState, error)
 	}
 
 	for _, iv := range orphans {
-		log.Printf("WARNING: recovering orphaned interval asset=%s interval=%s run_id=%s started_at=%s",
-			iv.AssetName, iv.IntervalStart, iv.RunID, iv.StartedAt)
+		slog.Warn("recovering orphaned interval", "asset", iv.AssetName, "interval", iv.IntervalStart, "run_id", iv.RunID, "started_at", iv.StartedAt)
 		if _, err := s.db.Exec(`
 			UPDATE interval_state SET status = 'pending'
 			WHERE asset_name = ? AND interval_start = ? AND status = 'in_progress'

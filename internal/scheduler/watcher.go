@@ -2,7 +2,7 @@ package scheduler
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -73,13 +73,13 @@ func (w *Watcher) loop() {
 			debounce = time.AfterFunc(1*time.Second, func() {
 				added, removed, updated := w.scheduler.Reload()
 				if len(added) > 0 {
-					log.Printf("scheduler: added pipelines: %v", added)
+					slog.Info("scheduler added pipelines", "pipelines", added)
 				}
 				if len(removed) > 0 {
-					log.Printf("scheduler: removed pipelines: %v", removed)
+					slog.Info("scheduler removed pipelines", "pipelines", removed)
 				}
 				if len(updated) > 0 {
-					log.Printf("scheduler: updated pipelines: %v", updated)
+					slog.Info("scheduler updated pipelines", "pipelines", updated)
 				}
 				if len(added)+len(removed)+len(updated) > 0 {
 					w.scheduler.emitEvent(events.Event{
@@ -97,7 +97,7 @@ func (w *Watcher) loop() {
 			if !ok {
 				return
 			}
-			log.Printf("scheduler: watcher error: %v", err)
+			slog.Error("scheduler watcher error", "error", err)
 		}
 	}
 }

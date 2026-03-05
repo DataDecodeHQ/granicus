@@ -3,7 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +162,7 @@ func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, do
 				Summary:   meta["step"],
 				Details:   details,
 			}); err != nil {
-				log.Printf("WARNING: failed to emit progress event for %s: %v", assetName, err)
+				slog.Warn("failed to emit progress event", "asset", assetName, "error", err)
 			}
 		}
 	}

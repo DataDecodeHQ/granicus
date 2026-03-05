@@ -2,7 +2,7 @@ package executor
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,7 +32,7 @@ func WriteContextHook(bqClient *bigquery.Client) PostRunHook {
 func DuckDBAssemblyHook() PostRunHook {
 	return func(_ *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) error {
 		if !assetSucceeded(rr, "publish_dashboard_parquet") {
-			log.Printf("INFO: skipping DuckDB assembly (publish_dashboard_parquet did not succeed)")
+			slog.Info("skipping DuckDB assembly (publish_dashboard_parquet did not succeed)")
 			return nil
 		}
 
@@ -77,7 +77,7 @@ func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfi
 	failures := 0
 	for _, hook := range hooks {
 		if err := hook(g, cfg, projectRoot, rr); err != nil {
-			log.Printf("WARNING: post-run hook failed: %v", err)
+			slog.Warn("post-run hook failed", "error", err)
 			failures++
 		}
 	}

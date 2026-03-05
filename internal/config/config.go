@@ -85,6 +85,7 @@ type AssetConfig struct {
 	Retry                 *RetryConfig        `yaml:"retry,omitempty"`
 	SchemaCheck           string              `yaml:"schema_check,omitempty"`
 	Contract              *ContractConfig     `yaml:"contract,omitempty"`
+	PollInterval          string              `yaml:"poll_interval,omitempty"`
 }
 
 // RetryConfig configures per-asset retry behaviour.
@@ -238,16 +239,19 @@ func (cfg *PipelineConfig) OutputDatasets() []string {
 
 var connectionRequirements = map[string][]string{
 	"bigquery":   {"project", "dataset"},
+	"gcs":        {"bucket"},
 	"postgres":   {"host", "database"},
 	"mysql":      {"host", "database"},
 	"snowflake":  {"account", "database"},
 }
 
 var validTypes = map[string]bool{
-	"sql":    true,
-	"python": true,
-	"shell":  true,
-	"dlt":    true,
+	"sql":        true,
+	"python":     true,
+	"shell":      true,
+	"dlt":        true,
+	"gcs_export": true,
+	"gcs_ingest": true,
 }
 
 // validateAndApplyRetryDefaults validates the retry block and fills in defaults.
@@ -415,6 +419,22 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		}
 		if a.Type == "sql" && a.DestinationConnection == "" {
 			return nil, fmt.Errorf("sql asset %q must have destination_connection", a.Name)
+		}
+		if (a.Type == "gcs_export" || a.Type == "gcs_ingest") && a.SourceConnection == "" {
+			return nil, fmt.Errorf("%s asset %q must have source_connection", a.Type, a.Name)
+		}
+		if a.PollInterval != "" && a.Type != "gcs_ingest" {
+			return nil, fmt.Errorf("asset %q: poll_interval is only valid for gcs_ingest assets", a.Name)
+		}
+		if a.Type == "gcs_ingest" {
+			if srcConn, ok := cfg.Connections[a.SourceConnection]; ok && srcConn.Type != "gcs" {
+				return nil, fmt.Errorf("gcs_ingest asset %q: source_connection must be type gcs, got %q", a.Name, srcConn.Type)
+			}
+			if a.DestinationConnection != "" {
+				if destConn, ok := cfg.Connections[a.DestinationConnection]; ok && destConn.Type != "bigquery" {
+					return nil, fmt.Errorf("gcs_ingest asset %q: destination_connection must be type bigquery, got %q", a.Name, destConn.Type)
+				}
+			}
 		}
 	}
 

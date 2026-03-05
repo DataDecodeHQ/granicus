@@ -3,7 +3,7 @@ package context
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"cloud.google.com/go/bigquery"
@@ -25,7 +25,7 @@ func SyncSchemas(client *bigquery.Client, datasets []string) []Schema {
 	for _, ds := range datasets {
 		rows, err := queryDatasetSchema(client, ds)
 		if err != nil {
-			log.Printf("WARNING: schema sync for dataset %q failed: %v", ds, err)
+			slog.Warn("schema sync failed", "dataset", ds, "error", err)
 			continue
 		}
 		all = append(all, rows...)

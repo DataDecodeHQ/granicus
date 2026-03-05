@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/option"
 
+	"github.com/Andrew-DataDecode/Granicus/internal/logging"
 	"github.com/Andrew-DataDecode/Granicus/internal/backup"
 	"github.com/Andrew-DataDecode/Granicus/internal/checker"
 	"github.com/Andrew-DataDecode/Granicus/internal/config"
@@ -30,6 +31,7 @@ import (
 	"github.com/Andrew-DataDecode/Granicus/internal/pool"
 	"github.com/Andrew-DataDecode/Granicus/internal/rerun"
 	"github.com/Andrew-DataDecode/Granicus/internal/runner"
+	"github.com/Andrew-DataDecode/Granicus/internal/server"
 	"github.com/Andrew-DataDecode/Granicus/internal/state"
 	"github.com/Andrew-DataDecode/Granicus/internal/testmode"
 	"github.com/Andrew-DataDecode/Granicus/internal/validate"
@@ -91,7 +93,7 @@ type jsonErrorDetail struct {
 
 func logEmit(es *events.Store, event events.Event) {
 	if err := es.Emit(event); err != nil {
-		log.Printf("WARNING: failed to emit %s event: %v", event.EventType, err)
+		slog.Warn("failed to emit event", "event_type", event.EventType, "error", err)
 	}
 }
 
@@ -109,6 +111,8 @@ func printJSONError(code, message, suggestion string, ctx map[string]any) {
 }
 
 func main() {
+	logging.Init(false)
+
 	rootCmd := &cobra.Command{
 		Use:          "granicus",
 		Short:        "A lightweight asset-oriented data pipeline orchestrator",
@@ -354,7 +358,7 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		}
 		userFuncs, err := runner.LoadFunctions(funcDir)
 		if err != nil {
-			log.Printf("warning: loading functions from %s: %v", funcDir, err)
+			slog.Warn("loading functions", "dir", funcDir, "error", err)
 		} else {
 			funcMap = runner.MergeFuncMaps(funcMap, userFuncs)
 		}
@@ -423,6 +427,8 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 				reg.Register("sql_check", checkR)
 			case "gcs":
 				reg.Register("gcs", runner.NewGCSRunner(conn))
+				reg.Register("gcs_export", runner.NewGCSRunner(conn))
+				reg.Register("gcs_ingest", runner.NewGCSIngestRunner(conn, nil))
 			case "s3":
 				reg.Register("s3", runner.NewS3Runner(conn))
 			case "iceberg":
@@ -738,7 +744,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	go func() {
 		select {
 		case sig := <-sigCh:
-			log.Printf("received signal %v, initiating graceful shutdown", sig)
+			slog.Info("received signal, initiating graceful shutdown", "signal", sig)
 			shutdownCancel()
 		case <-shutdownCtx.Done():
 		}
@@ -776,7 +782,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			srcPath := filepath.Join(pr, asset.Source)
 			if hash, herr := events.HashFile(srcPath); herr == nil {
 				if _, _, mvErr := eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID); mvErr != nil {
-					log.Printf("WARNING: failed to record model version for %s: %v", asset.Name, mvErr)
+					slog.Warn("failed to record model version", "asset", asset.Name, "error", mvErr)
 				}
 			}
 		}
@@ -996,6 +1002,37 @@ func runRun(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Run ID: %s\n", runID)
 	}
 
+	// Send run summary notification
+	if cfg.Alerts != nil {
+		alertMgr := server.NewAlertManager(cfg.Alerts, eventStore)
+		var summaryResults []struct {
+			AssetName string
+			Status    string
+			Error     string
+			Duration  float64
+			Cost      float64
+		}
+		for _, r := range rr.Results {
+			cost := 0.0
+			if r.Metadata != nil {
+				if c, ok := r.Metadata["bq_total_bytes_billed"]; ok {
+					if v, err := fmt.Sscanf(c, "%f", &cost); v == 1 && err == nil {
+						cost = cost / 1e12 * 5.0 // approx $/TB
+					}
+				}
+			}
+			summaryResults = append(summaryResults, struct {
+				AssetName string
+				Status    string
+				Error     string
+				Duration  float64
+				Cost      float64
+			}{r.AssetName, r.Status, r.Error, r.Duration.Seconds(), cost})
+		}
+		alertData := server.BuildRunSummary(cfg.Pipeline, runID, summaryResults, totalDuration.Seconds())
+		alertMgr.SendRunSummary(alertData)
+	}
+
 	// Post-run hooks: context.db + monitor.db
 	bqClient := newBQClientForContext(cfg)
 	if bqClient != nil {
@@ -1008,7 +1045,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	hookFailures := executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
 	if hookFailures > 0 {
-		log.Printf("WARNING: %d post-run hook(s) failed", hookFailures)
+		slog.Warn("post-run hooks failed", "failures", hookFailures)
 	}
 
 	if failed > 0 {
@@ -1876,7 +1913,7 @@ func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 
 		// Collect check errors
 		if err := monitor.CollectCheckErrors(dbPath, cfg.Pipeline, rr); err != nil {
-			log.Printf("WARNING: monitor check error collection failed: %v", err)
+			slog.Warn("monitor check error collection failed", "error", err)
 		}
 
 		// Collect structural metrics
@@ -1899,18 +1936,18 @@ func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 		allSnapshots := append(structural, business...)
 		if len(allSnapshots) > 0 {
 			if err := monitor.AppendSnapshots(dbPath, allSnapshots); err != nil {
-				log.Printf("WARNING: monitor snapshot append failed: %v", err)
+				slog.Warn("monitor snapshot append failed", "error", err)
 			}
 		}
 
 		// Compare and flag drift
 		flags, err := monitor.CompareSnapshots(dbPath, monCfg, allSnapshots)
 		if err != nil {
-			log.Printf("WARNING: monitor comparison failed: %v", err)
+			slog.Warn("monitor comparison failed", "error", err)
 		}
 		if len(flags) > 0 {
 			if err := monitor.AppendFlags(dbPath, flags); err != nil {
-				log.Printf("WARNING: monitor flag append failed: %v", err)
+				slog.Warn("monitor flag append failed", "error", err)
 			}
 		}
 
@@ -1938,7 +1975,7 @@ func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
 		}
 		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
 		if err != nil {
-			log.Printf("WARNING: could not create BQ client for context: %v", err)
+			slog.Warn("could not create BQ client for context", "error", err)
 			return nil
 		}
 		return client

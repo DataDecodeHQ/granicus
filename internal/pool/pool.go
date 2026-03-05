@@ -3,7 +3,7 @@ package pool
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -30,14 +30,14 @@ func NewPool(name string, slots int, timeout time.Duration) *Pool {
 }
 
 func (p *Pool) Acquire(ctx context.Context) error {
-	log.Printf("pool %s: acquiring slot (%d/%d in use)", p.Name, len(p.sem), p.Slots)
+	slog.Debug("pool acquiring slot", "pool", p.Name, "in_use", len(p.sem), "slots", p.Slots)
 
 	timer := time.NewTimer(p.Timeout)
 	defer timer.Stop()
 
 	select {
 	case p.sem <- struct{}{}:
-		log.Printf("pool %s: slot acquired (%d/%d in use)", p.Name, len(p.sem), p.Slots)
+		slog.Debug("pool slot acquired", "pool", p.Name, "in_use", len(p.sem), "slots", p.Slots)
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("pool %s: context cancelled while waiting for slot: %w", p.Name, ctx.Err())
@@ -48,7 +48,7 @@ func (p *Pool) Acquire(ctx context.Context) error {
 
 func (p *Pool) Release() {
 	<-p.sem
-	log.Printf("pool %s: slot released (%d/%d in use)", p.Name, len(p.sem), p.Slots)
+	slog.Debug("pool slot released", "pool", p.Name, "in_use", len(p.sem), "slots", p.Slots)
 }
 
 func (p *Pool) InUse() int {

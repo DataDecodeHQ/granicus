@@ -3,7 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -40,7 +40,7 @@ func CollectStructuralMetrics(client BQQuerier, cfg *StructuralConfig, pipeline 
 	for _, plan := range plans {
 		results, err := executeTableQuery(client, plan)
 		if err != nil {
-			log.Printf("WARNING: structural query for %s.%s failed: %v", plan.Dataset, plan.Table, err)
+			slog.Warn("structural query failed", "dataset", plan.Dataset, "table", plan.Table, "error", err)
 			continue
 		}
 
@@ -92,7 +92,7 @@ func buildPlans(cfg *StructuralConfig, tables map[string]string) []tableMetricPl
 		table, col, _ := strings.Cut(nr, ".")
 		dataset, ok := tables[table]
 		if !ok {
-			log.Printf("WARNING: null_rate table %q not found in tables map, skipping", table)
+			slog.Warn("null_rate table not found in tables map", "table", table)
 			continue
 		}
 
@@ -159,7 +159,7 @@ func executeTableQuery(client BQQuerier, plan tableMetricPlan) (map[string]float
 		case nil:
 			results[k] = 0
 		default:
-			log.Printf("WARNING: unexpected type %T for column %s, skipping", v, k)
+			slog.Warn("unexpected column type", "type", fmt.Sprintf("%T", v), "column", k)
 		}
 	}
 

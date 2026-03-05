@@ -2,10 +2,24 @@ package runner
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
+
+// resolveGCSCredentials returns the credentials file path using the following
+// priority: (1) explicit credentials property, (2) GCS_SERVICE_ACCOUNT env var,
+// (3) empty string (ADC fallback).
+func resolveGCSCredentials(conn *config.ConnectionConfig) string {
+	if creds := conn.Properties["credentials"]; creds != "" {
+		return creds
+	}
+	if envCreds := os.Getenv("GCS_SERVICE_ACCOUNT"); envCreds != "" {
+		return envCreds
+	}
+	return ""
+}
 
 type GCSRunner struct {
 	Connection *config.ConnectionConfig
@@ -30,14 +44,21 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 
 	// GCS operations delegate to shell/python scripts that use gsutil or the GCS client
 	// The runner sets up environment variables and delegates
+	prefix := r.Connection.Properties["prefix"]
 	env := []string{
 		"GRANICUS_GCS_BUCKET=" + bucket,
-		"GRANICUS_GCS_PREFIX=" + r.Connection.Properties["prefix"],
+		"GRANICUS_GCS_PREFIX=" + prefix,
 		"GRANICUS_ASSET_NAME=" + asset.Name,
 		"GRANICUS_RUN_ID=" + runID,
 		"GRANICUS_PROJECT_ROOT=" + projectRoot,
 	}
-	if creds := r.Connection.Properties["credentials"]; creds != "" {
+	if format := r.Connection.Properties["format"]; format != "" {
+		env = append(env, "GRANICUS_GCS_FORMAT="+format)
+	}
+	if pp := r.Connection.Properties["partition_prefix"]; pp != "" {
+		env = append(env, "GRANICUS_GCS_PARTITION_PREFIX="+pp)
+	}
+	if creds := resolveGCSCredentials(r.Connection); creds != "" {
 		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
 	}
 	if asset.IntervalStart != "" {

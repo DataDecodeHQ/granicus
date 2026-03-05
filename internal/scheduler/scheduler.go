@@ -3,7 +3,7 @@ package scheduler
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +73,7 @@ func (s *Scheduler) LoadAndRegister() error {
 			continue
 		}
 		if err := s.registerPipeline(name, cfg); err != nil {
-			log.Printf("scheduler: skipping %s: %v", name, err)
+			slog.Warn("scheduler skipping pipeline", "pipeline", name, "error", err)
 		}
 	}
 
@@ -86,7 +86,7 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 
 	configs, err := scanConfigDir(s.configDir)
 	if err != nil {
-		log.Printf("scheduler: reload error: %v", err)
+		slog.Error("scheduler reload error", "error", err)
 		return
 	}
 
@@ -123,6 +123,28 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 	return
 }
 
+// RegisterAssetPolls registers cron entries for gcs_ingest assets with poll_interval.
+// Each poll triggers a run targeting just that asset.
+func (s *Scheduler) RegisterAssetPolls() {
+	for _, cfg := range s.configs {
+		for _, asset := range cfg.Assets {
+			if asset.Type != "gcs_ingest" || asset.PollInterval == "" {
+				continue
+			}
+			assetName := asset.Name
+			cfgCopy := *cfg
+			entryID, err := s.cron.AddFunc(asset.PollInterval, func() {
+				s.runWithLock(cfgCopy.Pipeline+"/"+assetName, &cfgCopy)
+			})
+			if err != nil {
+				slog.Warn("scheduler: invalid poll_interval", "asset", assetName, "schedule", asset.PollInterval, "error", err)
+				continue
+			}
+			s.entries[cfgCopy.Pipeline+"/poll:"+assetName] = entryID
+		}
+	}
+}
+
 func (s *Scheduler) registerPipeline(name string, cfg *config.PipelineConfig) error {
 	cfgCopy := *cfg
 	entryID, err := s.cron.AddFunc(cfg.Schedule, func() {
@@ -139,11 +161,11 @@ func (s *Scheduler) registerPipeline(name string, cfg *config.PipelineConfig) er
 func (s *Scheduler) runWithLock(pipeline string, cfg *config.PipelineConfig) {
 	acquired, err := s.lockStore.AcquireLock(pipeline, "scheduled")
 	if err != nil {
-		log.Printf("scheduler: lock error for %s: %v", pipeline, err)
+		slog.Error("scheduler lock error", "pipeline", pipeline, "error", err)
 		return
 	}
 	if !acquired {
-		log.Printf("scheduler: skipping %s (already running)", pipeline)
+		slog.Info("scheduler skipping pipeline (already running)", "pipeline", pipeline)
 		s.emitEvent(events.Event{
 			Pipeline: pipeline, EventType: "lock_contention", Severity: "warning",
 			Summary: fmt.Sprintf("Skipped %s: pipeline already running", pipeline),
@@ -224,7 +246,7 @@ func scanConfigDir(dir string) (map[string]*config.PipelineConfig, error) {
 		path := filepath.Join(dir, name)
 		cfg, err := config.LoadConfig(path)
 		if err != nil {
-			log.Printf("scheduler: skipping %s: %v", name, err)
+			slog.Warn("scheduler skipping config", "file", name, "error", err)
 			continue
 		}
 		configs[cfg.Pipeline] = cfg

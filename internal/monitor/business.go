@@ -3,7 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -30,7 +30,7 @@ func collectAggregates(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pi
 	for _, mc := range cfg.Monitoring.Metrics {
 		results, err := runAggregateQuery(ctx, bq, mc, project, dataset)
 		if err != nil {
-			log.Printf("WARNING: aggregate query for table %s failed: %v", mc.Table, err)
+			slog.Warn("aggregate query failed", "table", mc.Table, "error", err)
 			continue
 		}
 
@@ -116,13 +116,13 @@ func collectRates(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipelin
 	for _, rc := range cfg.Monitoring.Rates {
 		numVal, err := runScalarAggregate(ctx, bq, rc.Numerator.Table, rc.Numerator.Aggregate, project, dataset)
 		if err != nil {
-			log.Printf("WARNING: rate %s numerator query failed: %v", rc.Name, err)
+			slog.Warn("rate numerator query failed", "rate", rc.Name, "error", err)
 			continue
 		}
 
 		denVal, err := runScalarAggregate(ctx, bq, rc.Denominator.Table, rc.Denominator.Aggregate, project, dataset)
 		if err != nil {
-			log.Printf("WARNING: rate %s denominator query failed: %v", rc.Name, err)
+			slog.Warn("rate denominator query failed", "rate", rc.Name, "error", err)
 			continue
 		}
 
@@ -184,7 +184,7 @@ func collectSegments(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipe
 	for _, sc := range cfg.Monitoring.Segments {
 		rows, err := runSegmentQuery(ctx, bq, sc, project, dataset)
 		if err != nil {
-			log.Printf("WARNING: segment query for table %s failed: %v", sc.Table, err)
+			slog.Warn("segment query failed", "table", sc.Table, "error", err)
 			continue
 		}
 
