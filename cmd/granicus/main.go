@@ -64,6 +64,7 @@ func main() {
 	runCmd.Flags().String("test-window", "", "Test window duration (e.g., 7d, 4w, 3m)")
 	runCmd.Flags().Bool("keep-test-data", false, "Preserve test dataset after run")
 	runCmd.Flags().Bool("downstream-only", false, "With --assets, run only downstream dependents (skip upstream)")
+	runCmd.Flags().Bool("only", false, "With --assets, run only the named assets (skip upstream and downstream)")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -366,6 +367,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
 	assetsFlag, _ := cmd.Flags().GetString("assets")
 	downstreamOnly, _ := cmd.Flags().GetBool("downstream-only")
+	only, _ := cmd.Flags().GetBool("only")
 	fromFailure, _ := cmd.Flags().GetString("from-failure")
 	fromDate, _ := cmd.Flags().GetString("from-date")
 	toDate, _ := cmd.Flags().GetString("to-date")
@@ -401,6 +403,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	if downstreamOnly && assetsFlag == "" {
 		return fmt.Errorf("--downstream-only requires --assets")
+	}
+	if only && assetsFlag == "" {
+		return fmt.Errorf("--only requires --assets")
+	}
+	if only && downstreamOnly {
+		return fmt.Errorf("--only and --downstream-only are mutually exclusive")
 	}
 
 	var assetFilter []string
@@ -625,6 +633,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		TestEnd:        testEnd,
 		KeepTestData:   keepTestData,
 		DownstreamOnly: downstreamOnly,
+		Only:           only,
 		PoolManager:    poolMgr,
 		AssetPools:     assetPools,
 	}

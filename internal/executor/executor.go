@@ -42,6 +42,7 @@ type RunConfig struct {
 	KeepTestData   bool
 	TestDataset    string // set by test mode setup (the created dataset name)
 	DownstreamOnly bool
+	Only           bool
 	PoolManager    *pool.PoolManager
 	AssetPools     map[string]string // asset name -> pool name
 }
@@ -68,7 +69,9 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	nodesToRun := make(map[string]bool)
 	if len(cfg.Assets) > 0 {
 		var subgraph []string
-		if cfg.DownstreamOnly {
+		if cfg.Only {
+			subgraph = cfg.Assets
+		} else if cfg.DownstreamOnly {
 			subgraph = g.DownstreamSubgraph(cfg.Assets)
 		} else {
 			subgraph = g.Subgraph(cfg.Assets)
