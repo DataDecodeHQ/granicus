@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/state"
+	"github.com/Andrew-DataDecode/Granicus/internal/state"
 )
 
 type FreshnessCheck struct {

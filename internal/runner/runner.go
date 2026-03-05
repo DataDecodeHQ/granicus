@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 const (

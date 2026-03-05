@@ -3,13 +3,14 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/events"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/events"
 )
 
 type PythonRunner struct {
@@ -153,14 +154,16 @@ func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, do
 			for k, v := range meta {
 				details[k] = v
 			}
-			r.EventStore.Emit(events.Event{
+			if err := r.EventStore.Emit(events.Event{
 				RunID:     runID,
 				Pipeline:  r.Pipeline,
 				Asset:     assetName,
 				EventType: "asset_progress",
 				Summary:   meta["step"],
 				Details:   details,
-			})
+			}); err != nil {
+				log.Printf("WARNING: failed to emit progress event for %s: %v", assetName, err)
+			}
 		}
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 var depPattern = regexp.MustCompile(`^\s*(?:--|#)\s*depends_on:\s*(\S+)\s*$`)
@@ -136,6 +136,16 @@ func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 		if a.Timeout != "" {
 			timeout, _ = time.ParseDuration(a.Timeout)
 		}
+		var maxAttempts int
+		var backoffBase time.Duration
+		var retryableErrors []string
+		if a.Retry != nil {
+			maxAttempts = a.Retry.MaxAttempts
+			if a.Retry.BackoffBase != "" {
+				backoffBase, _ = time.ParseDuration(a.Retry.BackoffBase)
+			}
+			retryableErrors = a.Retry.RetryableErrors
+		}
 		inputs[i] = AssetInput{
 			Name:                  a.Name,
 			Type:                  a.Type,
@@ -146,6 +156,9 @@ func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 			Grain:                 a.Grain,
 			DefaultChecks:         a.DefaultChecks,
 			Timeout:               timeout,
+			MaxAttempts:           maxAttempts,
+			BackoffBase:           backoffBase,
+			RetryableErrors:       retryableErrors,
 		}
 	}
 	return inputs

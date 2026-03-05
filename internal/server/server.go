@@ -1,15 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 
-	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/events"
-	"github.com/analytehealth/granicus/internal/scheduler"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/Andrew-DataDecode/Granicus/internal/scheduler"
 )
 
 type TriggerRequest struct {
@@ -39,6 +40,8 @@ type Server struct {
 	eventStore  *events.Store
 	runFunc     RunFunc
 	httpServer  *http.Server
+	wg          sync.WaitGroup
+	shutdownCtx context.Context
 }
 
 func NewServer(port int, projectRoot string, lockStore *scheduler.LockStore, eventStore *events.Store, runFunc RunFunc) *Server {
@@ -81,6 +84,27 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// SetShutdownCtx sets a context that is cancelled when the server should stop
+// accepting new trigger requests. Must be called before serving begins.
+func (s *Server) SetShutdownCtx(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shutdownCtx = ctx
+}
+
+// WaitForRuns blocks until all in-progress pipeline runs finish or ctx is done.
+func (s *Server) WaitForRuns(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
@@ -89,6 +113,19 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
 		return
+	}
+
+	// Reject new runs if shutdown has been signalled.
+	s.mu.RLock()
+	shutdownCtx := s.shutdownCtx
+	s.mu.RUnlock()
+	if shutdownCtx != nil {
+		select {
+		case <-shutdownCtx.Done():
+			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "server is shutting down"})
+			return
+		default:
+		}
 	}
 
 	pipeline := strings.TrimPrefix(r.URL.Path, "/api/v1/trigger/")
@@ -125,7 +162,9 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		defer s.lockStore.ReleaseLock(pipeline, runID)
 		s.runFunc(cfg, s.projectRoot, runID, req)
 	}()

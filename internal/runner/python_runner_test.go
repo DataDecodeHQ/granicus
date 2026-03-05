@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/events"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/events"
 )
 
 func TestPythonRunner_EnvVarInjection(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -296,6 +296,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	const maxSampleRows = 100
 	var sampleRows []map[string]any
 	rowCount := 0
+	var iterErr error
 
 	for {
 		var row map[string]bigquery.Value
@@ -304,6 +305,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 			break
 		}
 		if err != nil {
+			iterErr = err
 			break
 		}
 		rowCount++
@@ -317,6 +319,14 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 
 	end := time.Now()
+
+	if iterErr != nil {
+		return NodeResult{
+			AssetName: asset.Name, Status: "failed", StartTime: start,
+			EndTime: end, Duration: end.Sub(start),
+			Error: fmt.Sprintf("iterating check results: %v", iterErr), ExitCode: 1,
+		}
+	}
 	metadata := map[string]string{
 		"check_total_rows": strconv.Itoa(rowCount),
 		"check_sql":        sqlStr,

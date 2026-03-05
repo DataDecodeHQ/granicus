@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS interval_state (
 	completed_at   TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (asset_name, interval_start)
 );
+
+CREATE INDEX IF NOT EXISTS idx_interval_state_status_started ON interval_state(status, started_at);
 `
 
 func New(dbPath string) (*Store, error) {

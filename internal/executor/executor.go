@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/pool"
-	"github.com/analytehealth/granicus/internal/state"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/pool"
+	"github.com/Andrew-DataDecode/Granicus/internal/state"
 )
+
+const DefaultShutdownTimeout = 5 * time.Minute
 
 type NodeResult struct {
 	AssetName string
@@ -39,19 +41,22 @@ type RunConfig struct {
 	TestMode     bool
 	TestStart    string
 	TestEnd      string
-	KeepTestData   bool
-	TestDataset    string // set by test mode setup (the created dataset name)
-	DownstreamOnly bool
-	PoolManager    *pool.PoolManager
-	AssetPools     map[string]string // asset name -> pool name
+	KeepTestData    bool
+	TestDataset     string // set by test mode setup (the created dataset name)
+	DownstreamOnly  bool
+	PoolManager     *pool.PoolManager
+	AssetPools      map[string]string // asset name -> pool name
+	Ctx             context.Context   // cancelled on SIGTERM/SIGINT for graceful shutdown
+	ShutdownTimeout time.Duration     // max wait for in-progress nodes; 0 = DefaultShutdownTimeout
 }
 
 type RunnerFunc func(asset *graph.Asset, projectRoot string, runID string) NodeResult
 
 type RunResult struct {
-	Results   []NodeResult
-	StartTime time.Time
-	EndTime   time.Time
+	Results     []NodeResult
+	StartTime   time.Time
+	EndTime     time.Time
+	Interrupted bool // true if run was stopped by a shutdown signal
 }
 
 func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
@@ -87,7 +92,9 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		for name := range nodesToRun {
 			asset := g.Assets[name]
 			if asset.TimeColumn != "" {
-				cfg.StateStore.InvalidateAll(name)
+				if err := cfg.StateStore.InvalidateAll(name); err != nil {
+					log.Printf("executor: state store InvalidateAll failed for %s: %v", name, err)
+				}
 			}
 		}
 	}
@@ -97,11 +104,44 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		maxP = 10
 	}
 
-	// Pre-compute blocking checks per asset: asset -> list of blocking check node names
+	shutdownTimeout := cfg.ShutdownTimeout
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = DefaultShutdownTimeout
+	}
+
+	// shutdownCh is closed when a shutdown signal is received.
+	shutdownCh := make(chan struct{})
+	var shutdownOnce sync.Once
+	triggerShutdown := func() {
+		shutdownOnce.Do(func() { close(shutdownCh) })
+	}
+	defer triggerShutdown() // clean up watcher goroutine on return
+
+	if cfg.Ctx != nil {
+		go func() {
+			select {
+			case <-cfg.Ctx.Done():
+				triggerShutdown()
+			case <-shutdownCh:
+			}
+		}()
+	}
+
+	isShuttingDown := func() bool {
+		select {
+		case <-shutdownCh:
+			return true
+		default:
+			return false
+		}
+	}
+
+	// Pre-compute blocking checks per asset: asset -> list of blocking check node names.
+	// Critical severity checks are always treated as blocking regardless of the Blocking field.
 	blockingChecks := make(map[string][]string)
 	for name := range nodesToRun {
 		asset := g.Assets[name]
-		if asset.Blocking && strings.HasPrefix(name, "check:") {
+		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(name, "check:") {
 			for _, parent := range asset.DependsOn {
 				blockingChecks[parent] = append(blockingChecks[parent], name)
 			}
@@ -174,11 +214,26 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 				result := executeIncremental(asset, cfg, runner, &dedupMu, dedupResults)
 				done <- result
 			} else {
-				// Full refresh or no state store — run once
-				result := executeWithDedup(asset, cfg, runner, &dedupMu, dedupResults, "", "")
+				// Full refresh or no state store — run once, with retry
+				result := runWithRetry(asset, cfg, runner, &dedupMu, dedupResults, "", "")
 				done <- result
 			}
 		}()
+	}
+
+	// dispatchOrSkip dispatches a node, or immediately emits a skipped result
+	// if a shutdown signal has been received.
+	dispatchOrSkip := func(name string) {
+		if isShuttingDown() {
+			done <- NodeResult{
+				AssetName: name,
+				Status:    "skipped",
+				Error:     "skipped: run interrupted",
+				ExitCode:  -1,
+			}
+			return
+		}
+		dispatch(name)
 	}
 
 	// allBlockingChecksPassed returns true if every blocking check for the given
@@ -234,7 +289,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}
 		resolved[downstream] = true
 		mu.Unlock()
-		dispatch(downstream)
+		dispatchOrSkip(downstream)
 		mu.Lock()
 		return true
 	}
@@ -243,85 +298,122 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	for name := range nodesToRun {
 		if unresolved[name] == 0 {
 			resolved[name] = true
-			dispatch(name)
+			dispatchOrSkip(name)
 		}
 	}
 
+	// activeShutdownCh starts as shutdownCh; set to nil once we've started the
+	// shutdown timer so the select doesn't spin on the closed channel.
+	activeShutdownCh := shutdownCh
+	var shutdownTimer <-chan time.Time // nil = never fires
+
 	for pending > 0 {
-		result := <-done
-		mu.Lock()
-		results[result.AssetName] = &result
-		pending--
-
-		if result.Status == "success" {
-			// Decrement unresolved counts and try dispatching downstream nodes
-			for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
-				if !nodesToRun[downstream] || resolved[downstream] {
-					continue
-				}
-				unresolved[downstream]--
-				tryDispatchDownstream(downstream)
+		select {
+		case result := <-done:
+			mu.Lock()
+			// Apply severity-based behavior for check nodes before storing the result.
+			if strings.HasPrefix(result.AssetName, "check:") && result.Status != "success" {
+				result = applySeverityToCheckResult(result, g.Assets[result.AssetName], triggerShutdown)
 			}
+			results[result.AssetName] = &result
+			pending--
 
-			// If this is a successful blocking check, its parent's other
-			// downstream nodes may now be unblocked. Re-evaluate them.
-			asset := g.Assets[result.AssetName]
-			if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
-				for _, parentName := range asset.DependsOn {
-					if !allBlockingChecksPassed(parentName) {
+			if result.Status == "success" {
+				// Decrement unresolved counts and try dispatching downstream nodes
+				for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
+					if !nodesToRun[downstream] || resolved[downstream] {
 						continue
 					}
-					for _, downstream := range g.Assets[parentName].DependedOnBy {
-						tryDispatchDownstream(downstream)
-					}
+					unresolved[downstream]--
+					tryDispatchDownstream(downstream)
 				}
-			}
-		} else {
-			// Skip all direct descendants of the failed node
-			descendants := g.Descendants(result.AssetName)
-			for _, desc := range descendants {
-				if !nodesToRun[desc] || resolved[desc] {
-					continue
-				}
-				resolved[desc] = true
-				results[desc] = &NodeResult{
-					AssetName: desc,
-					Status:    "skipped",
-					Error:     "skipped: dependency " + result.AssetName + " failed",
-					ExitCode:  -1,
-				}
-				pending--
-			}
 
-			// Blocking check failure: skip descendants of the parent asset
-			asset := g.Assets[result.AssetName]
-			if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
-				for _, parentName := range asset.DependsOn {
-					parentDescendants := g.Descendants(parentName)
-					for _, desc := range parentDescendants {
-						if desc == result.AssetName {
+				// If this is a successful blocking check, its parent's other
+				// downstream nodes may now be unblocked. Re-evaluate them.
+				asset := g.Assets[result.AssetName]
+				if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
+					for _, parentName := range asset.DependsOn {
+						if !allBlockingChecksPassed(parentName) {
 							continue
 						}
-						if !nodesToRun[desc] || resolved[desc] {
-							continue
+						for _, downstream := range g.Assets[parentName].DependedOnBy {
+							tryDispatchDownstream(downstream)
 						}
-						resolved[desc] = true
-						results[desc] = &NodeResult{
-							AssetName: desc,
-							Status:    "skipped",
-							Error:     "skipped: blocked_by_check:" + result.AssetName,
-							ExitCode:  -1,
-							Metadata:  map[string]string{"blocked_by_check": result.AssetName},
+					}
+				}
+			} else {
+				// Skip all direct descendants of the failed/skipped node
+				descendants := g.Descendants(result.AssetName)
+				for _, desc := range descendants {
+					if !nodesToRun[desc] || resolved[desc] {
+						continue
+					}
+					resolved[desc] = true
+					results[desc] = &NodeResult{
+						AssetName: desc,
+						Status:    "skipped",
+						Error:     "skipped: dependency " + result.AssetName + " failed",
+						ExitCode:  -1,
+					}
+					pending--
+				}
+
+				// Blocking check failure: skip descendants of the parent asset.
+				// Critical severity checks always block regardless of the Blocking field.
+				asset := g.Assets[result.AssetName]
+				if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
+					for _, parentName := range asset.DependsOn {
+						parentDescendants := g.Descendants(parentName)
+						for _, desc := range parentDescendants {
+							if desc == result.AssetName {
+								continue
+							}
+							if !nodesToRun[desc] || resolved[desc] {
+								continue
+							}
+							resolved[desc] = true
+							results[desc] = &NodeResult{
+								AssetName: desc,
+								Status:    "skipped",
+								Error:     "skipped: blocked_by_check:" + result.AssetName,
+								ExitCode:  -1,
+								Metadata:  map[string]string{"blocked_by_check": result.AssetName},
+							}
+							pending--
 						}
-						pending--
 					}
 				}
 			}
+			mu.Unlock()
+
+		case <-activeShutdownCh:
+			// Shutdown signal received: start timeout and stop listening on
+			// this channel (closed channels would spin the select).
+			log.Printf("executor: shutdown signal received, waiting up to %v for in-progress nodes", shutdownTimeout)
+			shutdownTimer = time.After(shutdownTimeout)
+			activeShutdownCh = nil
+
+		case <-shutdownTimer:
+			// Timeout expired: force-resolve all nodes not yet in results.
+			mu.Lock()
+			for name := range nodesToRun {
+				if _, ok := results[name]; !ok {
+					results[name] = &NodeResult{
+						AssetName: name,
+						Status:    "skipped",
+						Error:     "skipped: shutdown timeout exceeded",
+						ExitCode:  -1,
+					}
+					pending--
+				}
+			}
+			mu.Unlock()
+			shutdownTimer = nil // prevent re-firing
 		}
-		mu.Unlock()
 	}
 
 	runResult.EndTime = time.Now()
+	runResult.Interrupted = isShuttingDown()
 
 	for name := range nodesToRun {
 		if r, ok := results[name]; ok {
@@ -374,7 +466,16 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 		}
 	}
 
-	completed, _ := cfg.StateStore.GetIntervals(asset.Name)
+	completed, err := cfg.StateStore.GetIntervals(asset.Name)
+	if err != nil {
+		log.Printf("executor: state store GetIntervals failed for %s: %v", asset.Name, err)
+		return NodeResult{
+			AssetName: asset.Name,
+			Status:    "failed",
+			Error:     fmt.Sprintf("state store GetIntervals: %v", err),
+			ExitCode:  -1,
+		}
+	}
 	missing := state.ComputeMissing(allIntervals, completed, asset.Lookback)
 	missing = state.ApplyBatchSize(missing, asset.BatchSize)
 
@@ -401,28 +502,43 @@ func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, de
 	var lastResult NodeResult
 	processed := 0
 
+	maxAttempts := asset.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	backoffBase := asset.BackoffBase
+	if backoffBase <= 0 {
+		backoffBase = 10 * time.Second
+	}
+	maxRetries := maxAttempts - 1
+
 	for _, iv := range missing {
-		cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID)
+		if err := cfg.StateStore.MarkInProgress(asset.Name, iv.Start, iv.End, cfg.RunID); err != nil {
+			log.Printf("executor: state store MarkInProgress failed for %s interval %s: %v", asset.Name, iv.Start, err)
+		}
 
 		var result NodeResult
-		maxRetries := 3
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			result = executeWithDedup(asset, cfg, runner, dedupMu, dedupResults, iv.Start, iv.End)
-			if result.Status == "success" || !isRetryableError(result.Error) || attempt == maxRetries {
+			if result.Status == "success" || !isRetryableForPolicy(result.Error, asset.RetryableErrors) || attempt == maxRetries {
 				break
 			}
-			backoff := time.Duration(1<<uint(attempt)) * 10 * time.Second
+			backoff := time.Duration(1<<uint(attempt)) * backoffBase
 			log.Printf("executor: retrying %s interval %s after %v (attempt %d/%d): %s",
-				asset.Name, iv.Start, backoff, attempt+1, maxRetries, result.Error)
+				asset.Name, iv.Start, backoff, attempt+1, maxAttempts, result.Error)
 			time.Sleep(backoff)
 		}
 
 		if result.Status == "success" {
-			cfg.StateStore.MarkComplete(asset.Name, iv.Start, iv.End)
+			if err := cfg.StateStore.MarkComplete(asset.Name, iv.Start, iv.End); err != nil {
+				log.Printf("executor: state store MarkComplete failed for %s interval %s: %v", asset.Name, iv.Start, err)
+			}
 			processed++
 			lastResult = result
 		} else {
-			cfg.StateStore.MarkFailed(asset.Name, iv.Start, iv.End)
+			if err := cfg.StateStore.MarkFailed(asset.Name, iv.Start, iv.End); err != nil {
+				log.Printf("executor: state store MarkFailed failed for %s interval %s: %v", asset.Name, iv.Start, err)
+			}
 			result.Metadata = mergeMetadata(result.Metadata, map[string]string{
 				"intervals_processed":  itoa(processed),
 				"interval_failed_at":   iv.Start,
@@ -472,12 +588,6 @@ func executeWithDedup(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedu
 	return result
 }
 
-func isRetryableError(errMsg string) bool {
-	return strings.Contains(errMsg, "rate limit") ||
-		strings.Contains(errMsg, "Exceeded rate limits") ||
-		strings.Contains(errMsg, "rateLimitExceeded")
-}
-
 func mergeMetadata(base, extra map[string]string) map[string]string {
 	if base == nil {
 		base = make(map[string]string)
@@ -490,4 +600,53 @@ func mergeMetadata(base, extra map[string]string) map[string]string {
 
 func itoa(i int) string {
 	return strconv.Itoa(i)
+}
+
+// applySeverityToCheckResult adjusts a failed check node result according to its severity.
+// For info/warning: overrides status to "success" (failure is logged but not propagated).
+// For error: no change (failure propagates, blocking field controls downstream skipping).
+// For critical: triggers a full run halt in addition to failing; blocking is always enforced.
+func applySeverityToCheckResult(result NodeResult, asset *graph.Asset, triggerShutdown func()) NodeResult {
+	switch asset.Severity {
+	case "info":
+		log.Printf("CHECK INFO: %s failed (severity=info, treated as pass): %s", result.AssetName, result.Error)
+		result.Status = "success"
+		result.ExitCode = 0
+	case "warning":
+		log.Printf("CHECK WARNING: %s failed (severity=warning, treated as pass): %s", result.AssetName, result.Error)
+		result.Status = "success"
+		result.ExitCode = 0
+	case "critical":
+		log.Printf("CHECK CRITICAL: %s failed, halting run: %s", result.AssetName, result.Error)
+		triggerShutdown()
+	default: // "error" or empty
+		log.Printf("CHECK ERROR: %s failed: %s", result.AssetName, result.Error)
+	}
+	return result
+}
+
+// runWithRetry executes an asset once (non-incremental path) with per-asset retry policy.
+func runWithRetry(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedupMu *sync.Mutex, dedupResults map[string]*NodeResult, intervalStart, intervalEnd string) NodeResult {
+	maxAttempts := asset.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	backoffBase := asset.BackoffBase
+	if backoffBase <= 0 {
+		backoffBase = 10 * time.Second
+	}
+	maxRetries := maxAttempts - 1
+
+	var result NodeResult
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		result = executeWithDedup(asset, cfg, runner, dedupMu, dedupResults, intervalStart, intervalEnd)
+		if result.Status == "success" || !isRetryableForPolicy(result.Error, asset.RetryableErrors) || attempt == maxRetries {
+			break
+		}
+		backoff := time.Duration(1<<uint(attempt)) * backoffBase
+		log.Printf("executor: retrying %s after %v (attempt %d/%d): %s",
+			asset.Name, backoff, attempt+1, maxAttempts, result.Error)
+		time.Sleep(backoff)
+	}
+	return result
 }

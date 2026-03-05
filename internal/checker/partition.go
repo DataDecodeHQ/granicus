@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 type TablePartitionInfo struct {
