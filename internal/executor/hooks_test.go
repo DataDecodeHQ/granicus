@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/analytehealth/granicus/internal/config"
-	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
 )
 
 func testHookGraph(t *testing.T) (*graph.Graph, *config.PipelineConfig) {
@@ -143,9 +143,12 @@ func TestRunPostHooks_ContinuesOnError(t *testing.T) {
 		return nil
 	}
 
-	RunPostHooks([]PostRunHook{failHook, okHook}, g, cfg, projectRoot, nil)
+	failures := RunPostHooks([]PostRunHook{failHook, okHook}, g, cfg, projectRoot, nil)
 
 	if called != 2 {
 		t.Errorf("expected both hooks to run, got %d calls", called)
+	}
+	if failures != 1 {
+		t.Errorf("expected 1 failure, got %d", failures)
 	}
 }

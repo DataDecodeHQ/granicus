@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/graph"
-	"github.com/analytehealth/granicus/internal/state"
+	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/Andrew-DataDecode/Granicus/internal/state"
 )
 
 func newTestState(t *testing.T) *state.Store {

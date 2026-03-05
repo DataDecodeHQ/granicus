@@ -38,16 +38,23 @@ type ConnectionConfig struct {
 }
 
 type CheckConfig struct {
-	Name   string `yaml:"name"`
-	Type   string `yaml:"type"`
+	Name     string `yaml:"name"`
+	Type     string `yaml:"type"`
 	Source   string `yaml:"source"`
 	Blocking bool   `yaml:"blocking,omitempty"`
+	Severity string `yaml:"severity,omitempty"`
 }
 
 type StandardsConfig struct {
 	Email    []string `yaml:"email,omitempty"`
 	Phone    []string `yaml:"phone,omitempty"`
 	Currency []string `yaml:"currency,omitempty"`
+}
+
+type ContractConfig struct {
+	PrimaryKey     string              `yaml:"primary_key,omitempty"`
+	NotNull        []string            `yaml:"not_null,omitempty"`
+	AcceptedValues map[string][]string `yaml:"accepted_values,omitempty"`
 }
 
 type AssetConfig struct {
@@ -75,7 +82,28 @@ type AssetConfig struct {
 	StandardsBlocking     bool                `yaml:"standards_blocking,omitempty"`
 	Timeout               string              `yaml:"timeout,omitempty"`
 	DependsOn             []string            `yaml:"depends_on,omitempty"`
+	Retry                 *RetryConfig        `yaml:"retry,omitempty"`
+	SchemaCheck           string              `yaml:"schema_check,omitempty"`
+	Contract              *ContractConfig     `yaml:"contract,omitempty"`
 }
+
+// RetryConfig configures per-asset retry behaviour.
+type RetryConfig struct {
+	MaxAttempts     int      `yaml:"max_attempts"`
+	BackoffBase     string   `yaml:"backoff_base"`
+	RetryableErrors []string `yaml:"retryable_errors"`
+}
+
+// validErrorCategories are the error taxonomy values accepted in retryable_errors.
+var validErrorCategories = map[string]bool{
+	"rate_limit": true,
+	"quota":      true,
+	"network":    true,
+	"timeout":    true,
+	"server":     true,
+}
+
+var defaultRetryableErrors = []string{"rate_limit", "quota", "network"}
 
 var validPartitionTypes = map[string]bool{
 	"":      true,
@@ -83,6 +111,13 @@ var validPartitionTypes = map[string]bool{
 	"HOUR":  true,
 	"MONTH": true,
 	"YEAR":  true,
+}
+
+var validSchemaCheckValues = map[string]bool{
+	"":       true,
+	"warn":   true,
+	"error":  true,
+	"ignore": true,
 }
 
 var validLayers = map[string]bool{
@@ -94,6 +129,42 @@ var validLayers = map[string]bool{
 	"entity":       true,
 	"report":       true,
 	"publish":      true,
+}
+
+var validSeverities = map[string]bool{
+	"info":     true,
+	"warning":  true,
+	"error":    true,
+	"critical": true,
+}
+
+// AlertSeverityConfig defines webhook routing for a specific severity level.
+type AlertSeverityConfig struct {
+	URL      string `yaml:"url"`
+	Template string `yaml:"template,omitempty"`
+}
+
+// AlertRoutingConfig configures per-severity alert routing.
+// Falls back to Default when no severity-specific config is set.
+type AlertRoutingConfig struct {
+	Critical *AlertSeverityConfig `yaml:"critical,omitempty"`
+	Warning  *AlertSeverityConfig `yaml:"warning,omitempty"`
+	Default  *AlertSeverityConfig `yaml:"default,omitempty"`
+}
+
+// Resolve returns the AlertSeverityConfig for the given severity, falling back to Default.
+func (r *AlertRoutingConfig) Resolve(severity string) *AlertSeverityConfig {
+	switch severity {
+	case "critical":
+		if r.Critical != nil {
+			return r.Critical
+		}
+	case "warning":
+		if r.Warning != nil {
+			return r.Warning
+		}
+	}
+	return r.Default
 }
 
 type SourceConfig struct {
@@ -121,6 +192,7 @@ type PipelineConfig struct {
 	Pools        map[string]PoolConfig        `yaml:"pools,omitempty"`
 	Assets       []AssetConfig                `yaml:"assets"`
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
+	Alerts       *AlertRoutingConfig          `yaml:"alerts,omitempty"`
 	Prefix       string                       `yaml:"-"`
 }
 
@@ -178,6 +250,75 @@ var validTypes = map[string]bool{
 	"dlt":    true,
 }
 
+// validateAndApplyRetryDefaults validates the retry block and fills in defaults.
+// If no retry block is set, a default policy is applied.
+func validateAndApplyRetryDefaults(a *AssetConfig) error {
+	if a.Retry == nil {
+		a.Retry = &RetryConfig{}
+	}
+	r := a.Retry
+
+	if r.MaxAttempts == 0 {
+		r.MaxAttempts = 3
+	} else if r.MaxAttempts < 1 {
+		return fmt.Errorf("retry.max_attempts must be >= 1")
+	}
+
+	if r.BackoffBase == "" {
+		r.BackoffBase = "10s"
+	} else {
+		if _, err := time.ParseDuration(r.BackoffBase); err != nil {
+			return fmt.Errorf("retry.backoff_base %q is not a valid duration: %w", r.BackoffBase, err)
+		}
+	}
+
+	if len(r.RetryableErrors) == 0 {
+		r.RetryableErrors = append([]string(nil), defaultRetryableErrors...)
+	} else {
+		for _, cat := range r.RetryableErrors {
+			if !validErrorCategories[cat] {
+				return fmt.Errorf("retry.retryable_errors contains unknown category %q (valid: rate_limit, quota, network, timeout, server)", cat)
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateContract(assetName string, c *ContractConfig) error {
+	for i, col := range c.NotNull {
+		if col == "" {
+			return fmt.Errorf("asset %q: contract.not_null[%d]: column name must not be empty", assetName, i)
+		}
+	}
+	for col, vals := range c.AcceptedValues {
+		if col == "" {
+			return fmt.Errorf("asset %q: contract.accepted_values: column name must not be empty", assetName)
+		}
+		if len(vals) == 0 {
+			return fmt.Errorf("asset %q: contract.accepted_values[%q]: must have at least one accepted value", assetName, col)
+		}
+	}
+	return nil
+}
+
+func validateAlertRouting(r *AlertRoutingConfig) error {
+	severities := []struct {
+		name string
+		cfg  *AlertSeverityConfig
+	}{
+		{"critical", r.Critical},
+		{"warning", r.Warning},
+		{"default", r.Default},
+	}
+	for _, s := range severities {
+		if s.cfg != nil && s.cfg.URL == "" {
+			return fmt.Errorf("alerts.%s: url is required when severity block is set", s.name)
+		}
+	}
+	return nil
+}
+
 func LoadConfig(path string) (*PipelineConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -230,10 +371,18 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 			return nil, fmt.Errorf("asset %q: partition_type requires partition_by", a.Name)
 		}
 
+		if !validSchemaCheckValues[a.SchemaCheck] {
+			return nil, fmt.Errorf("asset %q: invalid schema_check %q (must be warn, error, or ignore)", a.Name, a.SchemaCheck)
+		}
+
 		if a.Timeout != "" {
 			if _, err := time.ParseDuration(a.Timeout); err != nil {
 				return nil, fmt.Errorf("asset %q: invalid timeout %q: %w", a.Name, a.Timeout, err)
 			}
+		}
+
+		if err := validateAndApplyRetryDefaults(a); err != nil {
+			return nil, fmt.Errorf("asset %q: %w", a.Name, err)
 		}
 
 		if seen[a.Name] {
@@ -295,6 +444,14 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	// Validate asset structural check fields and apply defaults
 	for i := range cfg.Assets {
 		a := &cfg.Assets[i]
+		for j := range a.Checks {
+			check := &a.Checks[j]
+			if check.Severity == "" {
+				check.Severity = "error"
+			} else if !validSeverities[check.Severity] {
+				return nil, fmt.Errorf("asset %q: check %d: invalid severity %q (must be info, warning, error, or critical)", a.Name, j, check.Severity)
+			}
+		}
 		for j, fk := range a.ForeignKeys {
 			if fk.Column == "" {
 				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: column is required", a.Name, j)
@@ -322,6 +479,11 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 			defaultRatio := 0.5
 			a.MinRetentionRatio = &defaultRatio
 		}
+		if a.Contract != nil {
+			if err := validateContract(a.Name, a.Contract); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Validate pools
@@ -342,6 +504,13 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 			if _, ok := cfg.Pools[a.Pool]; !ok {
 				return nil, fmt.Errorf("asset %q references non-existent pool %q", a.Name, a.Pool)
 			}
+		}
+	}
+
+	// Validate alerts routing config
+	if cfg.Alerts != nil {
+		if err := validateAlertRouting(cfg.Alerts); err != nil {
+			return nil, err
 		}
 	}
 

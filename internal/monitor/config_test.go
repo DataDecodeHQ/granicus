@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 )
 
 func writeTestMonitorConfig(t *testing.T, content string) string {

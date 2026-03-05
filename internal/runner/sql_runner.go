@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/analytehealth/granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -171,14 +171,16 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 
 	metadata := make(map[string]string)
 	if stats := status.Statistics; stats != nil {
-		metadata["bytes_processed"] = strconv.FormatInt(stats.TotalBytesProcessed, 10)
-		if dml := stats.Details; dml != nil {
-			if qStats, ok := dml.(*bigquery.QueryStatistics); ok {
-				metadata["rows_affected"] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
-				if qStats.ReferencedTables != nil {
-					for _, t := range qStats.ReferencedTables {
-						metadata["destination_table"] = t.DatasetID + "." + t.TableID
-					}
+		bytesProcessed := stats.TotalBytesProcessed
+		metadata["total_bytes_processed"] = strconv.FormatInt(bytesProcessed, 10)
+		metadata["estimated_cost_usd"] = fmt.Sprintf("%.6f", estimateBQCostUSD(bytesProcessed))
+		if qStats, ok := stats.Details.(*bigquery.QueryStatistics); ok {
+			metadata["total_slot_ms"] = strconv.FormatInt(qStats.SlotMillis, 10)
+			metadata["cache_hit"] = strconv.FormatBool(qStats.CacheHit)
+			metadata["rows_affected"] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
+			if qStats.ReferencedTables != nil {
+				for _, t := range qStats.ReferencedTables {
+					metadata["destination_table"] = t.DatasetID + "." + t.TableID
 				}
 			}
 		}
@@ -296,6 +298,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	const maxSampleRows = 100
 	var sampleRows []map[string]any
 	rowCount := 0
+	var iterErr error
 
 	for {
 		var row map[string]bigquery.Value
@@ -304,6 +307,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 			break
 		}
 		if err != nil {
+			iterErr = err
 			break
 		}
 		rowCount++
@@ -317,6 +321,14 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 
 	end := time.Now()
+
+	if iterErr != nil {
+		return NodeResult{
+			AssetName: asset.Name, Status: "failed", StartTime: start,
+			EndTime: end, Duration: end.Sub(start),
+			Error: fmt.Sprintf("iterating check results: %v", iterErr), ExitCode: 1,
+		}
+	}
 	metadata := map[string]string{
 		"check_total_rows": strconv.Itoa(rowCount),
 		"check_sql":        sqlStr,
@@ -370,6 +382,11 @@ func prependDropForReplace(sql []byte) []byte {
 	tableRef := string(sub[1])
 	drop := fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", tableRef)
 	return append([]byte(drop), sql...)
+}
+
+// estimateBQCostUSD computes the on-demand query cost at $5 per TB.
+func estimateBQCostUSD(bytesProcessed int64) float64 {
+	return float64(bytesProcessed) * 5.0 / 1e12
 }
 
 func substituteIntervalVars(sql []byte, asset *Asset) []byte {

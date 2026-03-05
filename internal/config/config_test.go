@@ -954,3 +954,579 @@ assets:
 		t.Error("expected error for invalid timeout")
 	}
 }
+
+func TestParseConfig_RetryDefaults(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Assets[0].Retry
+	if r == nil {
+		t.Fatal("expected retry config to be set by defaults")
+	}
+	if r.MaxAttempts != 3 {
+		t.Errorf("expected default max_attempts=3, got %d", r.MaxAttempts)
+	}
+	if r.BackoffBase != "10s" {
+		t.Errorf("expected default backoff_base=10s, got %q", r.BackoffBase)
+	}
+	if len(r.RetryableErrors) != 3 || r.RetryableErrors[0] != "rate_limit" || r.RetryableErrors[1] != "quota" || r.RetryableErrors[2] != "network" {
+		t.Errorf("expected default retryable_errors=[rate_limit quota network], got %v", r.RetryableErrors)
+	}
+}
+
+func TestParseConfig_RetryExplicit(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    retry:
+      max_attempts: 5
+      backoff_base: 30s
+      retryable_errors:
+        - rate_limit
+        - timeout
+        - server
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Assets[0].Retry
+	if r == nil {
+		t.Fatal("expected retry config")
+	}
+	if r.MaxAttempts != 5 {
+		t.Errorf("max_attempts: %d", r.MaxAttempts)
+	}
+	if r.BackoffBase != "30s" {
+		t.Errorf("backoff_base: %q", r.BackoffBase)
+	}
+	if len(r.RetryableErrors) != 3 || r.RetryableErrors[0] != "rate_limit" || r.RetryableErrors[1] != "timeout" || r.RetryableErrors[2] != "server" {
+		t.Errorf("retryable_errors: %v", r.RetryableErrors)
+	}
+}
+
+func TestParseConfig_RetryPartialDefaults(t *testing.T) {
+	// Only backoff_base specified — other fields get defaults
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    retry:
+      backoff_base: 1m
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Assets[0].Retry
+	if r.MaxAttempts != 3 {
+		t.Errorf("expected default max_attempts=3, got %d", r.MaxAttempts)
+	}
+	if r.BackoffBase != "1m" {
+		t.Errorf("backoff_base: %q", r.BackoffBase)
+	}
+	if len(r.RetryableErrors) != 3 {
+		t.Errorf("expected 3 default retryable_errors, got %v", r.RetryableErrors)
+	}
+}
+
+func TestParseConfig_RetryBadBackoffBase(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    retry:
+      backoff_base: not-a-duration
+`))
+	if err == nil {
+		t.Error("expected error for invalid backoff_base")
+	}
+}
+
+func TestParseConfig_RetryMaxAttemptsZero(t *testing.T) {
+	// max_attempts: 0 means unset, should use default of 3
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    retry:
+      max_attempts: 0
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].Retry.MaxAttempts != 3 {
+		t.Errorf("expected default max_attempts=3 for 0, got %d", cfg.Assets[0].Retry.MaxAttempts)
+	}
+}
+
+func TestParseConfig_RetryUnknownCategory(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    retry:
+      retryable_errors:
+        - rate_limit
+        - bogus_category
+`))
+	if err == nil {
+		t.Error("expected error for unknown retryable_errors category")
+	}
+}
+
+func TestParseConfig_RetryAllValidCategories(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+    retry:
+      max_attempts: 1
+      retryable_errors:
+        - rate_limit
+        - quota
+        - network
+        - timeout
+        - server
+`))
+	if err != nil {
+		t.Fatalf("all valid categories should pass: %v", err)
+	}
+	if len(cfg.Assets[0].Retry.RetryableErrors) != 5 {
+		t.Errorf("expected 5 categories, got %v", cfg.Assets[0].Retry.RetryableErrors)
+	}
+}
+
+func TestParseConfig_CheckSeverityDefault(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: check_no_nulls
+        type: sql
+        source: checks/no_nulls.sql
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := cfg.Assets[0].Checks[0]
+	if check.Severity != "error" {
+		t.Errorf("expected default severity 'error', got %q", check.Severity)
+	}
+}
+
+func TestParseConfig_CheckSeverityExplicit(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: check_warn
+        type: sql
+        source: checks/warn.sql
+        severity: warning
+      - name: check_crit
+        type: sql
+        source: checks/crit.sql
+        severity: critical
+      - name: check_info
+        type: sql
+        source: checks/info.sql
+        severity: info
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].Checks[0].Severity != "warning" {
+		t.Errorf("check[0] severity: %q", cfg.Assets[0].Checks[0].Severity)
+	}
+	if cfg.Assets[0].Checks[1].Severity != "critical" {
+		t.Errorf("check[1] severity: %q", cfg.Assets[0].Checks[1].Severity)
+	}
+	if cfg.Assets[0].Checks[2].Severity != "info" {
+		t.Errorf("check[2] severity: %q", cfg.Assets[0].Checks[2].Severity)
+	}
+}
+
+func TestParseConfig_CheckSeverityInvalid(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: check_bad
+        type: sql
+        source: checks/bad.sql
+        severity: invalid
+`))
+	if err == nil {
+		t.Error("expected error for invalid severity")
+	}
+}
+
+func TestParseConfig_ContractValid(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    contract:
+      primary_key: order_id
+      not_null:
+        - order_id
+        - created_at
+      accepted_values:
+        status:
+          - pending
+          - complete
+          - refunded
+        payment_type:
+          - card
+          - cash
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Assets[0].Contract
+	if c == nil {
+		t.Fatal("expected contract config")
+	}
+	if c.PrimaryKey != "order_id" {
+		t.Errorf("primary_key: %q", c.PrimaryKey)
+	}
+	if len(c.NotNull) != 2 || c.NotNull[0] != "order_id" || c.NotNull[1] != "created_at" {
+		t.Errorf("not_null: %v", c.NotNull)
+	}
+	if len(c.AcceptedValues) != 2 {
+		t.Errorf("accepted_values len: %d", len(c.AcceptedValues))
+	}
+	if vals := c.AcceptedValues["status"]; len(vals) != 3 || vals[0] != "pending" {
+		t.Errorf("accepted_values[status]: %v", vals)
+	}
+	if vals := c.AcceptedValues["payment_type"]; len(vals) != 2 || vals[0] != "card" {
+		t.Errorf("accepted_values[payment_type]: %v", vals)
+	}
+}
+
+func TestParseConfig_ContractMinimal(t *testing.T) {
+	// Contract with only primary_key, no not_null or accepted_values
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    contract:
+      primary_key: order_id
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Assets[0].Contract
+	if c == nil {
+		t.Fatal("expected contract config")
+	}
+	if c.PrimaryKey != "order_id" {
+		t.Errorf("primary_key: %q", c.PrimaryKey)
+	}
+	if len(c.NotNull) != 0 {
+		t.Errorf("expected empty not_null, got %v", c.NotNull)
+	}
+	if len(c.AcceptedValues) != 0 {
+		t.Errorf("expected empty accepted_values, got %v", c.AcceptedValues)
+	}
+}
+
+func TestParseConfig_ContractNilWhenAbsent(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].Contract != nil {
+		t.Errorf("expected nil contract, got %+v", cfg.Assets[0].Contract)
+	}
+}
+
+func TestParseConfig_ContractAcceptedValuesEmpty(t *testing.T) {
+	// accepted_values entry with empty slice should fail
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    contract:
+      accepted_values:
+        status: []
+`))
+	if err == nil {
+		t.Error("expected error for accepted_values entry with empty slice")
+	}
+}
+
+func TestParseConfig_ContractNotNullEmptyString(t *testing.T) {
+	// not_null entry with empty string should fail
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    contract:
+      not_null:
+        - ""
+`))
+	if err == nil {
+		t.Error("expected error for not_null entry with empty column name")
+	}
+}
+
+func TestParseConfig_CheckBackwardsCompatible(t *testing.T) {
+	// Old config without severity field should still work
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: old_check
+        type: sql
+        source: checks/old.sql
+        blocking: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := cfg.Assets[0].Checks[0]
+	if check.Blocking != true {
+		t.Errorf("expected blocking=true, got %v", check.Blocking)
+	}
+	if check.Severity != "error" {
+		t.Errorf("expected default severity 'error', got %q", check.Severity)
+	}
+}
+
+func TestParseConfig_AlertsAbsent(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts != nil {
+		t.Errorf("expected nil alerts, got %+v", cfg.Alerts)
+	}
+}
+
+func TestParseConfig_AlertsFullRouting(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+alerts:
+  critical:
+    url: https://hooks.example.com/critical
+    template: '{"text":"CRITICAL: {{.Pipeline}}"}'
+  warning:
+    url: https://hooks.example.com/warning
+  default:
+    url: https://hooks.example.com/default
+    template: '{"text":"{{.Pipeline}} failed"}'
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts == nil {
+		t.Fatal("expected alerts config")
+	}
+	if cfg.Alerts.Critical == nil || cfg.Alerts.Critical.URL != "https://hooks.example.com/critical" {
+		t.Errorf("critical: %+v", cfg.Alerts.Critical)
+	}
+	if cfg.Alerts.Critical.Template != `{"text":"CRITICAL: {{.Pipeline}}"}` {
+		t.Errorf("critical template: %q", cfg.Alerts.Critical.Template)
+	}
+	if cfg.Alerts.Warning == nil || cfg.Alerts.Warning.URL != "https://hooks.example.com/warning" {
+		t.Errorf("warning: %+v", cfg.Alerts.Warning)
+	}
+	if cfg.Alerts.Warning.Template != "" {
+		t.Errorf("warning template should be empty, got %q", cfg.Alerts.Warning.Template)
+	}
+	if cfg.Alerts.Default == nil || cfg.Alerts.Default.URL != "https://hooks.example.com/default" {
+		t.Errorf("default: %+v", cfg.Alerts.Default)
+	}
+}
+
+func TestParseConfig_AlertsDefaultOnly(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+alerts:
+  default:
+    url: https://hooks.example.com/default
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts == nil || cfg.Alerts.Default == nil {
+		t.Fatal("expected default alert config")
+	}
+	if cfg.Alerts.Critical != nil {
+		t.Errorf("expected nil critical, got %+v", cfg.Alerts.Critical)
+	}
+	if cfg.Alerts.Warning != nil {
+		t.Errorf("expected nil warning, got %+v", cfg.Alerts.Warning)
+	}
+}
+
+func TestParseConfig_AlertsMissingURL(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+alerts:
+  critical:
+    template: '{"text":"no url here"}'
+`))
+	if err == nil {
+		t.Error("expected error for critical block with missing url")
+	}
+}
+
+func TestAlertRoutingResolve(t *testing.T) {
+	critical := &AlertSeverityConfig{URL: "https://critical.example.com"}
+	warning := &AlertSeverityConfig{URL: "https://warning.example.com"}
+	dflt := &AlertSeverityConfig{URL: "https://default.example.com"}
+
+	r := &AlertRoutingConfig{
+		Critical: critical,
+		Warning:  warning,
+		Default:  dflt,
+	}
+
+	if got := r.Resolve("critical"); got != critical {
+		t.Errorf("Resolve(critical) = %+v, want %+v", got, critical)
+	}
+	if got := r.Resolve("warning"); got != warning {
+		t.Errorf("Resolve(warning) = %+v, want %+v", got, warning)
+	}
+	if got := r.Resolve("error"); got != dflt {
+		t.Errorf("Resolve(error) should fall back to default, got %+v", got)
+	}
+	if got := r.Resolve("info"); got != dflt {
+		t.Errorf("Resolve(info) should fall back to default, got %+v", got)
+	}
+	if got := r.Resolve("unknown"); got != dflt {
+		t.Errorf("Resolve(unknown) should fall back to default, got %+v", got)
+	}
+}
+
+func TestAlertRoutingResolveNoSeveritySpecific(t *testing.T) {
+	dflt := &AlertSeverityConfig{URL: "https://default.example.com"}
+	r := &AlertRoutingConfig{Default: dflt}
+
+	if got := r.Resolve("critical"); got != dflt {
+		t.Errorf("Resolve(critical) without critical config should fall back to default")
+	}
+	if got := r.Resolve("warning"); got != dflt {
+		t.Errorf("Resolve(warning) without warning config should fall back to default")
+	}
+}
+
+func TestAlertRoutingResolveNilDefault(t *testing.T) {
+	r := &AlertRoutingConfig{}
+	if got := r.Resolve("critical"); got != nil {
+		t.Errorf("Resolve(critical) with no config should return nil, got %+v", got)
+	}
+}

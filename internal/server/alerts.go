@@ -9,71 +9,72 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/analytehealth/granicus/internal/events"
+	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/Andrew-DataDecode/Granicus/internal/events"
 )
 
-type AlertConfig struct {
-	Type         string `yaml:"type"`
-	URL          string `yaml:"url"`
-	Method       string `yaml:"method,omitempty"`
-	BodyTemplate string `yaml:"body_template,omitempty"`
-}
-
+// AlertData is the template data model populated when sending alerts.
 type AlertData struct {
-	Pipeline  string
-	Error     string
-	RunID     string
-	Timestamp string
+	Pipeline     string
+	RunID        string
+	Status       string
+	Summary      string
+	Duration     float64
+	FailedAssets []string
+	ErrorMessage string
+	Timestamp    string
+	Environment  string
+	TotalCost    float64
+	// Counts for template use.
 	Failed    int
 	Succeeded int
 	Skipped   int
 }
 
+// AlertManager routes alerts to webhooks based on severity using AlertRoutingConfig.
 type AlertManager struct {
-	configs    []AlertConfig
+	routing    *config.AlertRoutingConfig
 	client     *http.Client
 	eventStore *events.Store
 }
 
-func NewAlertManager(configs []AlertConfig, eventStore *events.Store) *AlertManager {
+// NewAlertManager creates an AlertManager that routes by severity.
+// routing may be nil, in which case all Send calls are no-ops.
+func NewAlertManager(routing *config.AlertRoutingConfig, eventStore *events.Store) *AlertManager {
 	return &AlertManager{
-		configs:    configs,
+		routing:    routing,
 		client:     &http.Client{Timeout: 10 * time.Second},
 		eventStore: eventStore,
 	}
 }
 
-func (m *AlertManager) SendFailureAlerts(data AlertData) {
-	for _, cfg := range m.configs {
-		go m.sendAlert(cfg, data)
+// SendAlerts dispatches an alert to the webhook configured for the given severity.
+// Falls back to the default webhook if no severity-specific config is set.
+// No-op if routing is nil or no applicable webhook is configured.
+func (m *AlertManager) SendAlerts(severity string, data AlertData) {
+	if m.routing == nil {
+		return
 	}
+	cfg := m.routing.Resolve(severity)
+	if cfg == nil {
+		return
+	}
+	go m.sendAlert(cfg, severity, data)
 }
 
-func (m *AlertManager) sendAlert(cfg AlertConfig, data AlertData) {
-	method := cfg.Method
-	if method == "" {
-		method = "POST"
+// SendFailureAlerts dispatches an alert with severity "error".
+func (m *AlertManager) SendFailureAlerts(data AlertData) {
+	m.SendAlerts("error", data)
+}
+
+func (m *AlertManager) sendAlert(cfg *config.AlertSeverityConfig, severity string, data AlertData) {
+	body, err := renderAlertBody(cfg.Template, data)
+	if err != nil {
+		log.Printf("alert: %v", err)
+		return
 	}
 
-	body := cfg.BodyTemplate
-	if body == "" {
-		body = fmt.Sprintf(`{"pipeline":"%s","run_id":"%s","error":"%s","timestamp":"%s"}`,
-			data.Pipeline, data.RunID, data.Error, data.Timestamp)
-	} else {
-		tmpl, err := template.New("alert").Parse(body)
-		if err != nil {
-			log.Printf("alert: template parse error: %v", err)
-			return
-		}
-		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, data); err != nil {
-			log.Printf("alert: template exec error: %v", err)
-			return
-		}
-		body = buf.String()
-	}
-
-	req, err := http.NewRequest(method, cfg.URL, strings.NewReader(body))
+	req, err := http.NewRequest("POST", cfg.URL, strings.NewReader(body))
 	if err != nil {
 		log.Printf("alert: request error: %v", err)
 		return
@@ -92,20 +93,40 @@ func (m *AlertManager) sendAlert(cfg AlertConfig, data AlertData) {
 	}
 
 	if m.eventStore != nil {
-		severity := "info"
+		eventSeverity := "info"
 		if resp.StatusCode >= 400 {
-			severity = "warning"
+			eventSeverity = "warning"
 		}
 		_ = m.eventStore.Emit(events.Event{
-			RunID: data.RunID, Pipeline: data.Pipeline,
-			EventType: "alert_sent", Severity: severity,
-			Summary: fmt.Sprintf("Alert sent to %s (status %d)", cfg.URL, resp.StatusCode),
+			RunID:     data.RunID,
+			Pipeline:  data.Pipeline,
+			EventType: "alert_sent",
+			Severity:  eventSeverity,
+			Summary:   fmt.Sprintf("Alert sent to %s (status %d)", cfg.URL, resp.StatusCode),
 			Details: map[string]any{
-				"webhook_url":  cfg.URL,
-				"status_code":  resp.StatusCode,
-				"alert_type":   cfg.Type,
-				"failed_count": data.Failed,
+				"webhook_url":    cfg.URL,
+				"status_code":    resp.StatusCode,
+				"alert_severity": severity,
+				"failed_count":   data.Failed,
 			},
 		})
 	}
+}
+
+// defaultAlertTemplate is used when no template is configured.
+const defaultAlertTemplate = `{"pipeline":"{{.Pipeline}}","run_id":"{{.RunID}}","status":"{{.Status}}","error":"{{.ErrorMessage}}","timestamp":"{{.Timestamp}}"}`
+
+func renderAlertBody(tmplStr string, data AlertData) (string, error) {
+	if tmplStr == "" {
+		tmplStr = defaultAlertTemplate
+	}
+	tmpl, err := template.New("alert").Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("template parse error: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("template exec error: %w", err)
+	}
+	return buf.String(), nil
 }
