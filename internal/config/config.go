@@ -138,6 +138,35 @@ var validSeverities = map[string]bool{
 	"critical": true,
 }
 
+// AlertSeverityConfig defines webhook routing for a specific severity level.
+type AlertSeverityConfig struct {
+	URL      string `yaml:"url"`
+	Template string `yaml:"template,omitempty"`
+}
+
+// AlertRoutingConfig configures per-severity alert routing.
+// Falls back to Default when no severity-specific config is set.
+type AlertRoutingConfig struct {
+	Critical *AlertSeverityConfig `yaml:"critical,omitempty"`
+	Warning  *AlertSeverityConfig `yaml:"warning,omitempty"`
+	Default  *AlertSeverityConfig `yaml:"default,omitempty"`
+}
+
+// Resolve returns the AlertSeverityConfig for the given severity, falling back to Default.
+func (r *AlertRoutingConfig) Resolve(severity string) *AlertSeverityConfig {
+	switch severity {
+	case "critical":
+		if r.Critical != nil {
+			return r.Critical
+		}
+	case "warning":
+		if r.Warning != nil {
+			return r.Warning
+		}
+	}
+	return r.Default
+}
+
 type SourceConfig struct {
 	Connection      string   `yaml:"connection"`
 	Identifier      string   `yaml:"identifier"`
@@ -163,6 +192,7 @@ type PipelineConfig struct {
 	Pools        map[string]PoolConfig        `yaml:"pools,omitempty"`
 	Assets       []AssetConfig                `yaml:"assets"`
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
+	Alerts       *AlertRoutingConfig          `yaml:"alerts,omitempty"`
 	Prefix       string                       `yaml:"-"`
 }
 
@@ -267,6 +297,23 @@ func validateContract(assetName string, c *ContractConfig) error {
 		}
 		if len(vals) == 0 {
 			return fmt.Errorf("asset %q: contract.accepted_values[%q]: must have at least one accepted value", assetName, col)
+		}
+	}
+	return nil
+}
+
+func validateAlertRouting(r *AlertRoutingConfig) error {
+	severities := []struct {
+		name string
+		cfg  *AlertSeverityConfig
+	}{
+		{"critical", r.Critical},
+		{"warning", r.Warning},
+		{"default", r.Default},
+	}
+	for _, s := range severities {
+		if s.cfg != nil && s.cfg.URL == "" {
+			return fmt.Errorf("alerts.%s: url is required when severity block is set", s.name)
 		}
 	}
 	return nil
@@ -457,6 +504,13 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 			if _, ok := cfg.Pools[a.Pool]; !ok {
 				return nil, fmt.Errorf("asset %q references non-existent pool %q", a.Name, a.Pool)
 			}
+		}
+	}
+
+	// Validate alerts routing config
+	if cfg.Alerts != nil {
+		if err := validateAlertRouting(cfg.Alerts); err != nil {
+			return nil, err
 		}
 	}
 

@@ -1386,3 +1386,147 @@ assets:
 		t.Errorf("expected default severity 'error', got %q", check.Severity)
 	}
 }
+
+func TestParseConfig_AlertsAbsent(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts != nil {
+		t.Errorf("expected nil alerts, got %+v", cfg.Alerts)
+	}
+}
+
+func TestParseConfig_AlertsFullRouting(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+alerts:
+  critical:
+    url: https://hooks.example.com/critical
+    template: '{"text":"CRITICAL: {{.Pipeline}}"}'
+  warning:
+    url: https://hooks.example.com/warning
+  default:
+    url: https://hooks.example.com/default
+    template: '{"text":"{{.Pipeline}} failed"}'
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts == nil {
+		t.Fatal("expected alerts config")
+	}
+	if cfg.Alerts.Critical == nil || cfg.Alerts.Critical.URL != "https://hooks.example.com/critical" {
+		t.Errorf("critical: %+v", cfg.Alerts.Critical)
+	}
+	if cfg.Alerts.Critical.Template != `{"text":"CRITICAL: {{.Pipeline}}"}` {
+		t.Errorf("critical template: %q", cfg.Alerts.Critical.Template)
+	}
+	if cfg.Alerts.Warning == nil || cfg.Alerts.Warning.URL != "https://hooks.example.com/warning" {
+		t.Errorf("warning: %+v", cfg.Alerts.Warning)
+	}
+	if cfg.Alerts.Warning.Template != "" {
+		t.Errorf("warning template should be empty, got %q", cfg.Alerts.Warning.Template)
+	}
+	if cfg.Alerts.Default == nil || cfg.Alerts.Default.URL != "https://hooks.example.com/default" {
+		t.Errorf("default: %+v", cfg.Alerts.Default)
+	}
+}
+
+func TestParseConfig_AlertsDefaultOnly(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+alerts:
+  default:
+    url: https://hooks.example.com/default
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts == nil || cfg.Alerts.Default == nil {
+		t.Fatal("expected default alert config")
+	}
+	if cfg.Alerts.Critical != nil {
+		t.Errorf("expected nil critical, got %+v", cfg.Alerts.Critical)
+	}
+	if cfg.Alerts.Warning != nil {
+		t.Errorf("expected nil warning, got %+v", cfg.Alerts.Warning)
+	}
+}
+
+func TestParseConfig_AlertsMissingURL(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+assets:
+  - name: x
+    type: shell
+    source: x.sh
+alerts:
+  critical:
+    template: '{"text":"no url here"}'
+`))
+	if err == nil {
+		t.Error("expected error for critical block with missing url")
+	}
+}
+
+func TestAlertRoutingResolve(t *testing.T) {
+	critical := &AlertSeverityConfig{URL: "https://critical.example.com"}
+	warning := &AlertSeverityConfig{URL: "https://warning.example.com"}
+	dflt := &AlertSeverityConfig{URL: "https://default.example.com"}
+
+	r := &AlertRoutingConfig{
+		Critical: critical,
+		Warning:  warning,
+		Default:  dflt,
+	}
+
+	if got := r.Resolve("critical"); got != critical {
+		t.Errorf("Resolve(critical) = %+v, want %+v", got, critical)
+	}
+	if got := r.Resolve("warning"); got != warning {
+		t.Errorf("Resolve(warning) = %+v, want %+v", got, warning)
+	}
+	if got := r.Resolve("error"); got != dflt {
+		t.Errorf("Resolve(error) should fall back to default, got %+v", got)
+	}
+	if got := r.Resolve("info"); got != dflt {
+		t.Errorf("Resolve(info) should fall back to default, got %+v", got)
+	}
+	if got := r.Resolve("unknown"); got != dflt {
+		t.Errorf("Resolve(unknown) should fall back to default, got %+v", got)
+	}
+}
+
+func TestAlertRoutingResolveNoSeveritySpecific(t *testing.T) {
+	dflt := &AlertSeverityConfig{URL: "https://default.example.com"}
+	r := &AlertRoutingConfig{Default: dflt}
+
+	if got := r.Resolve("critical"); got != dflt {
+		t.Errorf("Resolve(critical) without critical config should fall back to default")
+	}
+	if got := r.Resolve("warning"); got != dflt {
+		t.Errorf("Resolve(warning) without warning config should fall back to default")
+	}
+}
+
+func TestAlertRoutingResolveNilDefault(t *testing.T) {
+	r := &AlertRoutingConfig{}
+	if got := r.Resolve("critical"); got != nil {
+		t.Errorf("Resolve(critical) with no config should return nil, got %+v", got)
+	}
+}
