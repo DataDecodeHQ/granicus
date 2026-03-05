@@ -235,6 +235,24 @@ func TestPrependDropForReplace(t *testing.T) {
 	}
 }
 
+func TestEstimateBQCostUSD(t *testing.T) {
+	tests := []struct {
+		bytes   int64
+		wantUSD float64
+	}{
+		{0, 0.0},
+		{1_000_000_000_000, 5.0},    // 1 TB = $5
+		{100_000_000_000, 0.5},      // 100 GB = $0.50
+		{5_000_000_000_000, 25.0},   // 5 TB = $25
+	}
+	for _, tt := range tests {
+		got := estimateBQCostUSD(tt.bytes)
+		if got != tt.wantUSD {
+			t.Errorf("estimateBQCostUSD(%d) = %v, want %v", tt.bytes, got, tt.wantUSD)
+		}
+	}
+}
+
 func TestSQLRunner_BadTemplate(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.sql"), []byte(`SELECT {{.Invalid`), 0644)
