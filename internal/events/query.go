@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -318,6 +319,62 @@ func getDetailInt(details map[string]any, key string) int {
 		return int(n)
 	}
 	return 0
+}
+
+// RunCostSummary aggregates BQ job cost metadata across all node_succeeded events in a run.
+type RunCostSummary struct {
+	RunID               string  `json:"run_id"`
+	TotalBytesProcessed int64   `json:"total_bytes_processed"`
+	TotalCostUSD        float64 `json:"total_cost_usd"`
+	TotalBQNodes        int     `json:"total_bq_nodes"`
+	CachedNodes         int     `json:"cached_nodes"`
+	CacheHitRate        float64 `json:"cache_hit_rate"`
+}
+
+// GetRunCostSummary aggregates BQ job metadata from node_succeeded events for a run.
+// Returns a summary with all-zero values if no BQ cost data was recorded.
+func (s *Store) GetRunCostSummary(runID string) (*RunCostSummary, error) {
+	evts, err := s.Query(QueryFilters{
+		RunID:     runID,
+		EventType: "node_succeeded",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	summary := &RunCostSummary{RunID: runID}
+	for _, e := range evts {
+		md, ok := e.Details["metadata"].(map[string]any)
+		if !ok {
+			continue
+		}
+		bytesStr, ok := md["total_bytes_processed"].(string)
+		if !ok {
+			continue
+		}
+		bytes, err := strconv.ParseInt(bytesStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		summary.TotalBQNodes++
+		summary.TotalBytesProcessed += bytes
+
+		if costStr, ok := md["estimated_cost_usd"].(string); ok {
+			if cost, err := strconv.ParseFloat(costStr, 64); err == nil {
+				summary.TotalCostUSD += cost
+			}
+		}
+
+		if cacheStr, ok := md["cache_hit"].(string); ok && cacheStr == "true" {
+			summary.CachedNodes++
+		}
+	}
+
+	if summary.TotalBQNodes > 0 {
+		summary.CacheHitRate = float64(summary.CachedNodes) / float64(summary.TotalBQNodes)
+	}
+
+	return summary, nil
 }
 
 func getDetailFloat(details map[string]any, key string) float64 {

@@ -164,6 +164,7 @@ func main() {
 	historyCmd.Flags().Int("limit", 10, "Number of runs to show")
 	historyCmd.Flags().String("project-root", ".", "Project root directory")
 	historyCmd.Flags().String("output", "", "Output format (json)")
+	historyCmd.Flags().Bool("costs", false, "Show per-run BQ cost summary (total bytes, cost, cache hit rate)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -1385,10 +1386,20 @@ type jsonHistoryOutput struct {
 	Runs []events.RunSummary `json:"runs"`
 }
 
+type jsonHistoryCostEntry struct {
+	events.RunSummary
+	Cost *events.RunCostSummary `json:"cost,omitempty"`
+}
+
+type jsonHistoryCostOutput struct {
+	Runs []jsonHistoryCostEntry `json:"runs"`
+}
+
 func runHistory(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	limit, _ := cmd.Flags().GetInt("limit")
 	outputFormat, _ := cmd.Flags().GetString("output")
+	showCosts, _ := cmd.Flags().GetBool("costs")
 	outputJSON := outputFormat == "json"
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
@@ -1410,12 +1421,26 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	if outputJSON {
-		out := jsonHistoryOutput{Runs: runs}
-		if out.Runs == nil {
-			out.Runs = []events.RunSummary{}
+		if showCosts {
+			entries := make([]jsonHistoryCostEntry, 0, len(runs))
+			for _, r := range runs {
+				entry := jsonHistoryCostEntry{RunSummary: r}
+				if cost, err := eventStore.GetRunCostSummary(r.RunID); err == nil {
+					entry.Cost = cost
+				}
+				entries = append(entries, entry)
+			}
+			out := jsonHistoryCostOutput{Runs: entries}
+			data, _ := json.MarshalIndent(out, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			out := jsonHistoryOutput{Runs: runs}
+			if out.Runs == nil {
+				out.Runs = []events.RunSummary{}
+			}
+			data, _ := json.MarshalIndent(out, "", "  ")
+			fmt.Println(string(data))
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
 		return nil
 	}
 
@@ -1424,15 +1449,40 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("%-32s %-16s %-24s %-10s %s\n", "Run ID", "Pipeline", "Status", "Duration", "Date")
-	for _, r := range runs {
-		fmt.Printf("%-32s %-16s %-24s %-10s %s\n",
-			r.RunID,
-			r.Pipeline,
-			r.Status,
-			fmt.Sprintf("%.0fs", r.DurationSeconds),
-			r.StartTime.Format("2006-01-02 15:04"),
-		)
+	if showCosts {
+		fmt.Printf("%-32s %-16s %-10s %-12s %-12s %s\n", "Run ID", "Pipeline", "Duration", "Bytes", "Est. Cost", "Cache Hit")
+		for _, r := range runs {
+			cost, err := eventStore.GetRunCostSummary(r.RunID)
+			if err != nil || cost.TotalBQNodes == 0 {
+				fmt.Printf("%-32s %-16s %-10s %-12s %-12s %s\n",
+					r.RunID,
+					r.Pipeline,
+					fmt.Sprintf("%.0fs", r.DurationSeconds),
+					"-", "-", "-",
+				)
+				continue
+			}
+			cacheStr := fmt.Sprintf("%.0f%% (%d/%d)", cost.CacheHitRate*100, cost.CachedNodes, cost.TotalBQNodes)
+			fmt.Printf("%-32s %-16s %-10s %-12s %-12s %s\n",
+				r.RunID,
+				r.Pipeline,
+				fmt.Sprintf("%.0fs", r.DurationSeconds),
+				gc.FormatBytes(cost.TotalBytesProcessed),
+				fmt.Sprintf("$%.6f", cost.TotalCostUSD),
+				cacheStr,
+			)
+		}
+	} else {
+		fmt.Printf("%-32s %-16s %-24s %-10s %s\n", "Run ID", "Pipeline", "Status", "Duration", "Date")
+		for _, r := range runs {
+			fmt.Printf("%-32s %-16s %-24s %-10s %s\n",
+				r.RunID,
+				r.Pipeline,
+				r.Status,
+				fmt.Sprintf("%.0fs", r.DurationSeconds),
+				r.StartTime.Format("2006-01-02 15:04"),
+			)
+		}
 	}
 
 	return nil

@@ -398,6 +398,72 @@ func TestModelVersionTracking(t *testing.T) {
 	}
 }
 
+func TestGetRunCostSummary(t *testing.T) {
+	s := newTestStore(t)
+
+	// Emit two BQ node_succeeded events with cost metadata
+	s.Emit(Event{
+		RunID: "r1", Pipeline: "p", Asset: "asset_a", EventType: "node_succeeded",
+		Details: map[string]any{"metadata": map[string]any{
+			"total_bytes_processed": "1073741824",  // 1 GiB
+			"estimated_cost_usd":    "0.005000",
+			"cache_hit":             "false",
+		}},
+	})
+	s.Emit(Event{
+		RunID: "r1", Pipeline: "p", Asset: "asset_b", EventType: "node_succeeded",
+		Details: map[string]any{"metadata": map[string]any{
+			"total_bytes_processed": "536870912",  // 512 MiB
+			"estimated_cost_usd":    "0.002500",
+			"cache_hit":             "true",
+		}},
+	})
+	// Non-BQ node (no BQ metadata keys) — should be skipped
+	s.Emit(Event{
+		RunID: "r1", Pipeline: "p", Asset: "py_asset", EventType: "node_succeeded",
+		Details: map[string]any{"metadata": map[string]any{"rows_loaded": "200"}},
+	})
+
+	cost, err := s.GetRunCostSummary("r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cost.RunID != "r1" {
+		t.Errorf("run_id: got %q", cost.RunID)
+	}
+	if cost.TotalBQNodes != 2 {
+		t.Errorf("total_bq_nodes: got %d, want 2", cost.TotalBQNodes)
+	}
+	if cost.TotalBytesProcessed != 1073741824+536870912 {
+		t.Errorf("total_bytes_processed: got %d", cost.TotalBytesProcessed)
+	}
+	if cost.CachedNodes != 1 {
+		t.Errorf("cached_nodes: got %d, want 1", cost.CachedNodes)
+	}
+	if cost.CacheHitRate < 0.49 || cost.CacheHitRate > 0.51 {
+		t.Errorf("cache_hit_rate: got %.2f, want 0.50", cost.CacheHitRate)
+	}
+	if cost.TotalCostUSD < 0.0074 || cost.TotalCostUSD > 0.0076 {
+		t.Errorf("total_cost_usd: got %.6f, want ~0.007500", cost.TotalCostUSD)
+	}
+}
+
+func TestGetRunCostSummary_NoData(t *testing.T) {
+	s := newTestStore(t)
+
+	// No events emitted for run
+	cost, err := s.GetRunCostSummary("no_such_run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cost.TotalBQNodes != 0 {
+		t.Errorf("expected zero BQ nodes, got %d", cost.TotalBQNodes)
+	}
+	if cost.CacheHitRate != 0 {
+		t.Errorf("expected zero cache rate, got %.2f", cost.CacheHitRate)
+	}
+}
+
 func TestGenerateRunID(t *testing.T) {
 	id := GenerateRunID()
 	if len(id) < 20 {

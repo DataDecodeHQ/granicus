@@ -175,7 +175,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		metadata["total_bytes_processed"] = strconv.FormatInt(bytesProcessed, 10)
 		metadata["estimated_cost_usd"] = fmt.Sprintf("%.6f", estimateBQCostUSD(bytesProcessed))
 		if qStats, ok := stats.Details.(*bigquery.QueryStatistics); ok {
-			metadata["total_slot_ms"] = strconv.FormatInt(qStats.TotalSlotMs, 10)
+			metadata["total_slot_ms"] = strconv.FormatInt(qStats.SlotMillis, 10)
 			metadata["cache_hit"] = strconv.FormatBool(qStats.CacheHit)
 			metadata["rows_affected"] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
 			if qStats.ReferencedTables != nil {
