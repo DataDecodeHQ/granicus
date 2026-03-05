@@ -1114,3 +1114,127 @@ assets:
 		t.Errorf("expected 5 categories, got %v", cfg.Assets[0].Retry.RetryableErrors)
 	}
 }
+
+func TestParseConfig_CheckSeverityDefault(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: check_no_nulls
+        type: sql
+        source: checks/no_nulls.sql
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := cfg.Assets[0].Checks[0]
+	if check.Severity != "error" {
+		t.Errorf("expected default severity 'error', got %q", check.Severity)
+	}
+}
+
+func TestParseConfig_CheckSeverityExplicit(t *testing.T) {
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: check_warn
+        type: sql
+        source: checks/warn.sql
+        severity: warning
+      - name: check_crit
+        type: sql
+        source: checks/crit.sql
+        severity: critical
+      - name: check_info
+        type: sql
+        source: checks/info.sql
+        severity: info
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Assets[0].Checks[0].Severity != "warning" {
+		t.Errorf("check[0] severity: %q", cfg.Assets[0].Checks[0].Severity)
+	}
+	if cfg.Assets[0].Checks[1].Severity != "critical" {
+		t.Errorf("check[1] severity: %q", cfg.Assets[0].Checks[1].Severity)
+	}
+	if cfg.Assets[0].Checks[2].Severity != "info" {
+		t.Errorf("check[2] severity: %q", cfg.Assets[0].Checks[2].Severity)
+	}
+}
+
+func TestParseConfig_CheckSeverityInvalid(t *testing.T) {
+	_, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: check_bad
+        type: sql
+        source: checks/bad.sql
+        severity: invalid
+`))
+	if err == nil {
+		t.Error("expected error for invalid severity")
+	}
+}
+
+func TestParseConfig_CheckBackwardsCompatible(t *testing.T) {
+	// Old config without severity field should still work
+	cfg, err := LoadConfig(writeTestConfig(t, `
+pipeline: test
+connections:
+  bq:
+    type: bigquery
+    project: p
+    dataset: d
+assets:
+  - name: orders
+    type: sql
+    source: orders.sql
+    destination_connection: bq
+    checks:
+      - name: old_check
+        type: sql
+        source: checks/old.sql
+        blocking: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := cfg.Assets[0].Checks[0]
+	if check.Blocking != true {
+		t.Errorf("expected blocking=true, got %v", check.Blocking)
+	}
+	if check.Severity != "error" {
+		t.Errorf("expected default severity 'error', got %q", check.Severity)
+	}
+}

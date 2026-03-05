@@ -38,10 +38,11 @@ type ConnectionConfig struct {
 }
 
 type CheckConfig struct {
-	Name   string `yaml:"name"`
-	Type   string `yaml:"type"`
+	Name     string `yaml:"name"`
+	Type     string `yaml:"type"`
 	Source   string `yaml:"source"`
 	Blocking bool   `yaml:"blocking,omitempty"`
+	Severity string `yaml:"severity,omitempty"`
 }
 
 type StandardsConfig struct {
@@ -113,6 +114,13 @@ var validLayers = map[string]bool{
 	"entity":       true,
 	"report":       true,
 	"publish":      true,
+}
+
+var validSeverities = map[string]bool{
+	"info":     true,
+	"warning":  true,
+	"error":    true,
+	"critical": true,
 }
 
 type SourceConfig struct {
@@ -353,6 +361,14 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	// Validate asset structural check fields and apply defaults
 	for i := range cfg.Assets {
 		a := &cfg.Assets[i]
+		for j := range a.Checks {
+			check := &a.Checks[j]
+			if check.Severity == "" {
+				check.Severity = "error"
+			} else if !validSeverities[check.Severity] {
+				return nil, fmt.Errorf("asset %q: check %d: invalid severity %q (must be info, warning, error, or critical)", a.Name, j, check.Severity)
+			}
+		}
 		for j, fk := range a.ForeignKeys {
 			if fk.Column == "" {
 				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: column is required", a.Name, j)

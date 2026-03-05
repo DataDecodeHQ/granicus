@@ -29,6 +29,7 @@ type Asset struct {
 	DefaultChecks         *bool
 	InlineSQL             string
 	Blocking              bool
+	Severity              string // info, warning, error, critical
 	Timeout               time.Duration
 	MaxAttempts           int
 	BackoffBase           time.Duration
@@ -66,6 +67,7 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			DefaultChecks:         a.DefaultChecks,
 			InlineSQL:             a.InlineSQL,
 			Blocking:              a.Blocking,
+			Severity:              a.Severity,
 			Timeout:               a.Timeout,
 			MaxAttempts:           a.MaxAttempts,
 			BackoffBase:           a.BackoffBase,
@@ -120,6 +122,7 @@ type AssetInput struct {
 	DefaultChecks         *bool
 	InlineSQL             string
 	Blocking              bool
+	Severity              string // info, warning, error, critical
 	Timeout               time.Duration
 }
 

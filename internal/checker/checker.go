@@ -27,6 +27,7 @@ func GenerateCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[str
 				DestinationConnection: asset.DestinationConnection,
 				SourceConnection:      asset.SourceConnection,
 				Blocking:              check.Blocking,
+				Severity:              check.Severity,
 			})
 			deps[name] = []string{asset.Name}
 		}

@@ -136,11 +136,12 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}
 	}
 
-	// Pre-compute blocking checks per asset: asset -> list of blocking check node names
+	// Pre-compute blocking checks per asset: asset -> list of blocking check node names.
+	// Critical severity checks are always treated as blocking regardless of the Blocking field.
 	blockingChecks := make(map[string][]string)
 	for name := range nodesToRun {
 		asset := g.Assets[name]
-		if asset.Blocking && strings.HasPrefix(name, "check:") {
+		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(name, "check:") {
 			for _, parent := range asset.DependsOn {
 				blockingChecks[parent] = append(blockingChecks[parent], name)
 			}
@@ -310,6 +311,10 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		select {
 		case result := <-done:
 			mu.Lock()
+			// Apply severity-based behavior for check nodes before storing the result.
+			if strings.HasPrefix(result.AssetName, "check:") && result.Status != "success" {
+				result = applySeverityToCheckResult(result, g.Assets[result.AssetName], triggerShutdown)
+			}
 			results[result.AssetName] = &result
 			pending--
 
@@ -326,7 +331,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 				// If this is a successful blocking check, its parent's other
 				// downstream nodes may now be unblocked. Re-evaluate them.
 				asset := g.Assets[result.AssetName]
-				if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
+				if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
 					for _, parentName := range asset.DependsOn {
 						if !allBlockingChecksPassed(parentName) {
 							continue
@@ -353,9 +358,10 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 					pending--
 				}
 
-				// Blocking check failure: skip descendants of the parent asset
+				// Blocking check failure: skip descendants of the parent asset.
+				// Critical severity checks always block regardless of the Blocking field.
 				asset := g.Assets[result.AssetName]
-				if asset.Blocking && strings.HasPrefix(result.AssetName, "check:") {
+				if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
 					for _, parentName := range asset.DependsOn {
 						parentDescendants := g.Descendants(parentName)
 						for _, desc := range parentDescendants {
@@ -594,6 +600,29 @@ func mergeMetadata(base, extra map[string]string) map[string]string {
 
 func itoa(i int) string {
 	return strconv.Itoa(i)
+}
+
+// applySeverityToCheckResult adjusts a failed check node result according to its severity.
+// For info/warning: overrides status to "success" (failure is logged but not propagated).
+// For error: no change (failure propagates, blocking field controls downstream skipping).
+// For critical: triggers a full run halt in addition to failing; blocking is always enforced.
+func applySeverityToCheckResult(result NodeResult, asset *graph.Asset, triggerShutdown func()) NodeResult {
+	switch asset.Severity {
+	case "info":
+		log.Printf("CHECK INFO: %s failed (severity=info, treated as pass): %s", result.AssetName, result.Error)
+		result.Status = "success"
+		result.ExitCode = 0
+	case "warning":
+		log.Printf("CHECK WARNING: %s failed (severity=warning, treated as pass): %s", result.AssetName, result.Error)
+		result.Status = "success"
+		result.ExitCode = 0
+	case "critical":
+		log.Printf("CHECK CRITICAL: %s failed, halting run: %s", result.AssetName, result.Error)
+		triggerShutdown()
+	default: // "error" or empty
+		log.Printf("CHECK ERROR: %s failed: %s", result.AssetName, result.Error)
+	}
+	return result
 }
 
 // runWithRetry executes an asset once (non-incremental path) with per-asset retry policy.
