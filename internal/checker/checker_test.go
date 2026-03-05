@@ -75,6 +75,43 @@ func TestGenerateCheckNodes_NoChecks(t *testing.T) {
 	}
 }
 
+func TestGenerateCheckNodes_DependsOn(t *testing.T) {
+	cfg := &config.PipelineConfig{
+		Pipeline: "test",
+		Assets: []config.AssetConfig{
+			{
+				Name:   "orders",
+				Type:   "sql",
+				Source: "sql/orders.sql",
+				Checks: []config.CheckConfig{
+					{
+						Source:    "checks/orders_price_validation.sql",
+						DependsOn: []string{"order_lines"},
+					},
+				},
+			},
+		},
+	}
+
+	nodes, deps := GenerateCheckNodes(cfg)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 check node, got %d", len(nodes))
+	}
+
+	checkName := nodes[0].Name
+	d := deps[checkName]
+	if len(d) != 2 {
+		t.Fatalf("expected 2 deps, got %d: %v", len(d), d)
+	}
+	if d[0] != "orders" {
+		t.Errorf("first dep should be parent asset 'orders', got %q", d[0])
+	}
+	if d[1] != "order_lines" {
+		t.Errorf("second dep should be 'order_lines', got %q", d[1])
+	}
+}
+
 func TestGenerateCheckNodes_ExplicitName(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",

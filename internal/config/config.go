@@ -38,11 +38,12 @@ type ConnectionConfig struct {
 }
 
 type CheckConfig struct {
-	Name     string `yaml:"name"`
-	Type     string `yaml:"type"`
-	Source   string `yaml:"source"`
-	Blocking bool   `yaml:"blocking,omitempty"`
-	Severity string `yaml:"severity,omitempty"`
+	Name      string   `yaml:"name"`
+	Type      string   `yaml:"type"`
+	Source    string   `yaml:"source"`
+	Blocking  bool     `yaml:"blocking,omitempty"`
+	Severity  string   `yaml:"severity,omitempty"`
+	DependsOn []string `yaml:"depends_on,omitempty"`
 }
 
 type StandardsConfig struct {

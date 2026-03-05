@@ -29,7 +29,7 @@ func GenerateCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[str
 				Blocking:              check.Blocking,
 				Severity:              check.Severity,
 			})
-			deps[name] = []string{asset.Name}
+			deps[name] = append([]string{asset.Name}, check.DependsOn...)
 		}
 	}
 
