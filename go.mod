@@ -1,4 +1,4 @@
-module github.com/Andrew-DataDecode/Granicus
+module github.com/analytehealth/granicus
 
 go 1.25.0
 

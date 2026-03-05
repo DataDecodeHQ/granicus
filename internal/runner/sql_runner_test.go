@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 func TestSQLRunner_TemplateSubstitution(t *testing.T) {

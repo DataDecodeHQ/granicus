@@ -3,8 +3,8 @@ package context
 import (
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 func testGraph(t *testing.T) (*graph.Graph, *config.PipelineConfig) {

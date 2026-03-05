@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 func TestIntegration_AuthFlow(t *testing.T) {

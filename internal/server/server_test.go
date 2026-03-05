@@ -11,9 +11,9 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/scheduler"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/scheduler"
 )
 
 func newTestDB(t *testing.T) *sql.DB {

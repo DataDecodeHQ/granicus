@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 func floatPtr(f float64) *float64 { return &f }

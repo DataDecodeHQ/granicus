@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/executor"
+	"github.com/analytehealth/granicus/internal/executor"
 	_ "modernc.org/sqlite"
 )
 

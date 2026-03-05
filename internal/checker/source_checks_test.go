@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 func makeSourceCfg(sources map[string]config.SourceConfig, connections map[string]*config.ConnectionConfig) *config.PipelineConfig {

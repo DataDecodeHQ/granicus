@@ -9,23 +9,22 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	_ "modernc.org/sqlite"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/checker"
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/executor"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
-	"github.com/Andrew-DataDecode/Granicus/internal/pool"
-	"github.com/Andrew-DataDecode/Granicus/internal/runner"
-	"github.com/Andrew-DataDecode/Granicus/internal/scheduler"
-	"github.com/Andrew-DataDecode/Granicus/internal/server"
-	"github.com/Andrew-DataDecode/Granicus/internal/state"
+	"github.com/analytehealth/granicus/internal/checker"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/executor"
+	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/pool"
+	"github.com/analytehealth/granicus/internal/runner"
+	"github.com/analytehealth/granicus/internal/scheduler"
+	"github.com/analytehealth/granicus/internal/server"
+	"github.com/analytehealth/granicus/internal/state"
 )
 
 func init() {
@@ -43,7 +42,6 @@ func newServeCmd() *cobra.Command {
 	serveCmd.Flags().String("env-config", "", "Path to granicus-env.yaml")
 	serveCmd.Flags().String("env", "dev", "Environment name (default: dev)")
 	serveCmd.Flags().String("project-root", ".", "Project root directory")
-	serveCmd.Flags().Duration("orphan-timeout", 2*time.Hour, "Timeout before an in_progress interval is considered orphaned and recovered")
 	serveCmd.MarkFlagRequired("config-dir")
 	return serveCmd
 }
@@ -54,7 +52,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	envConfigPath, _ := cmd.Flags().GetString("env-config")
 	envName, _ := cmd.Flags().GetString("env")
 	projectRoot, _ := cmd.Flags().GetString("project-root")
-	orphanTimeout, _ := cmd.Flags().GetDuration("orphan-timeout")
 
 	// Load server config
 	var serverCfg *config.ServerConfig
@@ -114,40 +111,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	// Recover orphaned intervals (in_progress longer than orphan_timeout)
-	intervalStateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
-	if stateStore, serr := state.New(intervalStateDBPath); serr != nil {
-		log.Printf("orphan recovery: could not open state db: %v", serr)
-	} else {
-		orphans, rerr := stateStore.RecoverOrphans(orphanTimeout)
-		stateStore.Close()
-		if rerr != nil {
-			log.Printf("orphan interval recovery error: %v", rerr)
-		} else if len(orphans) > 0 {
-			log.Printf("recovered %d orphaned intervals", len(orphans))
-			for _, iv := range orphans {
-				_ = eventStore.Emit(events.Event{
-					EventType: "interval_recovered", Severity: "warning",
-					Summary: fmt.Sprintf("Recovered orphaned interval %s/%s (was in_progress since %s)", iv.AssetName, iv.IntervalStart, iv.StartedAt),
-					Details: map[string]any{
-						"asset_name":     iv.AssetName,
-						"interval_start": iv.IntervalStart,
-						"interval_end":   iv.IntervalEnd,
-						"run_id":         iv.RunID,
-						"started_at":     iv.StartedAt,
-					},
-				})
-			}
-		}
-	}
-
-	// Shutdown context: cancelled on SIGTERM/SIGINT to drain executor runs.
-	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-	defer shutdownCancel()
-
 	// Build run function
 	runFunc := func(cfg *config.PipelineConfig, pr string) {
-		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore, shutdownCtx)
+		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore)
 	}
 
 	// Create scheduler
@@ -189,10 +155,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, eventStore,
 		func(cfg *config.PipelineConfig, pr string, runID string, req server.TriggerRequest) {
-			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req, shutdownCtx)
+			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req)
 		},
 	)
-	srv.SetShutdownCtx(shutdownCtx)
 
 	// Set pipeline configs on the server
 	configMap := make(map[string]*config.PipelineConfig)
@@ -222,34 +187,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Wait for SIGTERM or SIGINT
+	// Wait for interrupt
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigCh, os.Interrupt)
 	<-sigCh
 
 	log.Println("shutting down...")
 
-	// Signal all in-progress executor runs to drain.
-	shutdownCancel()
-
-	// Stop the scheduler from starting new runs.
+	// Graceful shutdown: stop accepting new work, wait for in-progress
 	sched.Stop()
 
-	// Stop accepting new HTTP requests and drain in-flight HTTP connections.
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer drainCancel()
-	if err := httpSrv.Shutdown(drainCtx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer shutdownCancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP shutdown error: %v", err)
 	}
-
-	// Wait for in-progress triggered pipeline runs to finish (same timeout).
-	srv.WaitForRuns(drainCtx)
 
 	log.Println("shutdown complete")
 	return nil
 }
 
-func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, ctx context.Context) {
+func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store) {
 	if envCfg != nil {
 		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
 		if err == nil {
@@ -260,10 +218,10 @@ func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName st
 	runID := events.GenerateRunID()
 	log.Printf("scheduled run: %s (run_id=%s)", cfg.Pipeline, runID)
 	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools, ctx)
+	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools)
 }
 
-func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest, ctx context.Context) {
+func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest) {
 	if envCfg != nil {
 		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
 		if err == nil {
@@ -281,10 +239,10 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 	})
 
 	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools, ctx)
+	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools)
 }
 
-func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string, ctx context.Context) {
+func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string) {
 	start := time.Now()
 
 	_ = eventStore.Emit(events.Event{
@@ -500,7 +458,6 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		StateStore:  stateStore,
 		PoolManager: poolMgr,
 		AssetPools:  assetPools,
-		Ctx:         ctx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)

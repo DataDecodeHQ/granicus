@@ -3,7 +3,7 @@ package runner
 import (
 	"fmt"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 type RunnerRegistry struct {

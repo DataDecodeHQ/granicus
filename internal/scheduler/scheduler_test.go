@@ -9,7 +9,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 func newCronWithSeconds() *cron.Cron {

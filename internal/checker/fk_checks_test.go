@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 func TestGenerateFKCheckNodes_SingleFK(t *testing.T) {

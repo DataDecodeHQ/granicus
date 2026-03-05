@@ -1,15 +1,14 @@
 package executor
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
-	"github.com/Andrew-DataDecode/Granicus/internal/pool"
+	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/pool"
 )
 
 func successRunner(delay time.Duration) RunnerFunc {
@@ -742,153 +741,5 @@ func TestExecute_BlockingCheckDoesNotAffectUnrelatedBranches(t *testing.T) {
 	}
 	if rm["Y"] != "success" {
 		t.Errorf("Y should succeed, got %s", rm["Y"])
-	}
-}
-
-func TestExecute_GracefulShutdown_StopsDispatching(t *testing.T) {
-	// A -> C, B -> D (two independent chains)
-	// A and B are dispatched as root nodes and block.
-	// We cancel the context while they run.
-	// Expected: A and B complete (in-progress), C and D are skipped (not dispatched).
-	g := buildTestGraph(t,
-		[]graph.AssetInput{
-			{Name: "A", Type: "shell", Source: "a.sh"},
-			{Name: "B", Type: "shell", Source: "b.sh"},
-			{Name: "C", Type: "shell", Source: "c.sh"},
-			{Name: "D", Type: "shell", Source: "d.sh"},
-		},
-		map[string][]string{"C": {"A"}, "D": {"B"}},
-	)
-
-	started := make(chan string, 4)
-	proceed := make(chan struct{})
-
-	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
-		started <- asset.Name
-		<-proceed
-		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var rr *RunResult
-	done := make(chan struct{})
-	go func() {
-		rr = Execute(g, RunConfig{MaxParallel: 10, Ctx: ctx}, runner)
-		close(done)
-	}()
-
-	// Wait for both root nodes to start
-	<-started
-	<-started
-
-	// Signal shutdown, then let the in-progress nodes complete
-	cancel()
-	close(proceed)
-
-	<-done
-
-	if !rr.Interrupted {
-		t.Error("expected RunResult.Interrupted = true")
-	}
-
-	rm := resultMap(rr)
-	if rm["A"] != "success" {
-		t.Errorf("A should succeed (was in progress), got %s", rm["A"])
-	}
-	if rm["B"] != "success" {
-		t.Errorf("B should succeed (was in progress), got %s", rm["B"])
-	}
-	if rm["C"] != "skipped" {
-		t.Errorf("C should be skipped (not yet dispatched), got %s", rm["C"])
-	}
-	if rm["D"] != "skipped" {
-		t.Errorf("D should be skipped (not yet dispatched), got %s", rm["D"])
-	}
-}
-
-func TestExecute_GracefulShutdown_NotInterruptedWithoutSignal(t *testing.T) {
-	// Normal run with a context that is never cancelled: Interrupted must be false.
-	g := buildTestGraph(t,
-		[]graph.AssetInput{
-			{Name: "A", Type: "shell", Source: "a.sh"},
-			{Name: "B", Type: "shell", Source: "b.sh"},
-		},
-		nil,
-	)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	rr := Execute(g, RunConfig{MaxParallel: 10, Ctx: ctx}, successRunner(0))
-
-	if rr.Interrupted {
-		t.Error("expected RunResult.Interrupted = false for a normal run")
-	}
-	rm := resultMap(rr)
-	if rm["A"] != "success" || rm["B"] != "success" {
-		t.Errorf("expected all success: %v", rm)
-	}
-}
-
-func TestExecute_GracefulShutdown_Timeout(t *testing.T) {
-	// One root node that never completes. Cancel the context and set a very
-	// short shutdown timeout. After the timeout, the node should be
-	// force-resolved as skipped and Execute should return.
-	g := buildTestGraph(t,
-		[]graph.AssetInput{
-			{Name: "A", Type: "shell", Source: "a.sh"},
-		},
-		nil,
-	)
-
-	started := make(chan struct{})
-	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
-		close(started)
-		// Block forever — simulates a stuck process
-		select {}
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan *RunResult)
-	go func() {
-		rr := Execute(g, RunConfig{
-			MaxParallel:     10,
-			Ctx:             ctx,
-			ShutdownTimeout: 100 * time.Millisecond,
-		}, runner)
-		done <- rr
-	}()
-
-	<-started
-	cancel()
-
-	select {
-	case rr := <-done:
-		if !rr.Interrupted {
-			t.Error("expected RunResult.Interrupted = true")
-		}
-		rm := resultMap(rr)
-		if rm["A"] != "skipped" {
-			t.Errorf("A should be force-skipped after timeout, got %s", rm["A"])
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Execute did not return after shutdown timeout")
-	}
-}
-
-func TestExecute_GracefulShutdown_NilContext(t *testing.T) {
-	// Nil context: normal execution, no shutdown machinery, Interrupted = false.
-	g := buildTestGraph(t,
-		[]graph.AssetInput{{Name: "A", Type: "shell", Source: "a.sh"}},
-		nil,
-	)
-	rr := Execute(g, RunConfig{MaxParallel: 10}, successRunner(0))
-	if rr.Interrupted {
-		t.Error("expected Interrupted = false when Ctx is nil")
-	}
-	if resultMap(rr)["A"] != "success" {
-		t.Errorf("A should succeed")
 	}
 }

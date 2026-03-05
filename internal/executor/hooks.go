@@ -9,9 +9,9 @@ import (
 
 	"cloud.google.com/go/bigquery"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	gctx "github.com/Andrew-DataDecode/Granicus/internal/context"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/config"
+	gctx "github.com/analytehealth/granicus/internal/context"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 type PostRunHook func(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) error
@@ -73,13 +73,10 @@ func assetSucceeded(rr *RunResult, name string) bool {
 	return false
 }
 
-func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) int {
-	failures := 0
+func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) {
 	for _, hook := range hooks {
 		if err := hook(g, cfg, projectRoot, rr); err != nil {
 			log.Printf("WARNING: post-run hook failed: %v", err)
-			failures++
 		}
 	}
-	return failures
 }

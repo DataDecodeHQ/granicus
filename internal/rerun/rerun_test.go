@@ -5,8 +5,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 func newTestEventStore(t *testing.T) *events.Store {

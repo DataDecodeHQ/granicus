@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 func GenerateCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
@@ -27,7 +27,6 @@ func GenerateCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[str
 				DestinationConnection: asset.DestinationConnection,
 				SourceConnection:      asset.SourceConnection,
 				Blocking:              check.Blocking,
-				Severity:              check.Severity,
 			})
 			deps[name] = []string{asset.Name}
 		}

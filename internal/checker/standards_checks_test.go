@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 func TestGenerateStandardsCheckNodes_AllTypes(t *testing.T) {

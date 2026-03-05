@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 	"gopkg.in/yaml.v3"
 )
 

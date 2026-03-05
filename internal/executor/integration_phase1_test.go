@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/checker"
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
-	"github.com/Andrew-DataDecode/Granicus/internal/rerun"
-	"github.com/Andrew-DataDecode/Granicus/internal/runner"
+	"github.com/analytehealth/granicus/internal/checker"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/rerun"
+	"github.com/analytehealth/granicus/internal/runner"
 )
 
 func TestIntegration_Phase1_MixedRunners(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 type Status string

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/analytehealth/granicus/internal/config"
 )
 
 func TestWatcher_DetectsNewConfig(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/events"
 )
 
 type Watcher struct {

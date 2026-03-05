@@ -3,8 +3,8 @@ package rerun
 import (
 	"fmt"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/analytehealth/granicus/internal/events"
+	"github.com/analytehealth/granicus/internal/graph"
 )
 
 func ComputeRerunSet(store *events.Store, runID string, g *graph.Graph) ([]string, []string, error) {

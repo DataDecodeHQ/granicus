@@ -24,9 +24,6 @@ func ExpandMultiOutput(inputs []AssetInput, directives map[string]*Directives) [
 				StartDate:             input.StartDate,
 				BatchSize:             input.BatchSize,
 				SourceAsset:           input.Name,
-				MaxAttempts:           input.MaxAttempts,
-				BackoffBase:           input.BackoffBase,
-				RetryableErrors:       input.RetryableErrors,
 			})
 		}
 	}
