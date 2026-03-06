@@ -64,6 +64,7 @@ type jsonRunNode struct {
 	Status          string  `json:"status"`
 	DurationSeconds float64 `json:"duration_seconds,omitempty"`
 	Error           string  `json:"error,omitempty"`
+	Stderr          string  `json:"stderr,omitempty"`
 }
 
 type jsonStatusOutput struct {
@@ -880,6 +881,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 				fmt.Printf("[%s] %s %-24s success (%.1fs)\n", ts, greenCheck, r.AssetName, r.Duration.Seconds())
 			case "failed":
 				fmt.Printf("[%s] %s %-24s failed (%.1fs) -- %s\n", ts, redCross, r.AssetName, r.Duration.Seconds(), r.Error)
+				if r.Stderr != "" {
+					for _, line := range strings.Split(strings.TrimSpace(r.Stderr), "\n") {
+						fmt.Printf("         %s\n", line)
+					}
+				}
 			}
 		}
 
@@ -1066,6 +1072,9 @@ func buildRunJSON(runID, pipeline, status string, durationSeconds float64, succe
 		}
 		if r.Error != "" {
 			node.Error = r.Error
+		}
+		if r.Status == "failed" && r.Stderr != "" {
+			node.Stderr = r.Stderr
 		}
 		nodes = append(nodes, node)
 	}
@@ -1929,8 +1938,8 @@ func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 		structural := monitor.CollectStructuralMetrics(bqClient, monCfg.Monitoring.Structural, cfg.Pipeline, tables, now)
 
 		// Collect business metrics
-		project, dataset := primaryBQProjectDataset(cfg)
-		business := monitor.CollectBusinessMetrics(context.Background(), bqClient, monCfg, cfg.Pipeline, project, dataset)
+		project, _ := primaryBQProjectDataset(cfg)
+		business := monitor.CollectBusinessMetrics(context.Background(), bqClient, monCfg, cfg.Pipeline, project, tables)
 
 		// Append all snapshots
 		allSnapshots := append(structural, business...)

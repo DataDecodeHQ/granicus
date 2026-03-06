@@ -137,7 +137,7 @@ func TestToFloat64_String(t *testing.T) {
 
 func TestCollectAggregates_EmptyConfig(t *testing.T) {
 	cfg := &MonitorConfig{}
-	snapshots := collectAggregates(nil, nil, cfg, "test_pipe", "proj", "ds", "2026-02-26T00:00:00Z")
+	snapshots := collectAggregates(nil, nil, cfg, "test_pipe", "proj", map[string]string{}, "2026-02-26T00:00:00Z")
 	if len(snapshots) != 0 {
 		t.Errorf("expected 0 snapshots for empty config, got %d", len(snapshots))
 	}
@@ -145,7 +145,7 @@ func TestCollectAggregates_EmptyConfig(t *testing.T) {
 
 func TestCollectRates_EmptyConfig(t *testing.T) {
 	cfg := &MonitorConfig{}
-	snapshots := collectRates(nil, nil, cfg, "test_pipe", "proj", "ds", "2026-02-26T00:00:00Z")
+	snapshots := collectRates(nil, nil, cfg, "test_pipe", "proj", map[string]string{}, "2026-02-26T00:00:00Z")
 	if len(snapshots) != 0 {
 		t.Errorf("expected 0 snapshots for empty config, got %d", len(snapshots))
 	}
@@ -153,7 +153,7 @@ func TestCollectRates_EmptyConfig(t *testing.T) {
 
 func TestCollectSegments_EmptyConfig(t *testing.T) {
 	cfg := &MonitorConfig{}
-	snapshots := collectSegments(nil, nil, cfg, "test_pipe", "proj", "ds", "2026-02-26T00:00:00Z")
+	snapshots := collectSegments(nil, nil, cfg, "test_pipe", "proj", map[string]string{}, "2026-02-26T00:00:00Z")
 	if len(snapshots) != 0 {
 		t.Errorf("expected 0 snapshots for empty config, got %d", len(snapshots))
 	}
@@ -161,7 +161,7 @@ func TestCollectSegments_EmptyConfig(t *testing.T) {
 
 func TestCollectBusinessMetrics_EmptyConfig(t *testing.T) {
 	cfg := &MonitorConfig{}
-	snapshots := CollectBusinessMetrics(nil, nil, cfg, "test_pipe", "proj", "ds")
+	snapshots := CollectBusinessMetrics(nil, nil, cfg, "test_pipe", "proj", map[string]string{})
 	if len(snapshots) != 0 {
 		t.Errorf("expected 0 snapshots for empty config, got %d", len(snapshots))
 	}
