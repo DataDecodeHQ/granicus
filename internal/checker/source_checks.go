@@ -138,7 +138,7 @@ func sourceExistsNotEmptySQL(sourceName, tableName string) string {
 
 func sourceFreshnessSQL(sourceName, tableName string, minutes int) string {
 	return fmt.Sprintf(
-		`SELECT MAX(datastream_metadata.source_timestamp) AS latest_source_timestamp, TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) AS staleness_minutes, 'STALE_SOURCE' AS issue_type FROM {{ source "%s" "%s" }} HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) > %d`,
+		`SELECT MAX(datastream_metadata.source_timestamp) AS latest_source_timestamp, TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), TIMESTAMP_MICROS(MAX(datastream_metadata.source_timestamp)), MINUTE) AS staleness_minutes, 'STALE_SOURCE' AS issue_type FROM {{ source "%s" "%s" }} HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), TIMESTAMP_MICROS(MAX(datastream_metadata.source_timestamp)), MINUTE) > %d`,
 		sourceName, tableName, minutes,
 	)
 }
@@ -167,7 +167,7 @@ func legacyExistsNotEmptySQL(identifier string) string {
 
 func legacyFreshnessSQL(identifier string, minutes int) string {
 	return fmt.Sprintf(
-		"SELECT MAX(datastream_metadata.source_timestamp) AS latest_source_timestamp, TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) AS staleness_minutes, 'STALE_SOURCE' AS issue_type FROM `{{.Project}}.%s` HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(datastream_metadata.source_timestamp), MINUTE) > %d",
+		"SELECT MAX(datastream_metadata.source_timestamp) AS latest_source_timestamp, TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), TIMESTAMP_MICROS(MAX(datastream_metadata.source_timestamp)), MINUTE) AS staleness_minutes, 'STALE_SOURCE' AS issue_type FROM `{{.Project}}.%s` HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), TIMESTAMP_MICROS(MAX(datastream_metadata.source_timestamp)), MINUTE) > %d",
 		identifier, minutes,
 	)
 }
