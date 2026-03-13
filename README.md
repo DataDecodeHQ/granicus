@@ -237,6 +237,39 @@ Backup the state store (`state.db`).
 
 Print the current version.
 
+## Config Contract
+
+### Project Root
+
+The `ANALYTEHEALTH_ROOT` environment variable sets the project root. All path resolution starts from this directory. When not set, the `--project-root` flag (default `.`) is used instead.
+
+### Directory Structure
+
+```
+$ANALYTEHEALTH_ROOT/
+  project/granicus_pipeline/
+    <pipeline-name>/
+      pipeline.yaml
+      sql/<layer>/*.sql
+      checks/
+      contracts/
+      .granicus/
+        state.db
+        context.db
+```
+
+### Path Resolution
+
+- **Credential paths** in `pipeline.yaml` are resolved relative to the pipeline directory.
+- **Source file paths** (`source:` in asset definitions) are resolved relative to the project root.
+- **State and context databases** are created automatically in `.granicus/` within each pipeline directory.
+
+### Engine vs Pipeline Separation
+
+The engine (`granicus` binary) is a generic orchestrator. It contains no business logic, no domain-specific SQL, and no knowledge of any particular data platform.
+
+Pipeline definitions, SQL files, checks, and contracts live in the project directory under `project/granicus_pipeline/<name>/`. The engine reads these at runtime via the config contract above. This separation means the engine can be versioned, built, and tested independently of any pipeline.
+
 ## Multi-Pipeline
 
 Use a `granicus.yaml` file to manage multiple pipelines together:
