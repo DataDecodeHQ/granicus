@@ -128,3 +128,102 @@ func TestPipelineDiscoveryIgnoresNonPipelineDirs(t *testing.T) {
 		t.Errorf("expected 1 pipeline, found %d", count)
 	}
 }
+
+func TestCredentialPathResolution(t *testing.T) {
+	tmpRoot := t.TempDir()
+
+	// Create credential file at root/.credentials/bigquery/service.json
+	credsDir := filepath.Join(tmpRoot, ".credentials", "bigquery")
+	if err := os.MkdirAll(credsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	credsFile := filepath.Join(credsDir, "service.json")
+	if err := os.WriteFile(credsFile, []byte(`{"type":"service_account"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create pipeline with relative credential path
+	pipelineDir := filepath.Join(tmpRoot, "project", "granicus_pipeline", "test_pipeline")
+	if err := os.MkdirAll(pipelineDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	relCredsPath := "../../../.credentials/bigquery/service.json"
+	yaml := "pipeline: test_pipeline\nconnections:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\n    credentials: " + relCredsPath + "\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_connection: bq\n"
+	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "x.sql"), []byte("SELECT 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ANALYTEHEALTH_ROOT", tmpRoot)
+
+	cfg, err := config.LoadConfig(filepath.Join(pipelineDir, "pipeline.yaml"))
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	conn := cfg.Connections["bq"]
+	if conn == nil {
+		t.Fatal("bq connection not found")
+	}
+
+	creds := conn.Properties["credentials"]
+	if creds == "" {
+		t.Fatal("credentials property not found in connection")
+	}
+
+	// Resolve relative path from pipeline directory (same as engine does)
+	resolved := creds
+	if !filepath.IsAbs(creds) {
+		resolved = filepath.Join(pipelineDir, creds)
+	}
+	resolved = filepath.Clean(resolved)
+
+	if _, err := os.Stat(resolved); os.IsNotExist(err) {
+		t.Errorf("credential file not found at resolved path: %s", resolved)
+	}
+
+	// Verify the resolved path is under ANALYTEHEALTH_ROOT
+	expectedPath := filepath.Clean(credsFile)
+	if resolved != expectedPath {
+		t.Errorf("resolved path %q does not match expected %q", resolved, expectedPath)
+	}
+}
+
+func TestAbsoluteCredentialPathPassedThrough(t *testing.T) {
+	tmpRoot := t.TempDir()
+
+	credsFile := filepath.Join(tmpRoot, "creds.json")
+	if err := os.WriteFile(credsFile, []byte(`{"type":"service_account"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pipelineDir := filepath.Join(tmpRoot, "project", "granicus_pipeline", "abs_test")
+	if err := os.MkdirAll(pipelineDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	yaml := "pipeline: abs_test\nconnections:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\n    credentials: " + credsFile + "\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_connection: bq\n"
+	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "x.sql"), []byte("SELECT 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadConfig(filepath.Join(pipelineDir, "pipeline.yaml"))
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+
+	creds := cfg.Connections["bq"].Properties["credentials"]
+	if !filepath.IsAbs(creds) {
+		t.Errorf("absolute credential path not preserved: %s", creds)
+	}
+
+	if _, err := os.Stat(creds); os.IsNotExist(err) {
+		t.Errorf("credential file not found: %s", creds)
+	}
+}
