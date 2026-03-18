@@ -15,6 +15,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/result"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -174,14 +175,22 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		bytesProcessed := stats.TotalBytesProcessed
 		metadata["total_bytes_processed"] = strconv.FormatInt(bytesProcessed, 10)
 		metadata["estimated_cost_usd"] = fmt.Sprintf("%.6f", estimateBQCostUSD(bytesProcessed))
+		metadata[result.TelBQBytesScanned] = strconv.FormatInt(bytesProcessed, 10)
+		metadata[result.TelBQJobID] = job.ID()
 		if qStats, ok := stats.Details.(*bigquery.QueryStatistics); ok {
 			metadata["total_slot_ms"] = strconv.FormatInt(qStats.SlotMillis, 10)
+			metadata[result.TelBQSlotMs] = strconv.FormatInt(qStats.SlotMillis, 10)
+			metadata[result.TelBQCacheHit] = strconv.FormatBool(qStats.CacheHit)
 			metadata["cache_hit"] = strconv.FormatBool(qStats.CacheHit)
 			metadata["rows_affected"] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
+			metadata[result.TelBQRowCount] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
 			if qStats.ReferencedTables != nil {
 				for _, t := range qStats.ReferencedTables {
 					metadata["destination_table"] = t.DatasetID + "." + t.TableID
 				}
+			}
+			if qStats.TotalBytesProcessedAccuracy != "" {
+				metadata[result.TelBQBytesWritten] = strconv.FormatInt(stats.TotalBytesProcessed, 10)
 			}
 		}
 	}

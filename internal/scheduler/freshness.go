@@ -20,7 +20,7 @@ type FreshnessResult struct {
 	Message string
 }
 
-func CheckFreshness(stateStore *state.Store, checks []FreshnessCheck) []FreshnessResult {
+func CheckFreshness(stateStore state.StateBackend, checks []FreshnessCheck) []FreshnessResult {
 	var results []FreshnessResult
 
 	for _, check := range checks {

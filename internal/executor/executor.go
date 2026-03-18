@@ -37,7 +37,7 @@ type RunConfig struct {
 	FromDate     string
 	ToDate       string
 	FullRefresh  bool
-	StateStore   *state.Store
+	StateStore   state.StateBackend
 	TestMode     bool
 	TestStart    string
 	TestEnd      string

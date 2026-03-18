@@ -81,6 +81,8 @@ type AssetConfig struct {
 	Completeness          *CompletenessConfig `yaml:"completeness,omitempty"`
 	Standards             *StandardsConfig    `yaml:"standards,omitempty"`
 	StandardsBlocking     bool                `yaml:"standards_blocking,omitempty"`
+	Runner                string              `yaml:"runner,omitempty"`
+	RunnerConfig          map[string]string   `yaml:"runner_config,omitempty"`
 	Timeout               string              `yaml:"timeout,omitempty"`
 	DependsOn             []string            `yaml:"depends_on,omitempty"`
 	Retry                 *RetryConfig        `yaml:"retry,omitempty"`
@@ -384,6 +386,10 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 			if _, err := time.ParseDuration(a.Timeout); err != nil {
 				return nil, fmt.Errorf("asset %q: invalid timeout %q: %w", a.Name, a.Timeout, err)
 			}
+		}
+
+		if a.Runner == "" {
+			a.Runner = "local"
 		}
 
 		if err := validateAndApplyRetryDefaults(a); err != nil {
