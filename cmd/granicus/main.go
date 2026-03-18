@@ -252,7 +252,8 @@ func main() {
 	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd, completionCmd, doctorCmd,
 		newPushCmd(), newActivateCmd(), newVersionsCmd(), newDiffCmd(),
 		newHistoryCmd2(), newEventsCmd2(), newFailuresCmd(), newStatsCmd(),
-		newCloudStatusCmd(), newIntervalsCmd())
+		newCloudStatusCmd(), newIntervalsCmd(),
+		newTriggerCmd(), newSubscribeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
