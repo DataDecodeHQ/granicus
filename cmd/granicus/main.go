@@ -253,7 +253,7 @@ func main() {
 		newPushCmd(), newActivateCmd(), newVersionsCmd(), newDiffCmd(),
 		newHistoryCmd2(), newEventsCmd2(), newFailuresCmd(), newStatsCmd(),
 		newCloudStatusCmd(), newIntervalsCmd(),
-		newTriggerCmd(), newSubscribeCmd())
+		newTriggerCmd(), newSubscribeCmd(), newConfigCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
