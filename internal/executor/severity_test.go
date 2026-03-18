@@ -3,7 +3,7 @@ package executor
 import (
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
 // TestExecute_SeverityInfo verifies that an info-severity check failure is

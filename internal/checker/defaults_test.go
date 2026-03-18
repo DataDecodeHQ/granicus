@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
 func boolPtr(b bool) *bool { return &b }

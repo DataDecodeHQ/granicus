@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 // SchemaColumn represents a single column in a table schema.

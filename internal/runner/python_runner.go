@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 type PythonRunner struct {

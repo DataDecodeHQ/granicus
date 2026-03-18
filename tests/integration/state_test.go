@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/state"
+	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
 func TestStateDBCreatedAtPipelineDir(t *testing.T) {

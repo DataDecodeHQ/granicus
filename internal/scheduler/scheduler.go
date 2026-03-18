@@ -11,8 +11,8 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string)

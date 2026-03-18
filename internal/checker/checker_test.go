@@ -3,7 +3,7 @@ package checker
 import (
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
 func TestGenerateCheckNodes_Basic(t *testing.T) {

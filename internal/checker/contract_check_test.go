@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
 func TestGenerateContractCheckNodes_NoContract(t *testing.T) {

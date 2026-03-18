@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
-	"github.com/Andrew-DataDecode/Granicus/internal/runner"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/runner"
 )
 
 func newTestEventStore(t *testing.T) *events.Store {

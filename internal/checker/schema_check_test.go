@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 func newSchemaTestStore(t *testing.T) *events.Store {

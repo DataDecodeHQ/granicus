@@ -9,8 +9,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 // AlertData is the template data model populated when sending alerts.

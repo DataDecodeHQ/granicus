@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/executor"
+	"github.com/DataDecodeHQ/granicus/internal/executor"
 )
 
 func CollectCheckErrors(dbPath, pipeline string, run *executor.RunResult) error {

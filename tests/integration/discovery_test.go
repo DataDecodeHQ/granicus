@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/checker"
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/checker"
+	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
 func TestCheckFileDiscovery(t *testing.T) {

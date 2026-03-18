@@ -1,4 +1,4 @@
-module github.com/Andrew-DataDecode/Granicus
+module github.com/DataDecodeHQ/granicus
 
 go 1.25.0
 

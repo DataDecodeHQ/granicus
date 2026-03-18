@@ -1,8 +1,8 @@
 package runner
 
 import (
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 // PythonCheckRunner runs a Python script as a check.

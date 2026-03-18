@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
 func GenerateSourceCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {

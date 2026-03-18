@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
 // waitForRequests polls until the counter reaches want, or times out.

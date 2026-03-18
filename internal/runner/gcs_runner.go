@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
 // resolveGCSCredentials returns the credentials file path using the following

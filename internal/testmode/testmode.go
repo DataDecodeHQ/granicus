@@ -9,7 +9,7 @@ import (
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/option"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
 func TestDatasetName(baseDataset string, runID string) string {

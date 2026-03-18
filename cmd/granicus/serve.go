@@ -16,17 +16,17 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/Andrew-DataDecode/Granicus/internal/logging"
-	"github.com/Andrew-DataDecode/Granicus/internal/checker"
-	"github.com/Andrew-DataDecode/Granicus/internal/config"
-	"github.com/Andrew-DataDecode/Granicus/internal/events"
-	"github.com/Andrew-DataDecode/Granicus/internal/executor"
-	"github.com/Andrew-DataDecode/Granicus/internal/graph"
-	"github.com/Andrew-DataDecode/Granicus/internal/pool"
-	"github.com/Andrew-DataDecode/Granicus/internal/runner"
-	"github.com/Andrew-DataDecode/Granicus/internal/scheduler"
-	"github.com/Andrew-DataDecode/Granicus/internal/server"
-	"github.com/Andrew-DataDecode/Granicus/internal/state"
+	"github.com/DataDecodeHQ/granicus/internal/logging"
+	"github.com/DataDecodeHQ/granicus/internal/checker"
+	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/executor"
+	"github.com/DataDecodeHQ/granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/pool"
+	"github.com/DataDecodeHQ/granicus/internal/runner"
+	"github.com/DataDecodeHQ/granicus/internal/scheduler"
+	"github.com/DataDecodeHQ/granicus/internal/server"
+	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
 func init() {
