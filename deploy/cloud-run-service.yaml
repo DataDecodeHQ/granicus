@@ -1,0 +1,40 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: granicus-engine
+  labels:
+    cloud.googleapis.com/location: us-central1
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "3"
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 1
+      timeoutSeconds: 3600
+      containers:
+        - image: us-central1-docker.pkg.dev/datadecode-platform/granicus/engine:latest
+          resources:
+            limits:
+              memory: 1Gi
+              cpu: "1"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GRANICUS_FIRESTORE_PROJECT
+              value: datadecode-platform
+            - name: GRANICUS_PIPELINES_BUCKET
+              value: granicus-pipelines
+            - name: GRANICUS_OPS_BUCKET
+              value: granicus-ops
+            - name: GRANICUS_PIPELINE_SOURCE
+              value: gcs
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6

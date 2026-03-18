@@ -1,0 +1,38 @@
+{
+  "apiVersion": "run.googleapis.com/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "granicus-python-runner",
+    "labels": {
+      "service": "granicus",
+      "env": "dev"
+    }
+  },
+  "spec": {
+    "template": {
+      "spec": {
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "image": "us-central1-docker.pkg.dev/datadecode-platform/granicus/python-runner:latest",
+                "resources": {
+                  "limits": {
+                    "memory": "2Gi",
+                    "cpu": "1"
+                  }
+                },
+                "env": [
+                  {"name": "GRANICUS_RESULT_TOPIC", "value": "granicus-results"},
+                  {"name": "GRANICUS_PUBSUB_PROJECT", "value": "datadecode-platform"}
+                ]
+              }
+            ],
+            "maxRetries": 1,
+            "timeoutSeconds": 1800
+          }
+        }
+      }
+    }
+  }
+}

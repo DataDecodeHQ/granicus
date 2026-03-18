@@ -206,6 +206,31 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 		return nil, nil
 	}
 
+	// Also mark parent runs as crashed and write recovery events
+	now := time.Now().UTC()
+	seenRuns := make(map[string]bool)
+	for _, iv := range orphans {
+		if iv.RunID != "" && !seenRuns[iv.RunID] {
+			seenRuns[iv.RunID] = true
+			runRef := f.runsCol().Doc(iv.RunID)
+			batch.Update(runRef, []firestore.Update{
+				{Path: "status", Value: "crashed"},
+				{Path: "error_summary", Value: "engine process terminated unexpectedly"},
+				{Path: "completed_at", Value: now},
+			})
+		}
+		// Write recovery event
+		eventsCol := f.runsCol().Doc(iv.RunID).Collection("events")
+		batch.Create(eventsCol.NewDoc(), EventDoc{
+			RunID:     iv.RunID,
+			Pipeline:  f.pipeline,
+			Node:      iv.AssetName,
+			EventType: "node_failed",
+			Error:     "engine crashed during execution (orphan recovery)",
+			Timestamp: now,
+		})
+	}
+
 	if _, err := batch.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("committing orphan recovery: %w", err)
 	}

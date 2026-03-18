@@ -249,7 +249,10 @@ func main() {
 	doctorCmd.Flags().String("project-root", ".", "Project root directory")
 	doctorCmd.Flags().String("output", "", "Output format (json)")
 
-	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd, completionCmd, doctorCmd)
+	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd, completionCmd, doctorCmd,
+		newPushCmd(), newActivateCmd(), newVersionsCmd(), newDiffCmd(),
+		newHistoryCmd2(), newEventsCmd2(), newFailuresCmd(), newStatsCmd(),
+		newCloudStatusCmd(), newIntervalsCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
