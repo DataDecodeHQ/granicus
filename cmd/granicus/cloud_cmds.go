@@ -204,7 +204,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 // newHistoryCmd creates the granicus history command.
 func newHistoryCmd2() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "history",
+		Use:   "cloud-history",
 		Short: "Show pipeline run history from Firestore",
 		RunE:  runHistory2,
 	}
