@@ -469,6 +469,7 @@ def check_tf_file(filepath: str, tf_root: str) -> CheckResult:
     return result
 
 
+# dag:boundary
 def run_pipeline(
         tf_root: str,
         warn_only: bool = False,

@@ -21,6 +21,7 @@ import json
 import argparse
 from pathlib import Path
 
+# dag:boundary
 def run_pipeline(root_path: str, warn_only: bool = False,
                  output_json: bool = False) -> int:
     """

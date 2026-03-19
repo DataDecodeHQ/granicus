@@ -423,6 +423,7 @@ def save_dag(
         logger.info(f"  → Saved change summary to {diff_path.relative_to(REPO_ROOT)}")
 
 
+# dag:boundary
 def print_summary(dag_data: dict, dag_type: str) -> None:
     """Print a human-readable summary of the DAG produced."""
     print("\n" + "═" * 60)
