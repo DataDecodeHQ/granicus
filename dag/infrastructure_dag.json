@@ -1,9 +1,7 @@
 {
-  "version": "32",
-  "generated_at": "2026-03-19T21:00:00Z",
-  "ingress_points": [
-    "google_cloud_run_v2_service.engine"
-  ],
+  "version": "44",
+  "generated_at": "2026-03-19T21:45:00Z",
+  "ingress_points": [],
   "egress_points": [],
   "external_services": [
     {
@@ -35,13 +33,13 @@
       "terraform_address": "google_cloud_run_v2_service.engine",
       "description": "Granicus pipeline engine — receives triggers, orchestrates BigQuery pipelines",
       "exposes": "HTTPS on port 8080 (API: /api/v1/pipelines/{name}/trigger, /api/v1/admin/prune)",
-      "auth_mechanism": "OIDC token via Cloud Scheduler SA; ingress open to all traffic",
+      "auth_mechanism": "OIDC token via Cloud Scheduler SA; ingress restricted to internal traffic only",
       "region": "us-central1",
-      "confidence": 0.92,
-      "confidence_reason": "Fully declared with description, env vars, SA, and ingress policy",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with description, env vars, SA, and internal-only ingress policy",
       "security": {
         "data_sensitivity": "internal",
-        "publicly_accessible": true,
+        "publicly_accessible": false,
         "auth_enforced": true,
         "encryption_at_rest": true,
         "encryption_in_transit": true,
@@ -161,7 +159,7 @@
       "terraform_address": "google_artifact_registry_repository.granicus",
       "description": "Docker image repository for Granicus engine builds",
       "exposes": "Docker Registry API",
-      "auth_mechanism": "IAM — roles/artifactregistry.admin via deploy SA",
+      "auth_mechanism": "IAM — roles/artifactregistry.writer via deploy SA",
       "region": "us-central1",
       "confidence": 0.80,
       "confidence_reason": "No description attribute set on resource, but purpose clear from .tf comment",
@@ -171,7 +169,7 @@
         "auth_enforced": true,
         "encryption_at_rest": true,
         "encryption_in_transit": true,
-        "iam_bindings": ["roles/artifactregistry.admin (deploy SA)"],
+        "iam_bindings": ["roles/artifactregistry.writer (deploy SA)"],
         "excess_permissions": false,
         "data_residency": "us-central1"
       }
@@ -182,7 +180,7 @@
       "terraform_address": "google_secret_manager_secret.client_sa[\"analytehealth-analytehealth\"]",
       "description": "SA key for AnalyteHealth BigQuery project (api-project-178709533099)",
       "exposes": "Secret Manager API (secretAccessor)",
-      "auth_mechanism": "IAM — roles/secretmanager.secretAccessor scoped to engine SA",
+      "auth_mechanism": "IAM — roles/secretmanager.secretAccessor scoped to engine SA and deploy SA (resource-level)",
       "region": "auto-replicated",
       "confidence": 0.88,
       "confidence_reason": "Labels identify purpose; secret content not inspectable but role is clear from .tf",
@@ -192,7 +190,7 @@
         "auth_enforced": true,
         "encryption_at_rest": true,
         "encryption_in_transit": true,
-        "iam_bindings": ["roles/secretmanager.secretAccessor (engine SA)"],
+        "iam_bindings": ["roles/secretmanager.secretAccessor (engine SA)", "roles/secretmanager.secretAccessor (deploy SA)"],
         "excess_permissions": false,
         "data_residency": "auto-replicated"
       }
@@ -203,7 +201,7 @@
       "terraform_address": "google_secret_manager_secret.client_sa[\"analytehealth-paternitylabs\"]",
       "description": "SA key for PaternityLabs BigQuery project (paternitylab)",
       "exposes": "Secret Manager API (secretAccessor)",
-      "auth_mechanism": "IAM — roles/secretmanager.secretAccessor scoped to engine SA",
+      "auth_mechanism": "IAM — roles/secretmanager.secretAccessor scoped to engine SA and deploy SA (resource-level)",
       "region": "auto-replicated",
       "confidence": 0.88,
       "confidence_reason": "Labels identify purpose; secret content not inspectable but role is clear from .tf",
@@ -213,7 +211,7 @@
         "auth_enforced": true,
         "encryption_at_rest": true,
         "encryption_in_transit": true,
-        "iam_bindings": ["roles/secretmanager.secretAccessor (engine SA)"],
+        "iam_bindings": ["roles/secretmanager.secretAccessor (engine SA)", "roles/secretmanager.secretAccessor (deploy SA)"],
         "excess_permissions": false,
         "data_residency": "auto-replicated"
       }
@@ -222,11 +220,11 @@
       "type": "auth",
       "gcp_service": "IAM",
       "terraform_address": "google_service_account.engine",
-      "description": "Granicus engine Cloud Run service account — attached to Cloud Run, needs Firestore/GCS/PubSub access",
+      "description": "Granicus engine Cloud Run service account — attached to Cloud Run, needs Firestore/GCS/Secret Manager access",
       "exposes": "Service account identity",
       "auth_mechanism": "GCP managed identity (attached to Cloud Run via Workload Identity)",
       "region": "global",
-      "confidence": 0.92,
+      "confidence": 0.95,
       "confidence_reason": "Fully declared with display name, comment description, and clear IAM bindings",
       "security": {
         "data_sensitivity": "credentials",
@@ -237,8 +235,7 @@
         "iam_bindings": [
           "roles/datastore.user (on datadecode-platform)",
           "roles/storage.objectAdmin (on datadecode-platform)",
-          "roles/pubsub.publisher (on datadecode-platform)",
-          "roles/secretmanager.secretAccessor (on client secrets)"
+          "roles/secretmanager.secretAccessor (on client secrets, resource-scoped)"
         ],
         "excess_permissions": false,
         "data_residency": "global"
@@ -252,8 +249,8 @@
       "exposes": "Service account identity (impersonated via WIF)",
       "auth_mechanism": "Workload Identity Federation from GitHub Actions",
       "region": "global",
-      "confidence": 0.90,
-      "confidence_reason": "Fully declared with display name and clear IAM bindings",
+      "confidence": 0.92,
+      "confidence_reason": "Fully declared with display name; roles scoped appropriately after hardening",
       "security": {
         "data_sensitivity": "credentials",
         "publicly_accessible": false,
@@ -261,16 +258,15 @@
         "encryption_at_rest": true,
         "encryption_in_transit": true,
         "iam_bindings": [
-          "roles/artifactregistry.admin (on datadecode-platform)",
+          "roles/artifactregistry.writer (on datadecode-platform)",
           "roles/run.developer (on datadecode-platform)",
-          "roles/iam.serviceAccountUser (on datadecode-platform)",
+          "roles/iam.serviceAccountUser (on engine SA only, resource-scoped)",
           "roles/storage.admin (on datadecode-platform)",
-          "roles/secretmanager.secretAccessor (on datadecode-platform)",
+          "roles/secretmanager.secretAccessor (on client secrets, resource-scoped)",
           "roles/datastore.user (on datadecode-platform)",
-          "roles/pubsub.admin (on datadecode-platform)",
           "roles/cloudscheduler.admin (on datadecode-platform)"
         ],
-        "excess_permissions": true,
+        "excess_permissions": false,
         "data_residency": "global"
       }
     },
@@ -362,12 +358,12 @@
       "type": "transit",
       "gcp_service": "Cloud Scheduler",
       "terraform_address": "google_cloud_scheduler_job.prune",
-      "description": "Nightly cleanup of stale runs and old data (0 2 * * *)",
+      "description": "Nightly cleanup of stale Firestore runs and old data (0 2 * * *)",
       "exposes": "Cron trigger (HTTP POST to Cloud Run /api/v1/admin/prune)",
       "auth_mechanism": "OIDC token via scheduler SA",
       "region": "us-central1",
-      "confidence": 0.80,
-      "confidence_reason": "No description attribute in state; purpose inferred from .tf comment and endpoint path",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with schedule, target URI, OIDC auth, and description attribute",
       "security": {
         "data_sensitivity": "internal",
         "publicly_accessible": false,
@@ -421,6 +417,27 @@
         "data_residency": "global"
       }
     },
+    "google_service_account_iam_member.deploy_sa_user": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_service_account_iam_member.deploy_sa_user",
+      "description": "Deploy SA can act as engine SA (needed to attach engine SA to Cloud Run)",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on engine service account",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Scoped to engine SA only — least-privilege for Cloud Run SA attachment",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/iam.serviceAccountUser"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
     "google_project_iam_member.engine_firestore": {
       "type": "auth",
       "gcp_service": "IAM",
@@ -463,45 +480,24 @@
         "data_residency": "global"
       }
     },
-    "google_project_iam_member.engine_pubsub": {
-      "type": "auth",
-      "gcp_service": "IAM",
-      "terraform_address": "google_project_iam_member.engine_pubsub",
-      "description": "Engine SA Pub/Sub publish access in platform project",
-      "exposes": null,
-      "auth_mechanism": "Project-level IAM binding",
-      "region": "global",
-      "confidence": 0.75,
-      "confidence_reason": "Pub/Sub topics are commented out in pubsub.tf — IAM binding may be premature",
-      "security": {
-        "data_sensitivity": "internal",
-        "publicly_accessible": false,
-        "auth_enforced": true,
-        "encryption_at_rest": true,
-        "encryption_in_transit": true,
-        "iam_bindings": ["roles/pubsub.publisher"],
-        "excess_permissions": true,
-        "data_residency": "global"
-      }
-    },
     "google_project_iam_member.deploy_artifact_registry": {
       "type": "auth",
       "gcp_service": "IAM",
       "terraform_address": "google_project_iam_member.deploy_artifact_registry",
-      "description": "Deploy SA Artifact Registry admin for pushing images",
+      "description": "Deploy SA Artifact Registry writer for pushing images",
       "exposes": null,
       "auth_mechanism": "Project-level IAM binding",
       "region": "global",
-      "confidence": 0.80,
-      "confidence_reason": "roles/artifactregistry.admin is broader than writer; admin includes delete permissions",
+      "confidence": 0.92,
+      "confidence_reason": "Appropriate role for CI/CD image push — writer, not admin",
       "security": {
         "data_sensitivity": "internal",
         "publicly_accessible": false,
         "auth_enforced": true,
         "encryption_at_rest": true,
         "encryption_in_transit": true,
-        "iam_bindings": ["roles/artifactregistry.admin"],
-        "excess_permissions": true,
+        "iam_bindings": ["roles/artifactregistry.writer"],
+        "excess_permissions": false,
         "data_residency": "global"
       }
     },
@@ -526,27 +522,6 @@
         "data_residency": "global"
       }
     },
-    "google_project_iam_member.deploy_sa_user": {
-      "type": "auth",
-      "gcp_service": "IAM",
-      "terraform_address": "google_project_iam_member.deploy_sa_user",
-      "description": "Deploy SA can act as other SAs (needed to attach engine SA to Cloud Run)",
-      "exposes": null,
-      "auth_mechanism": "Project-level IAM binding",
-      "region": "global",
-      "confidence": 0.85,
-      "confidence_reason": "Project-wide serviceAccountUser is broad but needed for Cloud Run SA attachment",
-      "security": {
-        "data_sensitivity": "credentials",
-        "publicly_accessible": false,
-        "auth_enforced": true,
-        "encryption_at_rest": true,
-        "encryption_in_transit": true,
-        "iam_bindings": ["roles/iam.serviceAccountUser"],
-        "excess_permissions": true,
-        "data_residency": "global"
-      }
-    },
     "google_project_iam_member.deploy_storage": {
       "type": "auth",
       "gcp_service": "IAM",
@@ -564,27 +539,6 @@
         "encryption_at_rest": true,
         "encryption_in_transit": true,
         "iam_bindings": ["roles/storage.admin"],
-        "excess_permissions": true,
-        "data_residency": "global"
-      }
-    },
-    "google_project_iam_member.deploy_secrets": {
-      "type": "auth",
-      "gcp_service": "IAM",
-      "terraform_address": "google_project_iam_member.deploy_secrets",
-      "description": "Deploy SA Secret Manager access for reading secrets during deploy",
-      "exposes": null,
-      "auth_mechanism": "Project-level IAM binding",
-      "region": "global",
-      "confidence": 0.80,
-      "confidence_reason": "Project-wide secretAccessor gives deploy SA access to all secrets, not just granicus ones",
-      "security": {
-        "data_sensitivity": "credentials",
-        "publicly_accessible": false,
-        "auth_enforced": true,
-        "encryption_at_rest": true,
-        "encryption_in_transit": true,
-        "iam_bindings": ["roles/secretmanager.secretAccessor"],
         "excess_permissions": true,
         "data_residency": "global"
       }
@@ -607,27 +561,6 @@
         "encryption_in_transit": true,
         "iam_bindings": ["roles/datastore.user"],
         "excess_permissions": false,
-        "data_residency": "global"
-      }
-    },
-    "google_project_iam_member.deploy_pubsub": {
-      "type": "auth",
-      "gcp_service": "IAM",
-      "terraform_address": "google_project_iam_member.deploy_pubsub",
-      "description": "Deploy SA Pub/Sub admin for provisioning topics/subscriptions",
-      "exposes": null,
-      "auth_mechanism": "Project-level IAM binding",
-      "region": "global",
-      "confidence": 0.70,
-      "confidence_reason": "Pub/Sub resources are commented out — admin role may be premature",
-      "security": {
-        "data_sensitivity": "internal",
-        "publicly_accessible": false,
-        "auth_enforced": true,
-        "encryption_at_rest": true,
-        "encryption_in_transit": true,
-        "iam_bindings": ["roles/pubsub.admin"],
-        "excess_permissions": true,
         "data_residency": "global"
       }
     },
@@ -683,6 +616,48 @@
       "region": "global",
       "confidence": 0.95,
       "confidence_reason": "Specific, scoped IAM binding with least-privilege role",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-analytehealth]": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_secret_manager_secret_iam_member.deploy_client_sa[\"analytehealth-analytehealth\"]",
+      "description": "Grants deploy SA read access to analytehealth client secret for CI/CD",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on Secret Manager secret",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Specific, scoped IAM binding — replaces project-wide secretAccessor",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-paternitylabs]": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_secret_manager_secret_iam_member.deploy_client_sa[\"analytehealth-paternitylabs\"]",
+      "description": "Grants deploy SA read access to paternitylabs client secret for CI/CD",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on Secret Manager secret",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Specific, scoped IAM binding — replaces project-wide secretAccessor",
       "security": {
         "data_sensitivity": "credentials",
         "publicly_accessible": false,
@@ -936,16 +911,16 @@
       "to": "google_artifact_registry_repository.granicus",
       "transfer_type": "data_flow",
       "data_shape": "Docker images pushed during CI/CD (engine:latest, engine:sha-xxx)",
-      "auth_mechanism": "Deploy SA via WIF, roles/artifactregistry.admin",
+      "auth_mechanism": "Deploy SA via WIF, roles/artifactregistry.writer",
       "direction": "unidirectional",
-      "confidence": 0.88,
-      "confidence_reason": "Inferred from WIF binding + AR admin role; actual push is in GitHub Actions workflow",
+      "confidence": 0.90,
+      "confidence_reason": "Inferred from WIF binding + AR writer role; actual push is in GitHub Actions workflow",
       "security": {
         "carries_sensitive_data": false,
         "encrypted_in_transit": true,
         "auth_verified": true,
-        "least_privilege": false,
-        "notes": "artifactregistry.admin grants delete/policy permissions beyond what push requires"
+        "least_privilege": true,
+        "notes": "Writer role grants push without delete/admin — appropriate for CI/CD"
       }
     },
     {
@@ -965,24 +940,6 @@
         "least_privilege": true,
         "notes": null
       }
-    },
-    {
-      "id": "infra_edge_016",
-      "from": "google_cloud_run_v2_service.engine",
-      "to": "google_storage_bucket.ops",
-      "transfer_type": "data_flow",
-      "data_shape": "Ops data (backups, exports) written to granicus-ops bucket",
-      "auth_mechanism": "Engine SA with roles/storage.objectAdmin",
-      "direction": "bidirectional",
-      "confidence": 0.65,
-      "confidence_reason": "GRANICUS_OPS_BUCKET env var references 'granicus-ops' but no google_storage_bucket resource exists for it in state",
-      "security": {
-        "carries_sensitive_data": false,
-        "encrypted_in_transit": true,
-        "auth_verified": false,
-        "least_privilege": false,
-        "notes": "granicus-ops bucket is referenced in env var but NOT declared in Terraform — possible drift or externally managed resource"
-      }
     }
   ],
   "service_boundaries": [
@@ -992,12 +949,12 @@
       "to_service": "Cloud Run",
       "from_resource": "google_cloud_scheduler_job.pipeline[*]",
       "to_resource": "google_cloud_run_v2_service.engine",
-      "protocol": "HTTPS POST",
+      "protocol": "HTTPS POST (internal traffic only)",
       "auth_mechanism": "OIDC token (scheduler SA) verified by Cloud Run IAM",
       "data_shape": "JSON trigger payload {\"pipeline\": \"<name>\"} or empty body (prune)",
       "declared_in": "clients.tf (pipeline triggers), scheduler.tf (prune)",
       "confidence": 0.95,
-      "confidence_reason": "Fully declared: URI, OIDC token, IAM invoker binding, HTTP method"
+      "confidence_reason": "Fully declared: URI, OIDC token, IAM invoker binding, HTTP method, internal ingress"
     },
     {
       "id": "svc_boundary_002",
@@ -1071,11 +1028,11 @@
       "from_resource": "external_github_actions",
       "to_resource": "google_artifact_registry_repository.granicus",
       "protocol": "Docker Registry API v2 (HTTPS)",
-      "auth_mechanism": "WIF → deploy SA with roles/artifactregistry.admin",
+      "auth_mechanism": "WIF -> deploy SA with roles/artifactregistry.writer",
       "data_shape": "Docker images (multi-stage Alpine Go build)",
       "declared_in": "wif.tf (WIF binding), service_account.tf (deploy_artifact_registry IAM), artifact_registry.tf",
-      "confidence": 0.88,
-      "confidence_reason": "WIF + IAM fully declared; push workflow is in GitHub Actions, not Terraform"
+      "confidence": 0.90,
+      "confidence_reason": "WIF + IAM fully declared; writer role is least-privilege for push"
     },
     {
       "id": "svc_boundary_008",
@@ -1153,72 +1110,14 @@
       "known_call_sites": [],
       "gap_type": null,
       "gap_description": null
-    },
-    {
-      "infra_edge_id": "infra_edge_016",
-      "expected_code_patterns": [
-        "GCS client reading/writing to granicus-ops bucket (GRANICUS_OPS_BUCKET env var)",
-        "Backup exports, operational data"
-      ],
-      "known_call_sites": [],
-      "gap_type": "code_no_infra",
-      "gap_description": "GRANICUS_OPS_BUCKET env var references 'granicus-ops' bucket but no google_storage_bucket resource for it exists in Terraform state. Either the bucket is managed outside Terraform or the resource declaration is missing."
     }
   ],
   "flags": [
     {
       "type": "review_required",
-      "target": "google_cloud_run_v2_service.engine",
-      "reason": "Cloud Run ingress is set to INGRESS_TRAFFIC_ALL, making the service publicly accessible. While OIDC auth is required for scheduler triggers, the /api/v1/ endpoints are exposed to the internet.",
-      "suggested_fix": "Consider restricting ingress to INGRESS_TRAFFIC_INTERNAL_ONLY if only Cloud Scheduler needs to reach the service, or ensure all API endpoints enforce authentication in application code."
-    },
-    {
-      "type": "review_required",
-      "target": "infra_edge_016",
-      "reason": "GRANICUS_OPS_BUCKET env var references 'granicus-ops' bucket that has no corresponding google_storage_bucket resource in Terraform state.",
-      "suggested_fix": "Either add a google_storage_bucket resource for 'granicus-ops' to Terraform, or remove the GRANICUS_OPS_BUCKET env var if the bucket is no longer needed. If managed outside Terraform, document it as an external dependency."
-    },
-    {
-      "type": "review_required",
-      "target": "google_project_iam_member.engine_pubsub",
-      "reason": "Engine SA has roles/pubsub.publisher but all Pub/Sub resources in pubsub.tf are commented out. IAM binding grants permissions for resources that do not yet exist.",
-      "suggested_fix": "Remove the engine_pubsub IAM binding until Pub/Sub topics are provisioned, or uncomment and apply the Pub/Sub resources."
-    },
-    {
-      "type": "review_required",
-      "target": "google_project_iam_member.deploy_pubsub",
-      "reason": "Deploy SA has roles/pubsub.admin but all Pub/Sub resources are commented out.",
-      "suggested_fix": "Remove the deploy_pubsub IAM binding until Pub/Sub topics are provisioned."
-    },
-    {
-      "type": "review_required",
-      "target": "google_project_iam_member.deploy_artifact_registry",
-      "reason": "Deploy SA has roles/artifactregistry.admin which grants delete and policy management beyond what CI/CD push requires.",
-      "suggested_fix": "Consider downgrading to roles/artifactregistry.writer which grants push but not delete/admin."
-    },
-    {
-      "type": "review_required",
       "target": "google_project_iam_member.deploy_storage",
       "reason": "Deploy SA has roles/storage.admin at project level, granting full control over all GCS buckets in the project.",
       "suggested_fix": "Scope to roles/storage.objectAdmin on specific buckets if deploy only needs to upload pipeline archives."
-    },
-    {
-      "type": "review_required",
-      "target": "google_project_iam_member.deploy_secrets",
-      "reason": "Deploy SA has project-wide roles/secretmanager.secretAccessor, granting read access to all secrets, not just granicus-related ones.",
-      "suggested_fix": "Use resource-level IAM (google_secret_manager_secret_iam_member) scoped to specific secrets, matching the engine SA pattern."
-    },
-    {
-      "type": "review_required",
-      "target": "google_project_iam_member.deploy_sa_user",
-      "reason": "Deploy SA has project-wide roles/iam.serviceAccountUser, allowing it to impersonate any SA in the project.",
-      "suggested_fix": "Scope to resource-level binding on only the engine SA using google_service_account_iam_member."
-    },
-    {
-      "type": "review_required",
-      "target": "google_service_account.deploy",
-      "reason": "Deploy SA accumulates 8 project-level IAM roles with several granting broader access than CI/CD strictly requires (admin roles, project-wide secret access, project-wide SA impersonation).",
-      "suggested_fix": "Audit each role: downgrade admin to writer/developer where possible, scope project-level bindings to specific resources."
     },
     {
       "type": "low_confidence",
@@ -1237,12 +1136,52 @@
       "target": "google_project_iam_member.engine_storage",
       "reason": "Engine SA has roles/storage.objectAdmin which includes delete permissions. If the engine only reads pipeline archives and writes backups, objectCreator+objectViewer may suffice.",
       "suggested_fix": "Evaluate whether the engine deletes objects from GCS. If not, downgrade to roles/storage.objectViewer + roles/storage.objectCreator."
-    },
-    {
-      "type": "low_confidence",
-      "target": "google_cloud_scheduler_job.prune",
-      "reason": "Prune scheduler job has no description attribute in Terraform state (empty string). Purpose inferred from .tf comment only.",
-      "suggested_fix": "Add a description attribute to the google_cloud_scheduler_job.prune resource in scheduler.tf."
     }
-  ]
+  ],
+  "change_summary": {
+    "resources_added": [
+      "google_service_account_iam_member.deploy_sa_user",
+      "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-analytehealth]",
+      "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-paternitylabs]"
+    ],
+    "resources_removed": [
+      "google_project_iam_member.engine_pubsub",
+      "google_project_iam_member.deploy_pubsub",
+      "google_project_iam_member.deploy_secrets",
+      "google_project_iam_member.deploy_sa_user"
+    ],
+    "resources_modified": [
+      "google_cloud_run_v2_service.engine (ingress: ALL -> INTERNAL_ONLY, removed GRANICUS_OPS_BUCKET env)",
+      "google_cloud_scheduler_job.prune (added description)",
+      "google_project_iam_member.deploy_artifact_registry (role: admin -> writer)"
+    ],
+    "edges_added": [],
+    "edges_removed": [
+      "infra_edge_016 (ops bucket — env var and edge removed)"
+    ],
+    "new_service_boundaries": [],
+    "new_code_bridge_gaps": [],
+    "resolved_code_bridge_gaps": [
+      "infra_edge_016 code_no_infra gap — resolved by removing the env var"
+    ],
+    "confidence_changes": [
+      "google_cloud_run_v2_service.engine: 0.92 -> 0.95 (internal-only ingress)",
+      "google_cloud_scheduler_job.prune: 0.80 -> 0.95 (description added)",
+      "google_project_iam_member.deploy_artifact_registry: 0.80 -> 0.92 (writer, not admin)",
+      "google_service_account.engine: 0.92 -> 0.95 (pubsub binding removed, description updated)",
+      "google_service_account.deploy: 0.90 -> 0.92 (permissions scoped down)"
+    ],
+    "new_flags": [],
+    "resolved_flags": [
+      "Cloud Run INGRESS_TRAFFIC_ALL (now INTERNAL_ONLY)",
+      "granicus-ops bucket env var (removed)",
+      "engine_pubsub IAM without Pub/Sub resources (removed)",
+      "deploy_pubsub IAM without Pub/Sub resources (removed)",
+      "deploy_artifact_registry admin role (downgraded to writer)",
+      "deploy_secrets project-wide secretAccessor (replaced with resource-scoped)",
+      "deploy_sa_user project-wide serviceAccountUser (replaced with resource-scoped)",
+      "deploy SA over-permissioned (8 roles reduced to 7, scoped down)",
+      "prune job missing description (added)"
+    ]
+  }
 }
