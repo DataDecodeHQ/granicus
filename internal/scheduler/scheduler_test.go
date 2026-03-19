@@ -10,6 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/source"
 )
 
 func newCronWithSeconds() *cron.Cron {
@@ -42,7 +43,7 @@ assets:
 `)
 
 	var runCount int32
-	s, err := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, err := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 	}, nil)
 	if err != nil {
@@ -78,7 +79,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	pipelines := s.Pipelines()
@@ -100,7 +101,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	// Add a new pipeline
@@ -147,7 +148,7 @@ assets:
 `)
 
 	var runCount int32
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 	}, nil)
 
@@ -183,7 +184,7 @@ assets:
 `)
 
 	var runCount int32
-	s, _ := NewScheduler(configDir, "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 		time.Sleep(2 * time.Second) // Hold lock for 2 seconds
 	}, nil)

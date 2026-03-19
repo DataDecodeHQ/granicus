@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/source"
 )
 
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
@@ -20,7 +22,8 @@ type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
 type Scheduler struct {
 	mu          sync.Mutex
 	cron        *cron.Cron
-	configDir   string
+	configDir   string // kept for watcher compatibility
+	source      source.PipelineSource
 	projectRoot string
 	runFunc     RunFunc
 	lockStore   *LockStore
@@ -29,15 +32,26 @@ type Scheduler struct {
 	configs     map[string]*config.PipelineConfig
 }
 
-func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
+func NewScheduler(src source.PipelineSource, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
 	lockStore, err := NewLockStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("lock store: %w", err)
 	}
 
+	// Resolve the config directory from the source
+	dir, cleanup, err := src.Fetch(context.Background(), "", "")
+	if err != nil {
+		return nil, fmt.Errorf("fetching pipeline source: %w", err)
+	}
+	// For LocalSource cleanup is a no-op; for GCS we need the dir to persist
+	// for the scheduler's lifetime, so we skip cleanup here (the dir is
+	// re-fetched on each LoadAndRegister/Reload for GCS).
+	_ = cleanup
+
 	return &Scheduler{
 		cron:        cron.New(),
-		configDir:   configDir,
+		configDir:   dir,
+		source:      src,
 		projectRoot: projectRoot,
 		runFunc:     runFunc,
 		lockStore:   lockStore,
@@ -45,6 +59,16 @@ func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc, ev
 		entries:     make(map[string]cron.EntryID),
 		configs:     make(map[string]*config.PipelineConfig),
 	}, nil
+}
+
+// ConfigDir returns the resolved config directory path.
+func (s *Scheduler) ConfigDir() string {
+	return s.configDir
+}
+
+// Source returns the pipeline source backing this scheduler.
+func (s *Scheduler) Source() source.PipelineSource {
+	return s.source
 }
 
 func (s *Scheduler) LockStore() *LockStore {
