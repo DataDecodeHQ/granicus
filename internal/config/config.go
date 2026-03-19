@@ -198,6 +198,7 @@ type PipelineConfig struct {
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
 	Alerts       *AlertRoutingConfig          `yaml:"alerts,omitempty"`
 	Prefix       string                       `yaml:"-"`
+	ConfigDir    string                       `yaml:"-"` // directory containing this config file
 }
 
 func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset string) string {
@@ -336,6 +337,8 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+
+	cfg.ConfigDir = filepath.Dir(path)
 
 	if cfg.Pipeline == "" {
 		return nil, fmt.Errorf("pipeline name is required")

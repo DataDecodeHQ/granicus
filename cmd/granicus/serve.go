@@ -312,7 +312,12 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		},
 	})
 
-	deps, directives, err := graph.ParseAllDirectives(cfg, projectRoot)
+	// Use config dir for source resolution when pipeline was fetched from GCS
+	parseRoot := projectRoot
+	if cfg.ConfigDir != "" {
+		parseRoot = cfg.ConfigDir
+	}
+	deps, directives, err := graph.ParseAllDirectives(cfg, parseRoot)
 	if err != nil {
 		slog.Error("dependency parse error", "run_id", runID, "error", err)
 		return
@@ -401,7 +406,12 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		})
 
 		if asset.Source != "" {
-			srcPath := filepath.Join(pr, asset.Source)
+			// Resolve source path: use config dir (GCS extraction) if set, else project root
+			sourceBase := pr
+			if cfg.ConfigDir != "" {
+				sourceBase = cfg.ConfigDir
+			}
+			srcPath := filepath.Join(sourceBase, asset.Source)
 			if hash, herr := events.HashFile(srcPath); herr == nil {
 				eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID)
 			}
@@ -449,10 +459,16 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			ResolvedSourceConn:    resolvedSourceConn,
 		}
 
+		// Use config dir for source resolution when pipeline was fetched from GCS
+		runRoot := pr
+		if cfg.ConfigDir != "" {
+			runRoot = cfg.ConfigDir
+		}
+
 		var r runner.NodeResult
 		if dispatch != nil && dispatch.Supports(ra.Type) {
 			var derr error
-			r, derr = dispatch.Execute(ctx, ra, pr, rid)
+			r, derr = dispatch.Execute(ctx, ra, runRoot, rid)
 			if derr != nil {
 				r = runner.NodeResult{
 					AssetName: ra.Name,
@@ -465,7 +481,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 				}
 			}
 		} else {
-			r = registry.Run(ra, pr, rid)
+			r = registry.Run(ra, runRoot, rid)
 		}
 
 		if r.Status == "success" {
