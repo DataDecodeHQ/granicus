@@ -59,7 +59,71 @@ func (s *GCSVersionedSource) versionsCol(pipeline string) *firestore.CollectionR
 }
 
 // Fetch downloads a pipeline version from GCS, extracts to a temp dir.
+// If pipeline is empty, fetches all pipelines with an active version
+// into subdirectories of a combined temp dir.
 func (s *GCSVersionedSource) Fetch(ctx context.Context, pipeline string, version string) (string, func(), error) {
+	if pipeline == "" {
+		return s.fetchAll(ctx)
+	}
+	return s.fetchOne(ctx, pipeline, version)
+}
+
+// fetchAll discovers all pipelines in Firestore and fetches each active one
+// into a subdirectory of a combined temp dir.
+func (s *GCSVersionedSource) fetchAll(ctx context.Context) (string, func(), error) {
+	// List all pipeline docs
+	iter := s.firestore.Collection("pipelines").Documents(ctx)
+	defer iter.Stop()
+
+	var pipelineNames []string
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("listing pipelines: %w", err)
+		}
+		pipelineNames = append(pipelineNames, doc.Ref.ID)
+	}
+
+	if len(pipelineNames) == 0 {
+		return "", nil, fmt.Errorf("no pipelines found in Firestore")
+	}
+
+	combinedDir, err := os.MkdirTemp("", "granicus-all-")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating combined temp dir: %w", err)
+	}
+
+	for _, name := range pipelineNames {
+		dir, cleanup, err := s.fetchOne(ctx, name, "")
+		if err != nil {
+			// Skip pipelines without an active version
+			continue
+		}
+		// Move contents into a subdirectory named after the pipeline
+		destDir := filepath.Join(combinedDir, name)
+		if rerr := os.Rename(dir, destDir); rerr != nil {
+			cleanup()
+			continue
+		}
+	}
+
+	// Verify at least one pipeline was fetched
+	entries, _ := os.ReadDir(combinedDir)
+	if len(entries) == 0 {
+		os.RemoveAll(combinedDir)
+		return "", nil, fmt.Errorf("no active pipelines found")
+	}
+
+	cleanup := func() {
+		os.RemoveAll(combinedDir)
+	}
+	return combinedDir, cleanup, nil
+}
+
+func (s *GCSVersionedSource) fetchOne(ctx context.Context, pipeline string, version string) (string, func(), error) {
 	var ver Version
 	var err error
 
@@ -209,6 +273,15 @@ func (s *GCSVersionedSource) Register(ctx context.Context, pipeline string, sour
 		FileCount:   fileCount,
 		SizeBytes:   sizeBytes,
 		Active:      false,
+	}
+
+	// Ensure pipeline parent doc exists (required for fetchAll discovery)
+	_, err = s.firestore.Collection("pipelines").Doc(pipeline).Set(ctx, map[string]any{
+		"name":       pipeline,
+		"updated_at": time.Now().UTC(),
+	}, firestore.MergeAll)
+	if err != nil {
+		return Version{}, fmt.Errorf("creating pipeline doc: %w", err)
 	}
 
 	docID := fmt.Sprintf("v%d", nextNum)

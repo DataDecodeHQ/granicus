@@ -156,6 +156,12 @@ func (f *FirestoreStateBackend) InvalidateAll(asset string) error {
 }
 
 func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]IntervalState, error) {
+	if f.pipeline == "" {
+		// Cross-pipeline orphan recovery not supported in Firestore yet;
+		// each pipeline's state backend handles its own orphans.
+		return nil, nil
+	}
+
 	if threshold <= 0 {
 		threshold = DefaultOrphanTimeout
 	}

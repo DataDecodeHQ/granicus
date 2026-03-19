@@ -109,9 +109,9 @@ func initPipelineSource(configDir string) (source.PipelineSource, error) {
 		return source.NewLocalSource(configDir), nil
 
 	case "gcs":
-		bucket := os.Getenv("GRANICUS_GCS_BUCKET")
+		bucket := os.Getenv("GRANICUS_PIPELINES_BUCKET")
 		if bucket == "" {
-			return nil, fmt.Errorf("GRANICUS_GCS_BUCKET is required when GRANICUS_PIPELINE_SOURCE=gcs")
+			return nil, fmt.Errorf("GRANICUS_PIPELINES_BUCKET is required when GRANICUS_PIPELINE_SOURCE=gcs")
 		}
 		return source.NewGCSVersionedSource(context.Background(), "", bucket)
 

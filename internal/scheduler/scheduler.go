@@ -257,6 +257,16 @@ func scanConfigDir(dir string) (map[string]*config.PipelineConfig, error) {
 	configs := make(map[string]*config.PipelineConfig)
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// Check subdirectory for pipeline.yaml (supports multi-pipeline dirs)
+			subPath := filepath.Join(dir, entry.Name(), "pipeline.yaml")
+			if _, serr := os.Stat(subPath); serr == nil {
+				cfg, cerr := config.LoadConfig(subPath)
+				if cerr != nil {
+					slog.Warn("scheduler skipping config", "file", subPath, "error", cerr)
+					continue
+				}
+				configs[cfg.Pipeline] = cfg
+			}
 			continue
 		}
 		name := entry.Name()
