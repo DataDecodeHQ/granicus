@@ -529,6 +529,7 @@ def collect_go_files(root_path: str) -> tuple[list[Path], list[Path]]:
     return source, tests
 
 
+# dag:boundary
 def run_pipeline(root_path: str, warn_only: bool = False,
                  output_json: bool = False) -> int:
     """

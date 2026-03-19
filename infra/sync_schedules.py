@@ -13,6 +13,7 @@ OUTPUT_FILE = Path(__file__).resolve().parent / "pipelines.auto.tfvars.json"
 REQUIRED_FIELDS = ("pipeline", "client", "schedule")
 
 
+# dag:boundary
 def main() -> int:
     """Read pipeline.yaml files and write schedule data to Terraform tfvars."""
     errors: list[str] = []

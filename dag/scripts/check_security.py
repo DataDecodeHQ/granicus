@@ -18,9 +18,12 @@ Usage:
 
 import sys
 import json
+import logging
 import argparse
 from pathlib import Path
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
@@ -59,13 +62,13 @@ def load_dag(path: Path, name: str) -> dict:
     """Load a DAG JSON file, exit with a helpful message if missing."""
     if not path.exists():
         dag_type = "code" if "static" in path.name else "infra"
-        print(f"\n  ✗ {name} not found at {path}")
-        print(f"    Run: python scripts/run_dag_agent.py --type {dag_type}")
+        logger.info(f"\n  ✗ {name} not found at {path}")
+        logger.info(f"    Run: python scripts/run_dag_agent.py --type {dag_type}")
         sys.exit(1)
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        print(f"\n  ✗ Could not parse {name}: {e}")
+        logger.info(f"\n  ✗ Could not parse {name}: {e}")
         sys.exit(1)
 
 
@@ -395,6 +398,7 @@ def check_code_no_infra_external_calls(
 # Runner and report
 # ─────────────────────────────────────────────
 
+# dag:boundary
 def print_report(result: SecurityCheckResult, warn_only: bool) -> int:
     """Print the findings report. Returns exit code."""
     critical = result.by_level("CRITICAL")

@@ -37,11 +37,14 @@ Output:
 import os
 import sys
 import json
+import logging
 import argparse
 import subprocess
 import shutil
 from pathlib import Path
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
@@ -112,9 +115,9 @@ def git_commit_dag(dag_type: str, commit_hash: str, message: str) -> None:
             cwd=REPO_ROOT,
             check=True
         )
-        print(f"\n  ✓ Committed DAG update: {commit_msg}")
+        logger.info(f"\n  ✓ Committed DAG update: {commit_msg}")
     except subprocess.CalledProcessError as e:
-        print(f"\n  ⚠ Git commit failed (DAG files written but not committed): {e}")
+        logger.info(f"\n  ⚠ Git commit failed (DAG files written but not committed): {e}")
 
 
 # ─────────────────────────────────────────────
@@ -252,10 +255,10 @@ def build_security_context() -> str:
     sections: list[str] = []
 
     if not CODE_DAG_FILE.exists():
-        print("  ✗ static_dag.json not found — run: python scripts/run_dag_agent.py --type code")
+        logger.info("  ✗ static_dag.json not found — run: python scripts/run_dag_agent.py --type code")
         sys.exit(1)
     if not INFRA_DAG_FILE.exists():
-        print("  ✗ infrastructure_dag.json not found — run: python scripts/run_dag_agent.py --type infra")
+        logger.info("  ✗ infrastructure_dag.json not found — run: python scripts/run_dag_agent.py --type infra")
         sys.exit(1)
 
     code_dag = json.loads(CODE_DAG_FILE.read_text(encoding="utf-8"))
@@ -265,9 +268,9 @@ def build_security_context() -> str:
     functions = code_dag.get("functions", {})
     annotated = sum(1 for f in functions.values() if "security" in f)
     if annotated == 0:
-        print("  ⚠  Static DAG has no security annotations.")
-        print("     The security review will have limited coverage.")
-        print("     Re-run: python scripts/run_dag_agent.py --type code")
+        logger.info("  ⚠  Static DAG has no security annotations.")
+        logger.info("     The security review will have limited coverage.")
+        logger.info("     Re-run: python scripts/run_dag_agent.py --type code")
 
     sections.append("## Static Code DAG (with security annotations)\n```json")
     sections.append(json.dumps(code_dag, indent=2))
@@ -294,7 +297,7 @@ def run_agent(system_prompt: str, user_context: str) -> str:
     try:
         import anthropic
     except ImportError:
-        print("\n  ✗ anthropic package not found. Run: pip install anthropic")
+        logger.info("\n  ✗ anthropic package not found. Run: pip install anthropic")
         sys.exit(1)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -308,13 +311,13 @@ def run_agent(system_prompt: str, user_context: str) -> str:
                     break
 
     if not api_key:
-        print("\n  ✗ ANTHROPIC_API_KEY not set. Set it in your environment or .env file.")
+        logger.info("\n  ✗ ANTHROPIC_API_KEY not set. Set it in your environment or .env file.")
         sys.exit(1)
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    print(f"  → Calling {MODEL}...")
-    print(f"  → Context size: ~{len(user_context) // 4} tokens (estimated)")
+    logger.info(f"  → Calling {MODEL}...")
+    logger.info(f"  → Context size: ~{len(user_context) // 4} tokens (estimated)")
 
     message = client.messages.create(
         model=MODEL,
@@ -389,7 +392,7 @@ def save_dag(
     if current_file.exists() and not dry_run:
         archive_path = HISTORY_DIR / f"{dag_name}_{commit_hash}_prev.json"
         shutil.copy2(current_file, archive_path)
-        print(f"  → Archived previous DAG to {archive_path.relative_to(REPO_ROOT)}")
+        logger.info(f"  → Archived previous DAG to {archive_path.relative_to(REPO_ROOT)}")
 
     # Save new version
     dag_json = json.dumps(dag_data, indent=2)
@@ -397,7 +400,7 @@ def save_dag(
     if dry_run:
         dry_path = DAG_DIR / f"{dag_name}_dry_run.json"
         dry_path.write_text(dag_json, encoding="utf-8")
-        print(f"  → Dry run: wrote to {dry_path.relative_to(REPO_ROOT)}")
+        logger.info(f"  → Dry run: wrote to {dry_path.relative_to(REPO_ROOT)}")
     else:
         DAG_DIR.mkdir(parents=True, exist_ok=True)
         HISTORY_DIR.mkdir(parents=True, exist_ok=True)
@@ -407,8 +410,8 @@ def save_dag(
         versioned_path = HISTORY_DIR / f"{dag_name}_{commit_hash}.json"
         versioned_path.write_text(dag_json, encoding="utf-8")
 
-        print(f"  → Saved DAG to {current_file.relative_to(REPO_ROOT)}")
-        print(f"  → Saved versioned copy to {versioned_path.relative_to(REPO_ROOT)}")
+        logger.info(f"  → Saved DAG to {current_file.relative_to(REPO_ROOT)}")
+        logger.info(f"  → Saved versioned copy to {versioned_path.relative_to(REPO_ROOT)}")
 
     # Save change summary diff if present
     if "change_summary" in dag_data and not dry_run:
@@ -417,7 +420,7 @@ def save_dag(
             json.dumps(dag_data["change_summary"], indent=2),
             encoding="utf-8"
         )
-        print(f"  → Saved change summary to {diff_path.relative_to(REPO_ROOT)}")
+        logger.info(f"  → Saved change summary to {diff_path.relative_to(REPO_ROOT)}")
 
 
 def print_summary(dag_data: dict, dag_type: str) -> None:
@@ -520,10 +523,10 @@ def main() -> int:
     args = parser.parse_args()
 
     commit_hash = get_current_commit()
-    print(f"\n  DAG Agent Runner")
-    print(f"  Type    : {args.type}")
-    print(f"  Commit  : {commit_hash}")
-    print(f"  Mode    : {'dry run' if args.dry_run else 'diff' if args.diff_mode else 'full'}")
+    logger.info(f"\n  DAG Agent Runner")
+    logger.info(f"  Type    : {args.type}")
+    logger.info(f"  Commit  : {commit_hash}")
+    logger.info(f"  Mode    : {'dry run' if args.dry_run else 'diff' if args.diff_mode else 'full'}")
 
     # Load the agent prompt
     prompt_file_map = {
@@ -533,22 +536,22 @@ def main() -> int:
     }
     prompt_file = prompt_file_map[args.type]
     if not prompt_file.exists():
-        print(f"\n  ✗ Prompt file not found: {prompt_file}")
-        print(f"    Copy the agent .md files to {PROMPTS_DIR}/")
+        logger.info(f"\n  ✗ Prompt file not found: {prompt_file}")
+        logger.info(f"    Copy the agent .md files to {PROMPTS_DIR}/")
         return 1
 
     system_prompt = prompt_file.read_text(encoding="utf-8")
-    print(f"\n  → Loaded prompt from {prompt_file.relative_to(REPO_ROOT)}")
+    logger.info(f"\n  → Loaded prompt from {prompt_file.relative_to(REPO_ROOT)}")
 
     # Build context
-    print(f"  → Building context...")
+    logger.info(f"  → Building context...")
     if args.type == "code":
         changed_files = None
         if args.diff_mode and CODE_DAG_FILE.exists():
             prev_dag = json.loads(CODE_DAG_FILE.read_text())
             prev_commit = prev_dag.get("version", "HEAD~1")
             changed_files = get_changed_files(prev_commit)
-            print(f"  → Diff mode: {len(changed_files)} changed files since {prev_commit}")
+            logger.info(f"  → Diff mode: {len(changed_files)} changed files since {prev_commit}")
         context = build_code_context(changed_files)
     elif args.type == "infra":
         context = build_infra_context()
@@ -556,11 +559,11 @@ def main() -> int:
         context = build_security_context()
 
     # Run the agent
-    print(f"\n  → Running agent...")
+    logger.info(f"\n  → Running agent...")
     try:
         raw_response = run_agent(system_prompt, context)
     except Exception as e:
-        print(f"\n  ✗ Agent call failed: {e}")
+        logger.info(f"\n  ✗ Agent call failed: {e}")
         return 1
 
     # Save raw response for debugging
@@ -570,14 +573,14 @@ def main() -> int:
         raw_path.write_text(raw_response, encoding="utf-8")
 
     # Extract JSON
-    print(f"  → Extracting DAG from response...")
+    logger.info(f"  → Extracting DAG from response...")
     try:
         dag_data = extract_json_from_response(raw_response)
     except ValueError as e:
-        print(f"\n  ✗ {e}")
+        logger.info(f"\n  ✗ {e}")
         if not args.dry_run:
             raw_path.write_text(raw_response, encoding="utf-8")
-            print(f"    Raw response saved to {raw_path.relative_to(REPO_ROOT)}")
+            logger.info(f"    Raw response saved to {raw_path.relative_to(REPO_ROOT)}")
         return 1
 
     # Add version metadata if agent didn't include it
