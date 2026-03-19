@@ -18,7 +18,7 @@ locals {
 # --- Secrets: one per access point that has a secret_id ---
 
 resource "google_secret_manager_secret" "client_sa" {
-  for_each  = { for k, v in local.access_points : k => v if v.secret_id != null }
+  for_each    = { for k, v in local.access_points : k => v if v.secret_id != null }
   secret_id = each.value.secret_id
   project   = var.project_id
 
@@ -29,10 +29,12 @@ resource "google_secret_manager_secret" "client_sa" {
   labels = {
     service = "granicus"
     client  = each.value.client
+    "purpose" = "client-sa-key"
   }
 }
 
 resource "google_secret_manager_secret_iam_member" "engine_client_sa" {
+  # description: Grants engine SA read access to client secret for pipeline auth
   for_each  = google_secret_manager_secret.client_sa
   secret_id = each.value.secret_id
   project   = var.project_id
@@ -40,15 +42,25 @@ resource "google_secret_manager_secret_iam_member" "engine_client_sa" {
   member    = "serviceAccount:${google_service_account.engine.email}"
 }
 
+resource "google_secret_manager_secret_iam_member" "deploy_client_sa" {
+  # description: Grants deploy SA read access to client secrets for CI/CD provisioning
+  for_each  = google_secret_manager_secret.client_sa
+  secret_id = each.value.secret_id
+  project   = var.project_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.deploy.email}"
+}
+
 # --- Scheduler jobs: one per pipeline (from pipeline.yaml via sync script) ---
 
 resource "google_cloud_scheduler_job" "pipeline" {
-  for_each  = var.pipeline_schedules
-  name      = "granicus-${replace(each.key, "_", "-")}"
-  project   = var.project_id
-  region    = var.region
-  schedule  = each.value.schedule
-  time_zone = "UTC"
+  for_each    = var.pipeline_schedules
+  name        = "granicus-${replace(each.key, "_", "-")}"
+  project     = var.project_id
+  region      = var.region
+  schedule    = each.value.schedule
+  time_zone   = "UTC"
+  description = "Triggers Granicus pipeline ${each.key} on schedule (${each.value.schedule})"
 
   http_target {
     uri         = "${google_cloud_run_v2_service.engine.uri}/api/v1/pipelines/${each.key}/trigger"

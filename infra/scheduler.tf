@@ -19,11 +19,12 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
 
 resource "google_cloud_scheduler_job" "prune" {
   # description: nightly cleanup of stale runs and old data
-  name      = "granicus-prune"
-  project   = var.project_id
-  region    = var.region
-  schedule  = var.schedule_prune
-  time_zone = "UTC"
+  name        = "granicus-prune"
+  project     = var.project_id
+  region      = var.region
+  schedule    = var.schedule_prune
+  time_zone   = "UTC"
+  description = "Nightly cleanup of stale Firestore runs and old data"
 
   http_target {
     uri         = "${google_cloud_run_v2_service.engine.uri}/api/v1/admin/prune"

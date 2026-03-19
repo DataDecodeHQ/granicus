@@ -3,7 +3,7 @@ resource "google_cloud_run_v2_service" "engine" {
   name     = var.engine_service_name
   project  = var.project_id
   location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     scaling {
@@ -55,10 +55,6 @@ resource "google_cloud_run_v2_service" "engine" {
       env {
         name  = "GRANICUS_PIPELINES_BUCKET"
         value = var.pipelines_bucket
-      }
-      env {
-        name  = "GRANICUS_OPS_BUCKET"
-        value = "granicus-ops"
       }
       env {
         name  = "GRANICUS_PIPELINE_SOURCE"
