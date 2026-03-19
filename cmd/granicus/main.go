@@ -37,7 +37,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/validate"
 )
 
-var version = "0.2.0"
+const version = "0.2.0"
 
 var (
 	greenCheck  = color.New(color.FgGreen).Sprint("\u2713")
@@ -508,7 +508,7 @@ func runDryRun(g *graph.Graph, cfg *config.PipelineConfig, assetFilter []string,
 	var stateStore *state.Store
 	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
 	if _, statErr := os.Stat(stateDBPath); statErr == nil {
-		stateStore, _ = state.New(stateDBPath)
+		stateStore, _ = state.New(stateDBPath) // dag:intentional -- read-only fallback, missing state DB is expected
 		if stateStore != nil {
 			defer stateStore.Close()
 		}
@@ -1877,7 +1877,7 @@ func buildPoolManager(cfg *config.PipelineConfig) (*pool.PoolManager, map[string
 	for name, pc := range cfg.Pools {
 		var timeout time.Duration
 		if pc.Timeout != "" {
-			timeout, _ = time.ParseDuration(pc.Timeout) // already validated in LoadConfig
+			timeout, _ = time.ParseDuration(pc.Timeout) // dag:intentional -- timeout format already validated during config load
 		}
 		poolConfigs[name] = pool.PoolConfig{
 			Slots:         pc.Slots,
@@ -1911,6 +1911,7 @@ func parseDuration(s string) (time.Duration, error) {
 	return 0, fmt.Errorf("invalid duration: %q (use e.g., 24h, 7d, 30d)", s)
 }
 
+// dag:boundary
 func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 	return func(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *executor.RunResult) error {
 		monitorCfgPath := filepath.Join(projectRoot, "monitoring.yaml")
@@ -1983,19 +1984,23 @@ func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
 			continue
 		}
 		var opts []option.ClientOption
+		credMethod := "default"
 		if creds := conn.Properties["credentials"]; creds != "" {
 			opts = append(opts, option.WithCredentialsFile(creds))
+			credMethod = "file"
 		}
 		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
 		if err != nil {
 			slog.Warn("could not create BQ client for context", "error", err)
 			return nil
 		}
+		slog.Info("credential_access", "event", "bq_client_create", "connection", conn.Name, "credential_method", credMethod)
 		return client
 	}
 	return nil
 }
 
+// dag:boundary
 func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID string) error {
 	ctx := context.Background()
 

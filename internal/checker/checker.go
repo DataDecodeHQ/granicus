@@ -8,6 +8,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// GenerateCheckNodes creates graph nodes and dependency edges for all explicitly defined asset checks.
 func GenerateCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)

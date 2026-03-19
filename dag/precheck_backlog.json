@@ -1,0 +1,366 @@
+{
+  "generated_at": "2026-03-19T00:00:00Z",
+  "source": "dag/scripts/check_codebase.py",
+  "summary": {
+    "total_failures": 51,
+    "total_warnings": 399,
+    "actionable_failures": 19,
+    "false_positive_failures": 23,
+    "needs_input_failures": 9,
+    "languages": ["go", "python"]
+  },
+
+  "needs_user_input": [
+    {
+      "id": "INPUT-01",
+      "question": "Should boundary-layer packages be exempt from INLINE_SIDE_EFFECT checks?",
+      "context": "23 of 42 Go failures are in packages whose entire purpose IS the database/Firestore boundary: internal/state/ (13 failures), internal/events/store.go (5), internal/scheduler/lock.go (4), internal/monitor/business.go:toFloat64 (1). These functions ARE the named boundary — the checker flags them because it doesn't know they're the boundary layer.",
+      "options": [
+        "A: Add a directive/annotation (e.g. `// dag:boundary`) to exempt these functions and update the checker",
+        "B: Add package-level exemptions to the checker config (e.g. internal/state, internal/events)",
+        "C: Restructure so each package has an explicit thin `repo.go` or `store.go` with ONLY raw DB calls, and other functions in the package call those"
+      ],
+      "recommendation": "A — lowest churn. The functions are already well-structured boundary functions on receiver types. A directive marks intent explicitly for the static DAG agent.",
+      "affected_count": 23,
+      "affected_files": [
+        "internal/state/firestore.go (9 — intervalsCol, MarkInProgress, MarkComplete, MarkFailed, RecoverOrphans, ListEvents, lockRef, AcquireLock, ReleaseLock)",
+        "internal/state/sqlite.go (4 — MarkInProgress, MarkComplete, MarkFailed, InvalidateAll)",
+        "internal/state/state.go (1 — RecoverOrphans)",
+        "internal/events/store.go (2 — Emit, EmitBatch)",
+        "internal/events/models.go (3 — RecordModelVersion, emitUnlocked, ListModels)",
+        "internal/scheduler/lock.go (4 — AcquireLock, ReleaseLock, IsLocked, RecoverStaleLocks)"
+      ]
+    },
+    {
+      "id": "INPUT-02",
+      "question": "Should source package Firestore/GCS calls be restructured or exempted?",
+      "context": "internal/source/gcs_versioned.go has 6 failures across versionsCol, List, Register (file_io + GCS + Firestore), Activate. This is a boundary package that talks to GCS and Firestore as its core responsibility. Same question as INPUT-01 but for a multi-backend boundary.",
+      "options": [
+        "A: Exempt with directive (same as INPUT-01)",
+        "B: Extract a thin GCSClient and FirestoreVersionStore that own raw calls, have gcs_versioned.go orchestrate through them"
+      ],
+      "recommendation": "A for now, B later as a cleanup. Register() does file_io + GCS + Firestore in sequence which is a legitimate mixed-responsibility signal, but splitting it is a design task not a pre-check fix.",
+      "affected_count": 6,
+      "affected_files": [
+        "internal/source/gcs_versioned.go (6 — versionsCol, List, Register x3, Activate)"
+      ]
+    },
+    {
+      "id": "INPUT-03",
+      "question": "Fix scope: should examples/ and scripts/ be included in the fix pass?",
+      "context": "9 Python failures are in examples/mixed_pipeline/ (2) and scripts/test_dlt_extract.py (6) and dag/scripts/check_codebase.py (1). These are tooling/example code, not the core pipeline.",
+      "options": [
+        "A: Fix everything — examples should model best practices",
+        "B: Fix scripts/, skip examples/ — examples are illustrative, not production",
+        "C: Skip both — focus on internal/ and cmd/ only"
+      ],
+      "recommendation": "B — scripts/ is operational code. Examples are documentation.",
+      "affected_count": 9
+    },
+    {
+      "id": "INPUT-04",
+      "question": "SWALLOWED_ERROR in executePipeline: are these intentional fire-and-forget?",
+      "context": "cmd/granicus/serve.go:executePipeline has 7 swallowed errors. This is the main pipeline execution path in the server. Need to verify whether these are intentional 'log and continue' patterns or genuine gaps.",
+      "options": [
+        "A: Audit each one and either handle or add // dag:intentional comment",
+        "B: Wrap all in a helper that logs + continues, making intent explicit"
+      ],
+      "recommendation": "A — need to read each case.",
+      "affected_count": 7,
+      "affected_files": ["cmd/granicus/serve.go"]
+    }
+  ],
+
+  "fix_waves": [
+    {
+      "wave": 1,
+      "name": "Mechanical failures — clear fixes, no design decisions",
+      "items": [
+        {
+          "rule": "INLINE_SIDE_EFFECT_DATABASE",
+          "scope": "cmd/granicus/main.go",
+          "functions": ["monitorHook (L1914)", "ensureDatasets (L2023)"],
+          "fix": "Extract the direct db.Exec/QueryRow calls into named boundary functions (e.g. insertMonitorSnapshot, createDatasetIfNotExists) in the same file or a nearby helper. The orchestrator calls the boundary function instead of inlining SQL.",
+          "complexity": "low",
+          "count": 2
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_FILE_IO",
+          "scope": "internal/checker/completeness_checks.go",
+          "functions": ["completenessSQL (L53)"],
+          "fix": "This reads a SQL file from disk. Extract to a named function like readSQLFile() or loadCompletenessTemplate().",
+          "complexity": "low",
+          "count": 1
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_FILE_IO + DATABASE",
+          "scope": "internal/doctor/doctor.go",
+          "functions": ["checkStateDB (L142 file_io, L161 database)"],
+          "fix": "checkStateDB does stat + db ping inline. Extract fileExists() and pingDB() boundary helpers.",
+          "complexity": "low",
+          "count": 2
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_FILE_IO",
+          "scope": "internal/gc/gc.go",
+          "functions": ["Collect (L57)"],
+          "fix": "Extract file removal into a named boundary function (e.g. removeFile or removeOldArchives).",
+          "complexity": "low",
+          "count": 1
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_FILE_IO",
+          "scope": "internal/source/archive.go",
+          "functions": ["extractTarGz (L131)"],
+          "fix": "This IS a file I/O function — candidate for boundary exemption or rename to make boundary role explicit.",
+          "complexity": "low",
+          "count": 1
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_DATABASE",
+          "scope": "internal/monitor/business.go",
+          "functions": ["toFloat64 (L269)"],
+          "fix": "toFloat64 converts a BQ result to float64 — the DB call is a query execution. Extract to a named query function.",
+          "complexity": "low",
+          "count": 1
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_DATABASE",
+          "scope": "internal/testmode/",
+          "functions": ["CaptureMetadata (L33)", "captureTableMetadata (L61)", "DropTestDataset (L54)", "ListTestDatasets (L82)"],
+          "fix": "These make direct BQ API calls. Since testmode is a utility package (not the state layer), extract boundary functions for each BQ operation.",
+          "complexity": "medium",
+          "count": 4
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_FILE_IO",
+          "scope": "internal/testmode/summary.go",
+          "functions": ["FormatSummary (L31)"],
+          "fix": "Extract file write into a named boundary function.",
+          "complexity": "low",
+          "count": 1
+        }
+      ],
+      "total_fixes": 13
+    },
+    {
+      "wave": 2,
+      "name": "Boundary-layer exemptions (depends on INPUT-01/02 decision)",
+      "items": [
+        {
+          "rule": "INLINE_SIDE_EFFECT_FIRESTORE",
+          "scope": "internal/state/firestore.go",
+          "count": 9,
+          "fix_if_A": "Add // dag:boundary directive above each flagged function",
+          "fix_if_C": "Extract raw Firestore calls to a firestoreRepo type, have FirestoreStateBackend call it"
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_DATABASE",
+          "scope": "internal/state/sqlite.go + state.go",
+          "count": 5,
+          "fix_if_A": "Add // dag:boundary directive",
+          "fix_if_C": "Extract raw SQL to a sqliteRepo type"
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_DATABASE",
+          "scope": "internal/events/store.go + models.go",
+          "count": 5,
+          "fix_if_A": "Add // dag:boundary directive",
+          "fix_if_C": "Split into events/repo.go for raw SQL, events/store.go for orchestration"
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_DATABASE",
+          "scope": "internal/scheduler/lock.go",
+          "count": 4,
+          "fix_if_A": "Add // dag:boundary directive",
+          "fix_if_C": "LockStore is already thin — exemption is the right call"
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_FIRESTORE + GCS + FILE_IO",
+          "scope": "internal/source/gcs_versioned.go",
+          "count": 6,
+          "fix_if_A": "Add // dag:boundary directive to each",
+          "fix_if_B": "Extract GCSClient + FirestoreVersionStore, have gcs_versioned orchestrate"
+        }
+      ],
+      "total_fixes": 29
+    },
+    {
+      "wave": 3,
+      "name": "Python failures (depends on INPUT-03 decision)",
+      "items": [
+        {
+          "rule": "MODULE_LEVEL_LOGIC",
+          "scope": "dag/scripts/check_codebase.py",
+          "functions": ["<module> (L25)"],
+          "fix": "Wrap module-level code in if __name__ == '__main__': guard or a main() function.",
+          "complexity": "low",
+          "count": 1
+        },
+        {
+          "rule": "UNTYPED_RETURN + UNTYPED_PARAM + INLINE_SIDE_EFFECT_FILE_IO",
+          "scope": "scripts/test_dlt_extract.py",
+          "functions": ["write_metadata", "mock_run", "real_run", "sample_data"],
+          "fix": "Add type annotations to all functions. Extract file write in write_metadata to a boundary.",
+          "complexity": "low",
+          "count": 6
+        },
+        {
+          "rule": "UNTYPED_RETURN + INLINE_SIDE_EFFECT_FILE_IO",
+          "scope": "examples/mixed_pipeline/python/clean_api_data.py",
+          "functions": ["main"],
+          "fix": "Add return type annotation, extract file I/O.",
+          "complexity": "low",
+          "count": 2
+        }
+      ],
+      "total_fixes": 9
+    },
+    {
+      "wave": 4,
+      "name": "Warning fixes — MISSING_GODOC (bulk, mechanical)",
+      "items": [
+        {
+          "rule": "MISSING_GODOC",
+          "scope": "all Go packages",
+          "fix": "Add godoc comments to all 185 exported functions. Pattern: '// FuncName does X.' on the line above. Can be done per-package in batches. This is the highest-count issue but purely mechanical.",
+          "complexity": "low (tedious)",
+          "count": 185,
+          "packages_affected": [
+            "internal/config/ (14)",
+            "internal/events/ (11)",
+            "internal/runner/ (17)",
+            "internal/pool/ (8)",
+            "internal/scheduler/ (10)",
+            "internal/server/ (5)",
+            "internal/graph/ (7)",
+            "internal/validate/ (6)",
+            "internal/monitor/ (8)",
+            "internal/context/ (2)",
+            "internal/backup/ (2)",
+            "internal/checker/ (9)",
+            "internal/state/ (9)",
+            "internal/testmode/ (5)",
+            "internal/executor/ (3)",
+            "internal/gc/ (1)",
+            "internal/rerun/ (1)",
+            "internal/source/ (0 — already documented)"
+          ]
+        }
+      ],
+      "total_fixes": 185
+    },
+    {
+      "wave": 5,
+      "name": "Warning fixes — HIGH_LINE_COUNT (needs decomposition planning)",
+      "items": [
+        {
+          "rule": "HIGH_LINE_COUNT",
+          "scope": "Go — critical (>100 lines)",
+          "functions": [
+            "cmd/granicus/main.go:runRun (460 lines) — main pipeline execution, needs major decomposition",
+            "cmd/granicus/main.go:runValidate (206 lines) — validation orchestrator",
+            "cmd/granicus/main.go:main (147 lines) — CLI setup",
+            "cmd/granicus/main.go:runDryRun (124 lines)",
+            "cmd/granicus/main.go:buildRegistry (103 lines)",
+            "internal/events/models.go:RecordModelVersion (110 lines)"
+          ],
+          "fix": "Each needs individual decomposition. runRun is the priority — 460 lines with 8 params is a clear mixed-responsibility signal.",
+          "complexity": "high",
+          "count": 6
+        },
+        {
+          "rule": "HIGH_LINE_COUNT",
+          "scope": "Go — moderate (50-100 lines)",
+          "functions_count": 56,
+          "fix": "Many of these are 52-70 lines — borderline. Prioritize ones that also have other warnings (HIGH_PARAM_COUNT, SWALLOWED_ERROR).",
+          "complexity": "medium"
+        },
+        {
+          "rule": "HIGH_LINE_COUNT",
+          "scope": "Python",
+          "functions_count": 19,
+          "fix": "Mostly in dag/scripts/ tooling. Lower priority than Go core.",
+          "complexity": "medium"
+        }
+      ],
+      "total_fixes": 81
+    },
+    {
+      "wave": 6,
+      "name": "Warning fixes — structural quality",
+      "items": [
+        {
+          "rule": "PACKAGE_LEVEL_VAR",
+          "scope": "all Go packages",
+          "count": 37,
+          "fix": "Audit each. Many are likely regex patterns, error sentinels, or default configs that should be const or passed as params. Regexes compiled at package level are acceptable (const-like). True mutable state should be refactored to pass through constructors.",
+          "complexity": "medium — needs case-by-case audit"
+        },
+        {
+          "rule": "HIGH_PARAM_COUNT",
+          "scope": "all Go packages",
+          "count": 18,
+          "fix": "Introduce options/config structs for functions with >5 params. Group related params. Priority: runDryRun(8), buildRunJSON(8), executePipeline(6+).",
+          "complexity": "medium"
+        },
+        {
+          "rule": "SWALLOWED_ERROR",
+          "scope": "all Go packages",
+          "count": 17,
+          "fix": "Audit each. Options: (a) handle the error, (b) add // dag:intentional if fire-and-forget is correct, (c) propagate. executePipeline in serve.go has 7 alone — see INPUT-04.",
+          "complexity": "medium — needs case-by-case audit"
+        },
+        {
+          "rule": "INIT_FUNCTION",
+          "scope": "Go",
+          "count": 3,
+          "fix": "Review cmd/granicus/serve.go:init, internal/runner/gcs_ingest_runner.go:init, internal/server/metrics.go:init. Move init logic to explicit constructor calls where possible.",
+          "complexity": "low"
+        }
+      ],
+      "total_fixes": 75
+    },
+    {
+      "wave": 7,
+      "name": "Warning fixes — Python documentation + logging",
+      "items": [
+        {
+          "rule": "MISSING_DOCSTRING",
+          "scope": "Python",
+          "count": 17,
+          "fix": "Add docstrings to all flagged Python functions. Mechanical.",
+          "complexity": "low"
+        },
+        {
+          "rule": "INLINE_SIDE_EFFECT_LOGGING",
+          "scope": "Python",
+          "count": 16,
+          "fix": "Warning only. These are dag/scripts/ tooling functions that log as part of their job. No action needed unless you want structured logging.",
+          "complexity": "skip"
+        },
+        {
+          "rule": "SHELL_BOUNDARY_MARKER / SQL_BOUNDARY_MARKER",
+          "scope": "Python + boundary files",
+          "count": 22,
+          "fix": "Informational only. These feed into the static DAG as boundary markers. No code fix needed.",
+          "complexity": "skip"
+        }
+      ],
+      "total_fixes": 55
+    }
+  ],
+
+  "execution_order": [
+    "1. Get user input on INPUT-01 through INPUT-04",
+    "2. Wave 1 — mechanical failure fixes (13 items, no dependencies)",
+    "3. Wave 2 — boundary exemptions based on INPUT-01/02 answer (29 items)",
+    "4. Wave 3 — Python failures based on INPUT-03 answer (9 items)",
+    "5. Wave 4 — MISSING_GODOC bulk pass (185 items, can be parallelized by package)",
+    "6. Wave 5 — HIGH_LINE_COUNT decomposition (81 items, start with critical 6)",
+    "7. Wave 6 — structural quality fixes (75 items, case-by-case)",
+    "8. Wave 7 — Python docs + skip logging/boundary markers (55 items, mostly skip)",
+    "9. Re-run check_codebase.py to verify 0 failures",
+    "10. Run static DAG analysis agent"
+  ]
+}

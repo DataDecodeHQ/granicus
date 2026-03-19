@@ -41,6 +41,7 @@ type Graph struct {
 	RootNodes []string
 }
 
+// BuildGraph constructs a dependency graph from asset inputs and dependency mappings, detecting cycles.
 func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 	g := &Graph{
 		Assets: make(map[string]*Asset),
@@ -182,6 +183,7 @@ func (g *Graph) dfs(node string, color map[string]int, parent map[string]string)
 	return ""
 }
 
+// TopologicalSort returns asset names in dependency order using Kahn's algorithm.
 func (g *Graph) TopologicalSort() []string {
 	inDegree := make(map[string]int)
 	for name := range g.Assets {
@@ -218,6 +220,7 @@ func (g *Graph) TopologicalSort() []string {
 	return result
 }
 
+// Descendants returns all transitive downstream dependents of the named asset.
 func (g *Graph) Descendants(name string) []string {
 	visited := make(map[string]bool)
 	g.collectDescendants(name, visited)
@@ -240,6 +243,7 @@ func (g *Graph) collectDescendants(name string, visited map[string]bool) {
 	}
 }
 
+// Subgraph returns all target assets and their transitive upstream ancestors.
 func (g *Graph) Subgraph(targets []string) []string {
 	visited := make(map[string]bool)
 	for _, t := range targets {
@@ -263,6 +267,7 @@ func (g *Graph) collectAncestors(name string, visited map[string]bool) {
 	}
 }
 
+// DownstreamSubgraph returns all target assets and their transitive downstream dependents.
 func (g *Graph) DownstreamSubgraph(targets []string) []string {
 	visited := make(map[string]bool)
 	for _, t := range targets {

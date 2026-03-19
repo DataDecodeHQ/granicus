@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ type GCSIngestRunner struct {
 	Timeout          time.Duration
 }
 
+// NewGCSIngestRunner creates a GCSIngestRunner with the given source and destination connections.
 func NewGCSIngestRunner(srcConn, destConn *config.ConnectionConfig) *GCSIngestRunner {
 	return &GCSIngestRunner{
 		SourceConnection: srcConn,
@@ -22,6 +22,7 @@ func NewGCSIngestRunner(srcConn, destConn *config.ConnectionConfig) *GCSIngestRu
 	}
 }
 
+// Run executes a GCS ingest operation by delegating to a subprocess with GCS environment variables.
 func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -133,6 +134,3 @@ func parseMetaLines(stdout string) map[string]string {
 	return meta
 }
 
-func init() {
-	_ = fmt.Sprintf // ensure fmt imported
-}

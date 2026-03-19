@@ -10,7 +10,9 @@ INPUT = Path("/tmp/mixed_pipeline/raw_events.json")
 OUTPUT = Path("/tmp/mixed_pipeline/cleaned_events.json")
 
 
-def main():
+# dag:boundary
+def main() -> None:
+    """Clean raw API events by removing entries with null timestamps."""
     if not INPUT.exists():
         print(f"ERROR: {INPUT} not found", file=sys.stderr)
         sys.exit(1)

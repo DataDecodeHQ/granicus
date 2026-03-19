@@ -42,6 +42,7 @@ func NewFirestoreStateBackend(ctx context.Context, project, pipeline string) (*F
 	}, nil
 }
 
+// dag:boundary
 func (f *FirestoreStateBackend) intervalsCol() *firestore.CollectionRef {
 	return f.client.Collection("pipelines").Doc(f.pipeline).Collection("intervals")
 }
@@ -50,6 +51,7 @@ func (f *FirestoreStateBackend) runsCol() *firestore.CollectionRef {
 	return f.client.Collection("runs")
 }
 
+// dag:boundary
 func (f *FirestoreStateBackend) MarkInProgress(asset, start, end, runID string) error {
 	ctx := context.Background()
 	docID := asset + ":" + start
@@ -68,6 +70,7 @@ func (f *FirestoreStateBackend) MarkInProgress(asset, start, end, runID string) 
 	return err
 }
 
+// dag:boundary
 func (f *FirestoreStateBackend) MarkComplete(asset, start, end string) error {
 	ctx := context.Background()
 	docID := asset + ":" + start
@@ -78,6 +81,7 @@ func (f *FirestoreStateBackend) MarkComplete(asset, start, end string) error {
 	return err
 }
 
+// dag:boundary
 func (f *FirestoreStateBackend) MarkFailed(asset, start, end string) error {
 	ctx := context.Background()
 	docID := asset + ":" + start
@@ -88,6 +92,7 @@ func (f *FirestoreStateBackend) MarkFailed(asset, start, end string) error {
 	return err
 }
 
+// GetIntervals returns all interval states for the given asset, ordered by start time.
 func (f *FirestoreStateBackend) GetIntervals(asset string) ([]IntervalState, error) {
 	ctx := context.Background()
 	iter := f.intervalsCol().
@@ -120,6 +125,7 @@ func (f *FirestoreStateBackend) GetIntervals(asset string) ([]IntervalState, err
 	return result, nil
 }
 
+// InvalidateAll deletes all interval state documents for the given asset.
 func (f *FirestoreStateBackend) InvalidateAll(asset string) error {
 	ctx := context.Background()
 	iter := f.intervalsCol().
@@ -155,6 +161,7 @@ func (f *FirestoreStateBackend) InvalidateAll(asset string) error {
 	return nil
 }
 
+// dag:boundary
 func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]IntervalState, error) {
 	if f.pipeline == "" {
 		// Cross-pipeline orphan recovery not supported in Firestore yet;
@@ -244,6 +251,7 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 	return orphans, nil
 }
 
+// Close shuts down the Firestore client connection.
 func (f *FirestoreStateBackend) Close() error {
 	return f.client.Close()
 }
@@ -405,6 +413,7 @@ func (f *FirestoreStateBackend) ListRuns(ctx context.Context, pipeline string, s
 }
 
 // ListEvents retrieves events for a run, optionally filtered by event type.
+// dag:boundary
 func (f *FirestoreStateBackend) ListEvents(ctx context.Context, runID string, eventTypes []string) ([]EventDoc, error) {
 	eventsCol := f.runsCol().Doc(runID).Collection("events")
 	var q firestore.Query
@@ -437,12 +446,14 @@ func (f *FirestoreStateBackend) ListEvents(ctx context.Context, runID string, ev
 
 // --- Run Locking ---
 
+// dag:boundary
 func (f *FirestoreStateBackend) lockRef() *firestore.DocumentRef {
 	return f.client.Collection("pipelines").Doc(f.pipeline).Collection("lock").Doc("current")
 }
 
 // AcquireLock atomically acquires a pipeline run lock. Returns an error if
 // the pipeline is already locked by another run.
+// dag:boundary
 func (f *FirestoreStateBackend) AcquireLock(ctx context.Context, runID string) error {
 	return f.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		lockDoc, err := tx.Get(f.lockRef())
@@ -462,6 +473,7 @@ func (f *FirestoreStateBackend) AcquireLock(ctx context.Context, runID string) e
 }
 
 // ReleaseLock releases the pipeline run lock.
+// dag:boundary
 func (f *FirestoreStateBackend) ReleaseLock(ctx context.Context) error {
 	_, err := f.lockRef().Delete(ctx)
 	return err

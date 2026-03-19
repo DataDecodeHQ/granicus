@@ -201,6 +201,7 @@ type PipelineConfig struct {
 	ConfigDir    string                       `yaml:"-"` // directory containing this config file
 }
 
+// DatasetForAsset returns the output dataset for an asset, resolving from connection, layer mapping, or the provided default.
 func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset string) string {
 	if asset.DestinationConnection != "" {
 		if conn, ok := cfg.Connections[asset.DestinationConnection]; ok {
@@ -217,6 +218,7 @@ func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset str
 	return defaultDataset
 }
 
+// OutputDatasets returns the deduplicated list of BigQuery datasets written to by this pipeline's assets.
 func (cfg *PipelineConfig) OutputDatasets() []string {
 	seen := make(map[string]bool)
 	for _, asset := range cfg.Assets {
@@ -327,6 +329,7 @@ func validateAlertRouting(r *AlertRoutingConfig) error {
 	return nil
 }
 
+// LoadConfig reads a pipeline YAML file, validates all fields, and returns the parsed configuration.
 func LoadConfig(path string) (*PipelineConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -547,6 +550,7 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	return &cfg, nil
 }
 
+// ResolveAssetPool returns the pool name for an asset, auto-assigning based on connection type if not explicitly set.
 func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connections map[string]*ConnectionConfig) string {
 	if asset.Pool == "none" {
 		return ""
@@ -571,6 +575,7 @@ func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connection
 	return ""
 }
 
+// ValidateConnections checks that all connections have the required properties for their type.
 func ValidateConnections(cfg *PipelineConfig) error {
 	for name, conn := range cfg.Connections {
 		required, known := connectionRequirements[conn.Type]

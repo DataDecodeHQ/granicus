@@ -12,7 +12,11 @@ type APIKey struct {
 	Key  string `yaml:"key" json:"key"`
 }
 
+// AuthMiddleware returns an HTTP handler that validates Bearer token authentication against configured API keys.
 func AuthMiddleware(keys []APIKey, next http.Handler) http.Handler {
+	if len(keys) == 0 {
+		slog.Warn("auth_disabled", "reason", "no_api_keys_configured", "note", "all endpoints are unauthenticated")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Health endpoint is exempt from auth
 		if r.URL.Path == "/api/v1/health" {

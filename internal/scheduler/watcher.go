@@ -19,6 +19,7 @@ type Watcher struct {
 	wg        sync.WaitGroup
 }
 
+// NewWatcher creates a filesystem watcher that monitors the scheduler's config directory for changes.
 func NewWatcher(s *Scheduler) (*Watcher, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -35,11 +36,13 @@ func NewWatcher(s *Scheduler) (*Watcher, error) {
 	}, nil
 }
 
+// Start begins watching for config file changes in a background goroutine.
 func (w *Watcher) Start() {
 	w.wg.Add(1)
 	go w.loop()
 }
 
+// Stop closes the filesystem watcher and waits for the background goroutine to exit.
 func (w *Watcher) Stop() {
 	close(w.stop)
 	w.watcher.Close()

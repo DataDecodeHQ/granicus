@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS pipeline_locks (
 );
 `
 
+// NewLockStore creates a LockStore backed by the given SQLite database, initializing the schema if needed.
 func NewLockStore(db *sql.DB) (*LockStore, error) {
 	if _, err := db.Exec(lockSchema); err != nil {
 		return nil, err
@@ -27,6 +28,7 @@ func NewLockStore(db *sql.DB) (*LockStore, error) {
 	return &LockStore{db: db}, nil
 }
 
+// dag:boundary
 func (s *LockStore) AcquireLock(pipeline, runID string) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
@@ -51,6 +53,7 @@ func (s *LockStore) AcquireLock(pipeline, runID string) (bool, error) {
 	return true, nil
 }
 
+// dag:boundary
 func (s *LockStore) ReleaseLock(pipeline, runID string) error {
 	_, err := s.db.Exec(`
 		UPDATE pipeline_locks SET status = 'complete'
@@ -59,6 +62,7 @@ func (s *LockStore) ReleaseLock(pipeline, runID string) error {
 	return err
 }
 
+// dag:boundary
 func (s *LockStore) IsLocked(pipeline string) (bool, string, error) {
 	var runID, status string
 	err := s.db.QueryRow(`SELECT run_id, status FROM pipeline_locks WHERE pipeline_name = ?`, pipeline).Scan(&runID, &status)
@@ -71,6 +75,7 @@ func (s *LockStore) IsLocked(pipeline string) (bool, string, error) {
 	return status == "running", runID, nil
 }
 
+// dag:boundary
 func (s *LockStore) RecoverStaleLocks(maxAge time.Duration) (int, error) {
 	cutoff := time.Now().UTC().Add(-maxAge).Format(time.RFC3339)
 	result, err := s.db.Exec(`

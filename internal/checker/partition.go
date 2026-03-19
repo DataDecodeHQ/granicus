@@ -24,10 +24,12 @@ type PartitionMismatch struct {
 	Actual  string
 }
 
+// String returns a human-readable description of the partition mismatch.
 func (m PartitionMismatch) String() string {
 	return fmt.Sprintf("%s: expected %s=%q, got %q", m.Asset, m.Field, m.Expect, m.Actual)
 }
 
+// ValidatePartitions compares configured partition/cluster settings against actual BigQuery table metadata.
 func ValidatePartitions(cfg *config.PipelineConfig, provider TableMetadataProvider) []PartitionMismatch {
 	var mismatches []PartitionMismatch
 

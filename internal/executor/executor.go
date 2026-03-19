@@ -60,6 +60,7 @@ type RunResult struct {
 	Interrupted bool // true if run was stopped by a shutdown signal
 }
 
+// Execute runs all targeted assets in the graph concurrently, respecting dependencies and parallelism limits.
 func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	runResult := &RunResult{
 		StartTime: time.Now(),

@@ -6,8 +6,8 @@ REGION="${GCP_REGION:-us-central1}"
 ENGINE_SA="granicus-engine@${PROJECT}.iam.gserviceaccount.com"
 
 # Target BQ projects
-ANALYTEHEALTH_PROJECT="${ANALYTEHEALTH_PROJECT:-gcr-tests-488119}"
-PATERNITYLABS_PROJECT="${PATERNITYLABS_PROJECT:-gcr-tests-488119}"
+ANALYTEHEALTH_PROJECT="${ANALYTEHEALTH_PROJECT:-api-project-178709533099}"
+PATERNITYLABS_PROJECT="${PATERNITYLABS_PROJECT:-paternitylab}"
 
 echo "Configuring Workload Identity for Granicus in project: $PROJECT"
 

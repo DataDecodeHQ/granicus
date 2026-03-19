@@ -32,6 +32,7 @@ type Scheduler struct {
 	configs     map[string]*config.PipelineConfig
 }
 
+// NewScheduler creates a scheduler that loads pipeline configs from the given source and registers cron jobs.
 func NewScheduler(src source.PipelineSource, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
 	lockStore, err := NewLockStore(db)
 	if err != nil {
@@ -71,10 +72,12 @@ func (s *Scheduler) Source() source.PipelineSource {
 	return s.source
 }
 
+// LockStore returns the scheduler's pipeline lock store.
 func (s *Scheduler) LockStore() *LockStore {
 	return s.lockStore
 }
 
+// LoadAndRegister scans the config directory and registers all pipeline schedules, replacing any existing entries.
 func (s *Scheduler) LoadAndRegister() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,6 +107,7 @@ func (s *Scheduler) LoadAndRegister() error {
 	return nil
 }
 
+// Reload re-scans configs and incrementally updates cron entries, returning added, removed, and updated pipeline names.
 func (s *Scheduler) Reload() (added, removed, updated []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -224,14 +228,17 @@ func (s *Scheduler) EventStore() *events.Store {
 	return s.eventStore
 }
 
+// Start begins the cron scheduler.
 func (s *Scheduler) Start() {
 	s.cron.Start()
 }
 
+// Stop halts the cron scheduler.
 func (s *Scheduler) Stop() {
 	s.cron.Stop()
 }
 
+// Pipelines returns the names of all registered pipeline entries.
 func (s *Scheduler) Pipelines() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -242,6 +249,7 @@ func (s *Scheduler) Pipelines() []string {
 	return names
 }
 
+// Config returns the pipeline configuration for the given pipeline name, or nil if not found.
 func (s *Scheduler) Config(name string) *config.PipelineConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()

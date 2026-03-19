@@ -67,10 +67,12 @@ type ShellRunner struct {
 	Timeout time.Duration
 }
 
+// NewShellRunner creates a ShellRunner with the default timeout.
 func NewShellRunner() *ShellRunner {
 	return &ShellRunner{Timeout: DefaultTimeout}
 }
 
+// Run executes a shell script asset as a bash subprocess.
 func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	if asset.Type != "shell" {
 		return NodeResult{
@@ -156,6 +158,7 @@ type limitedWriter struct {
 	limit int
 }
 
+// Write appends bytes up to the configured limit, silently discarding overflow.
 func (w *limitedWriter) Write(p []byte) (int, error) {
 	remaining := w.limit - w.buf.Len()
 	if remaining <= 0 {

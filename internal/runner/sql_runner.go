@@ -26,6 +26,7 @@ type SQLRunner struct {
 	FuncMap    template.FuncMap
 }
 
+// NewSQLRunner creates a SQLRunner for the given BigQuery connection.
 func NewSQLRunner(conn *config.ConnectionConfig) *SQLRunner {
 	return &SQLRunner{
 		Timeout:    DefaultTimeout,
@@ -39,6 +40,7 @@ type templateData struct {
 	Prefix  string
 }
 
+// Run reads, templates, and executes a SQL file against BigQuery.
 func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -215,10 +217,12 @@ type SQLCheckRunner struct {
 	FuncMap    template.FuncMap
 }
 
+// NewSQLCheckRunner creates a SQLCheckRunner for the given BigQuery connection.
 func NewSQLCheckRunner(conn *config.ConnectionConfig) *SQLCheckRunner {
 	return &SQLCheckRunner{Connection: conn, Timeout: DefaultTimeout}
 }
 
+// Run executes a SQL check query and fails if any rows are returned.
 func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -407,6 +411,7 @@ func substituteIntervalVars(sql []byte, asset *Asset) []byte {
 	return []byte(s)
 }
 
+// SubstituteTestVars replaces @test_start and @test_end placeholders with the given date boundaries.
 func SubstituteTestVars(sql []byte, testStart, testEnd string) []byte {
 	if testStart == "" {
 		testStart = "1900-01-01"
@@ -420,6 +425,7 @@ func SubstituteTestVars(sql []byte, testStart, testEnd string) []byte {
 	return []byte(s)
 }
 
+// ParseTestWindow converts a duration string like "7d", "2w", or "3m" into start and end date strings.
 func ParseTestWindow(window string) (startDate, endDate string, err error) {
 	if window == "" {
 		return "1900-01-01", "2099-12-31", nil

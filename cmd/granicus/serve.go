@@ -29,10 +29,6 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/source"
 )
 
-func init() {
-	// serve command is added in main
-}
-
 func newServeCmd() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:   "serve",
@@ -68,6 +64,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		serverCfg = &config.ServerConfig{Server: config.ServerSettings{Port: 8080}}
+	}
+
+	if envName != "dev" && envName != "test" && len(serverCfg.Server.APIKeys) == 0 {
+		slog.Error("refusing to start server without API keys in non-dev environment", "env", envName)
+		return fmt.Errorf("api_keys must be configured in server config for environment %q", envName)
 	}
 
 	// Load environment config (optional)
@@ -109,11 +110,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		slog.Error("stale lock recovery error", "error", err)
 	} else if recovered > 0 {
 		slog.Info("recovered stale locks", "count", recovered)
-		_ = eventStore.Emit(events.Event{
+		if err := eventStore.Emit(events.Event{
 			EventType: "stale_lock_recovered", Severity: "warning",
 			Summary: fmt.Sprintf("Recovered %d stale locks on startup", recovered),
 			Details: map[string]any{"recovered_count": recovered},
-		})
+		}); err != nil {
+			slog.Warn("event emission failed", "event_type", "stale_lock_recovered", "error", err)
+		}
 	}
 
 	// Initialize all backends
@@ -135,7 +138,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	} else if len(orphans) > 0 {
 		slog.Info("recovered orphaned intervals", "count", len(orphans))
 		for _, iv := range orphans {
-			_ = eventStore.Emit(events.Event{
+			if err := eventStore.Emit(events.Event{
 				EventType: "interval_recovered", Severity: "warning",
 				Summary: fmt.Sprintf("Recovered orphaned interval %s/%s (was in_progress since %s)", iv.AssetName, iv.IntervalStart, iv.StartedAt),
 				Details: map[string]any{
@@ -145,7 +148,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 					"run_id":         iv.RunID,
 					"started_at":     iv.StartedAt,
 				},
-			})
+			}); err != nil {
+				slog.Warn("event emission failed", "event_type", "interval_recovered", "error", err)
+			}
 		}
 	}
 
@@ -287,12 +292,14 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 
 	slog.Info("triggered run", "pipeline", cfg.Pipeline, "run_id", runID)
 
-	_ = eventStore.Emit(events.Event{
+	if err := eventStore.Emit(events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, EventType: "pipeline_triggered",
 		Severity: "info",
 		Summary:  fmt.Sprintf("Pipeline %s triggered via webhook", cfg.Pipeline),
 		Details:  map[string]any{"assets": req.Assets, "from_date": req.FromDate, "to_date": req.ToDate},
-	})
+	}); err != nil {
+		slog.Warn("event emission failed", "event_type", "pipeline_triggered", "error", err)
+	}
 
 	poolMgr, assetPools := buildPoolManager(cfg)
 	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools, dispatch, ctx)
@@ -301,7 +308,7 @@ func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envNa
 func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string, dispatch runner.RunnerDispatch, ctx context.Context) {
 	start := time.Now()
 
-	_ = eventStore.Emit(events.Event{
+	if err := eventStore.Emit(events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started", Severity: "info",
 		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
 		Details: map[string]any{
@@ -310,7 +317,9 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			"asset_filter": assetFilter,
 			"trigger":      trigger,
 		},
-	})
+	}); err != nil {
+		slog.Warn("event emission failed", "event_type", "run_started", "error", err)
+	}
 
 	// Use config dir for source resolution when pipeline was fetched from GCS
 	parseRoot := projectRoot
@@ -396,14 +405,16 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	}
 	defer stateStore.Close()
 
-	registry := buildRegistry(cfg, projectRoot)
+	registry := buildRegistry(cfg, parseRoot)
 
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
-		_ = eventStore.Emit(events.Event{
+		if err := eventStore.Emit(events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
 			EventType: "node_started", Severity: "info",
 			Summary: fmt.Sprintf("Node %s started", asset.Name),
-		})
+		}); err != nil {
+			slog.Warn("event emission failed", "event_type", "node_started", "error", err)
+		}
 
 		if asset.Source != "" {
 			// Resolve source path: use config dir (GCS extraction) if set, else project root
@@ -485,7 +496,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		}
 
 		if r.Status == "success" {
-			_ = eventStore.Emit(events.Event{
+			if err := eventStore.Emit(events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_succeeded", Severity: "info",
 				DurationMs: r.Duration.Milliseconds(),
@@ -496,7 +507,9 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 					"stdout_lines": events.CountLines(r.Stdout),
 					"stderr_lines": events.CountLines(r.Stderr),
 				},
-			})
+			}); err != nil {
+				slog.Warn("event emission failed", "event_type", "node_succeeded", "error", err)
+			}
 		} else {
 			stdout := r.Stdout
 			if len(stdout) > 10*1024 {
@@ -506,7 +519,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			if len(stderr) > 10*1024 {
 				stderr = stderr[:10*1024] + "[truncated]"
 			}
-			_ = eventStore.Emit(events.Event{
+			if err := eventStore.Emit(events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_failed", Severity: "error",
 				DurationMs: r.Duration.Milliseconds(),
@@ -519,7 +532,9 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 					"stdout":        stdout,
 					"stderr":        stderr,
 				},
-			})
+			}); err != nil {
+				slog.Warn("event emission failed", "event_type", "node_failed", "error", err)
+			}
 		}
 
 		return executor.NodeResult{
@@ -560,11 +575,13 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			failed++
 		case "skipped":
 			skipped++
-			_ = eventStore.Emit(events.Event{
+			if err := eventStore.Emit(events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_skipped", Severity: "warning",
 				Summary: fmt.Sprintf("Node %s skipped", r.AssetName),
-			})
+			}); err != nil {
+				slog.Warn("event emission failed", "event_type", "node_skipped", "error", err)
+			}
 		}
 	}
 
@@ -574,7 +591,7 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	}
 
 	totalDuration := rr.EndTime.Sub(start)
-	_ = eventStore.Emit(events.Event{
+	if err := eventStore.Emit(events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed", Severity: "info",
 		DurationMs: totalDuration.Milliseconds(),
 		Summary:    fmt.Sprintf("Run %s: %d succeeded, %d failed, %d skipped", status, succeeded, failed, skipped),
@@ -586,7 +603,9 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			"total_nodes":      len(rr.Results),
 			"duration_seconds": totalDuration.Seconds(),
 		},
-	})
+	}); err != nil {
+		slog.Warn("event emission failed", "event_type", "run_completed", "error", err)
+	}
 
 	// Record metrics
 	server.RunsTotal.WithLabelValues(cfg.Pipeline, status).Inc()

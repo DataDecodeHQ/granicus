@@ -20,6 +20,7 @@ type FreshnessResult struct {
 	Message string
 }
 
+// CheckFreshness evaluates upstream asset freshness against configured time windows.
 func CheckFreshness(stateStore state.StateBackend, checks []FreshnessCheck) []FreshnessResult {
 	var results []FreshnessResult
 
@@ -81,6 +82,7 @@ func CheckFreshness(stateStore state.StateBackend, checks []FreshnessCheck) []Fr
 	return results
 }
 
+// ParseFreshnessWindow converts a shorthand string like "24h" or "7d" into a time.Duration.
 func ParseFreshnessWindow(s string) (time.Duration, error) {
 	if len(s) < 2 {
 		return 0, fmt.Errorf("invalid freshness window: %q", s)

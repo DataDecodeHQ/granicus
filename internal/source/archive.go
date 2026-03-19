@@ -94,6 +94,7 @@ func createArchive(sourceDir string) (string, int, int64, string, error) {
 }
 
 // extractTarGz extracts a gzipped tar archive from reader into destDir.
+// dag:boundary
 func extractTarGz(reader io.Reader, destDir string) error {
 	gzReader, err := gzip.NewReader(reader)
 	if err != nil {

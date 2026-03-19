@@ -24,6 +24,7 @@ type tableMetricPlan struct {
 	NullCols []string
 }
 
+// CollectStructuralMetrics queries BigQuery for row counts and null rates based on the structural config.
 func CollectStructuralMetrics(client BQQuerier, cfg *StructuralConfig, pipeline string, tables map[string]string, capturedAt time.Time) []MetricSnapshot {
 	if cfg == nil {
 		return nil

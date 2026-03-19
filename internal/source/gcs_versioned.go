@@ -54,6 +54,7 @@ func NewGCSVersionedSource(ctx context.Context, firestoreProject, bucket string)
 	}, nil
 }
 
+// dag:boundary
 func (s *GCSVersionedSource) versionsCol(pipeline string) *firestore.CollectionRef {
 	return s.firestore.Collection("pipelines").Doc(pipeline).Collection("versions")
 }
@@ -87,10 +88,6 @@ func (s *GCSVersionedSource) fetchAll(ctx context.Context) (string, func(), erro
 		pipelineNames = append(pipelineNames, doc.Ref.ID)
 	}
 
-	if len(pipelineNames) == 0 {
-		return "", nil, fmt.Errorf("no pipelines found in Firestore")
-	}
-
 	combinedDir, err := os.MkdirTemp("", "granicus-all-")
 	if err != nil {
 		return "", nil, fmt.Errorf("creating combined temp dir: %w", err)
@@ -108,13 +105,6 @@ func (s *GCSVersionedSource) fetchAll(ctx context.Context) (string, func(), erro
 			cleanup()
 			continue
 		}
-	}
-
-	// Verify at least one pipeline was fetched
-	entries, _ := os.ReadDir(combinedDir)
-	if len(entries) == 0 {
-		os.RemoveAll(combinedDir)
-		return "", nil, fmt.Errorf("no active pipelines found")
 	}
 
 	cleanup := func() {
@@ -178,6 +168,7 @@ func (s *GCSVersionedSource) fetchOne(ctx context.Context, pipeline string, vers
 }
 
 // List returns all versions of a pipeline from Firestore, newest first.
+// dag:boundary
 func (s *GCSVersionedSource) List(ctx context.Context, pipeline string) ([]Version, error) {
 	iter := s.versionsCol(pipeline).OrderBy("number", firestore.Desc).Documents(ctx)
 	defer iter.Stop()
@@ -222,6 +213,7 @@ func (s *GCSVersionedSource) Active(ctx context.Context, pipeline string) (Versi
 
 // Register packages a pipeline directory as a new version, uploads to GCS,
 // and registers in Firestore.
+// dag:boundary
 func (s *GCSVersionedSource) Register(ctx context.Context, pipeline string, sourceDir string) (Version, error) {
 	// Compute content hash and create archive
 	hash, fileCount, sizeBytes, archivePath, err := createArchive(sourceDir)
@@ -294,6 +286,7 @@ func (s *GCSVersionedSource) Register(ctx context.Context, pipeline string, sour
 }
 
 // Activate sets the active version for a pipeline via Firestore transaction.
+// dag:boundary
 func (s *GCSVersionedSource) Activate(ctx context.Context, pipeline string, version int) error {
 	return s.firestore.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		// Find and deactivate current active version

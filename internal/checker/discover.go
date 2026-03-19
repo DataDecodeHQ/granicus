@@ -7,6 +7,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
+// DiscoverChecks scans the checks directory for check files and attaches them to matching assets.
 func DiscoverChecks(pipelineDir string, assets []config.AssetConfig) []config.AssetConfig {
 	checksDir := filepath.Join(pipelineDir, "checks")
 	matches, err := filepath.Glob(filepath.Join(checksDir, "check_*"))

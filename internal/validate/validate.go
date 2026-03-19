@@ -38,6 +38,7 @@ type CollectedSource struct {
 	TableName  string
 }
 
+// CollectingRefFunc returns a template ref() function that validates references and collects them for later analysis.
 func CollectingRefFunc(assets []string) (func(string) (string, error), *[]CollectedRef) {
 	lookup := make(map[string]bool, len(assets))
 	for _, a := range assets {
@@ -55,6 +56,7 @@ func CollectingRefFunc(assets []string) (func(string) (string, error), *[]Collec
 	return fn, &collected
 }
 
+// CollectingSourceFunc returns a template source() function that validates source references and collects them for later analysis.
 func CollectingSourceFunc(sources map[string]config.SourceConfig) (func(string, string) (string, error), *[]CollectedSource) {
 	var collected []CollectedSource
 
@@ -69,6 +71,7 @@ func CollectingSourceFunc(sources map[string]config.SourceConfig) (func(string, 
 	return fn, &collected
 }
 
+// ValidateTemplates parses and executes all SQL templates, checking for parse errors and unresolved ref/source calls.
 func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot string) []ValidationResult {
 	var results []ValidationResult
 
@@ -248,6 +251,7 @@ func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot s
 	return results
 }
 
+// DetectOrphanFiles finds SQL files in asset directories that are not referenced by any pipeline asset.
 func DetectOrphanFiles(cfg *config.PipelineConfig, projectRoot string) []ValidationResult {
 	referenced := make(map[string]bool)
 	for _, a := range cfg.Assets {
@@ -312,6 +316,7 @@ func DetectOrphanFiles(cfg *config.PipelineConfig, projectRoot string) []Validat
 	}}
 }
 
+// CheckDependsOnConsistency warns when ref() calls and depends_on declarations are mismatched.
 func CheckDependsOnConsistency(cfg *config.PipelineConfig, g *graph.Graph, projectRoot string, collectedRefs []CollectedRef) []ValidationResult {
 	// Build per-asset ref usage map
 	refsByAsset := make(map[string]map[string]bool)
@@ -375,6 +380,7 @@ var layerOrder = map[string]int{
 	"report":       4,
 }
 
+// CheckLayerDirection detects dependencies that violate the expected layer ordering (e.g., staging depending on entity).
 func CheckLayerDirection(g *graph.Graph) []ValidationResult {
 	var violations []string
 
@@ -603,6 +609,7 @@ func CheckOrphanedChecks(cfg *config.PipelineConfig, projectRoot string) []Valid
 // Matches {{.Project}}.LITERAL_DATASET.table (with or without backticks) but NOT {{.Project}}.{{.Dataset}}.table
 var hardcodedRefPattern = regexp.MustCompile(`\{\{\s*\.Project\s*\}\}\.([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)`)
 
+// DetectHardcodedRefs finds SQL templates that reference datasets directly via {{.Project}}.LITERAL instead of using ref().
 func DetectHardcodedRefs(cfg *config.PipelineConfig, projectRoot string) []ValidationResult {
 	var violations []string
 

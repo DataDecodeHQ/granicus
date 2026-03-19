@@ -22,6 +22,7 @@ type PythonRunner struct {
 	RefFunc               func(string) (string, error)
 }
 
+// NewPythonRunner creates a PythonRunner with the given connections, event store, and pipeline name.
 func NewPythonRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *PythonRunner {
 	return &PythonRunner{
 		Timeout:               DefaultTimeout,
@@ -32,6 +33,7 @@ func NewPythonRunner(destConn, srcConn *config.ConnectionConfig, eventStore *eve
 	}
 }
 
+// Run executes a Python script as a subprocess with connection and ref environment variables.
 func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -90,6 +92,15 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 			env = append(env, "GRANICUS_REFS="+string(refsJSON))
 		}
 	}
+
+	if destConn != nil && destConn.Properties["credentials"] != "" {
+		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", destConn.Name, "credential_method", "file")
+	}
+	if srcConn != nil && srcConn.Properties["credentials"] != "" {
+		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", srcConn.Name, "credential_method", "file")
+	}
+
+	validateEnv(env, asset.Name, runID)
 
 	done := make(chan struct{})
 	if r.EventStore != nil {
@@ -176,6 +187,33 @@ func flattenConnection(conn *config.ConnectionConfig) map[string]string {
 		flat[k] = v
 	}
 	return flat
+}
+
+// validateEnv checks the subprocess env slice against the runner contract.
+// Logs warnings for issues but never fails the run (advisory only).
+func validateEnv(env []string, assetName, runID string) {
+	vars := make(map[string]string, len(env))
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			vars[k] = v
+		}
+	}
+
+	required := []string{"GRANICUS_ASSET_NAME", "GRANICUS_RUN_ID", "GRANICUS_PROJECT_ROOT", "GRANICUS_METADATA_PATH"}
+	for _, key := range required {
+		if vars[key] == "" {
+			slog.Warn("env_contract_violation", "issue", "missing_required", "var", key, "asset", assetName, "run_id", runID)
+		}
+	}
+
+	for _, key := range []string{"GRANICUS_DEST_CONNECTION", "GRANICUS_SOURCE_CONNECTION"} {
+		if val, ok := vars[key]; ok {
+			var parsed map[string]string
+			if err := json.Unmarshal([]byte(val), &parsed); err != nil {
+				slog.Warn("env_contract_violation", "issue", "invalid_json", "var", key, "asset", assetName, "run_id", runID, "error", err)
+			}
+		}
+	}
 }
 
 func findPython(projectRoot string) string {

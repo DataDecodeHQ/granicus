@@ -23,6 +23,7 @@ type CrossDependency struct {
 	Type       string `yaml:"type"` // "blocks" or "freshness"
 }
 
+// LoadMultiPipelineConfig reads and validates a multi-pipeline YAML config that references individual pipeline configs.
 func LoadMultiPipelineConfig(path string) (*MultiPipelineConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -41,6 +42,7 @@ func LoadMultiPipelineConfig(path string) (*MultiPipelineConfig, error) {
 	return &cfg, nil
 }
 
+// LoadAllPipelines loads a multi-pipeline config and returns the fully parsed PipelineConfig for each referenced pipeline.
 func LoadAllPipelines(multiCfgPath string) ([]*PipelineConfig, error) {
 	multiCfg, err := LoadMultiPipelineConfig(multiCfgPath)
 	if err != nil {

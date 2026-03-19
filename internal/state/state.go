@@ -14,6 +14,7 @@ const DefaultOrphanTimeout = 2 * time.Hour
 //
 // If threshold is 0 or negative, DefaultOrphanTimeout is used.
 // The query is efficient via idx_interval_state_status_started (status, started_at).
+// dag:boundary
 func (s *Store) RecoverOrphans(threshold time.Duration) ([]IntervalState, error) {
 	if threshold <= 0 {
 		threshold = DefaultOrphanTimeout

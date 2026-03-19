@@ -13,6 +13,7 @@ import (
 
 const businessQueryTimeout = 120 * time.Second
 
+// CollectBusinessMetrics runs aggregate, rate, and segment queries to capture business-level metric snapshots.
 func CollectBusinessMetrics(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipeline, project string, tables map[string]string) []MetricSnapshot {
 	now := time.Now().UTC().Format(time.RFC3339)
 	var all []MetricSnapshot

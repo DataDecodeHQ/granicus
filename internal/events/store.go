@@ -73,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_pipeline ON events(pipeline);
 `
 
+// New opens or creates the SQLite event store at the given path and initializes the schema.
 func New(dbPath string) (*Store, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -97,10 +98,12 @@ func New(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Close closes the underlying database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB returns the underlying sql.DB for direct access.
 func (s *Store) DB() *sql.DB {
 	return s.db
 }
@@ -109,6 +112,7 @@ func generateULID() string {
 	return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
 }
 
+// dag:boundary
 func (s *Store) Emit(event Event) error {
 	if event.EventID == "" {
 		event.EventID = generateULID()
@@ -136,6 +140,7 @@ func (s *Store) Emit(event Event) error {
 	return err
 }
 
+// dag:boundary
 func (s *Store) EmitBatch(events []Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

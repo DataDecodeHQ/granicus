@@ -30,6 +30,7 @@ type directivesRoot struct {
 	Granicus Directives `yaml:"granicus"`
 }
 
+// ParseDirectivesWithBlock parses directives from a file and reports whether a granicus block was found.
 func ParseDirectivesWithBlock(filePath string) (bool, Directives, error) {
 	d, err := ParseDirectives(filePath)
 	if err != nil {
@@ -43,6 +44,7 @@ func ParseDirectivesWithBlock(filePath string) (bool, Directives, error) {
 	return found, d, nil
 }
 
+// ParseDirectives extracts granicus YAML directives from comment blocks at the top of a file.
 func ParseDirectives(filePath string) (Directives, error) {
 	f, err := os.Open(filePath)
 	if err != nil {

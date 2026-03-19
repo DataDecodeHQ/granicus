@@ -14,6 +14,7 @@ REQUIRED_FIELDS = ("pipeline", "client", "schedule")
 
 
 def main() -> int:
+    """Read pipeline.yaml files and write schedule data to Terraform tfvars."""
     errors: list[str] = []
     schedules: dict[str, dict[str, str]] = {}
 

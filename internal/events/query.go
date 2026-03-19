@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ var severityLevels = map[string]int{
 	"info":    1,
 }
 
+// Query returns events matching the given filters, ordered by timestamp ascending.
 func (s *Store) Query(filters QueryFilters) ([]Event, error) {
 	query := "SELECT event_id, run_id, pipeline, asset, event_type, severity, timestamp, duration_ms, summary, details FROM events WHERE 1=1"
 	var args []any
@@ -122,15 +124,22 @@ func (s *Store) queryEvents(query string, args ...any) ([]Event, error) {
 		if err := rows.Scan(&e.EventID, &e.RunID, &e.Pipeline, &e.Asset, &e.EventType, &e.Severity, &ts, &e.DurationMs, &e.Summary, &detailsJSON); err != nil {
 			return nil, err
 		}
-		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		if t, perr := time.Parse(time.RFC3339Nano, ts); perr != nil {
+			slog.Warn("failed to parse event timestamp", "event_id", e.EventID, "raw", ts, "error", perr)
+		} else {
+			e.Timestamp = t
+		}
 		if detailsJSON != "" && detailsJSON != "{}" {
-			json.Unmarshal([]byte(detailsJSON), &e.Details)
+			if jerr := json.Unmarshal([]byte(detailsJSON), &e.Details); jerr != nil {
+				slog.Warn("failed to unmarshal event details", "event_id", e.EventID, "error", jerr)
+			}
 		}
 		events = append(events, e)
 	}
 	return events, rows.Err()
 }
 
+// GetRunSummary builds a run summary from the start and completion events for the given run ID.
 func (s *Store) GetRunSummary(runID string) (*RunSummary, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
@@ -164,6 +173,7 @@ func (s *Store) GetRunSummary(runID string) (*RunSummary, error) {
 	return summary, nil
 }
 
+// ListRuns returns summaries of recent pipeline runs, ordered by start time descending.
 func (s *Store) ListRuns(limit int) ([]RunSummary, error) {
 	query := `
 		SELECT DISTINCT run_id, pipeline, timestamp
@@ -196,6 +206,7 @@ func (s *Store) ListRuns(limit int) ([]RunSummary, error) {
 	return summaries, rows.Err()
 }
 
+// GetFailedNodes returns the asset names of all nodes that failed during the given run.
 func (s *Store) GetFailedNodes(runID string) ([]string, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
@@ -214,6 +225,7 @@ func (s *Store) GetFailedNodes(runID string) ([]string, error) {
 	return names, nil
 }
 
+// GetNodeResults returns the execution result for every node in the given run.
 func (s *Store) GetNodeResults(runID string) ([]NodeResult, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
@@ -249,6 +261,7 @@ func (s *Store) GetNodeResults(runID string) ([]NodeResult, error) {
 	return results, nil
 }
 
+// GetCheckResults returns check pass/fail events for the given run, optionally filtered by asset.
 func (s *Store) GetCheckResults(runID, asset string) ([]Event, error) {
 	filters := QueryFilters{
 		RunID:     runID,
@@ -260,6 +273,7 @@ func (s *Store) GetCheckResults(runID, asset string) ([]Event, error) {
 	return s.Query(filters)
 }
 
+// GetLastSuccess returns the timestamp of the most recent successful execution for the given asset.
 func (s *Store) GetLastSuccess(asset string) (*time.Time, error) {
 	row := s.db.QueryRow(`
 		SELECT timestamp FROM events
@@ -278,6 +292,7 @@ func (s *Store) GetLastSuccess(asset string) (*time.Time, error) {
 	return &t, nil
 }
 
+// DeleteBefore removes all events with timestamps before the cutoff and returns the number deleted.
 func (s *Store) DeleteBefore(cutoff time.Time) (int, error) {
 	result, err := s.db.Exec(`DELETE FROM events WHERE timestamp < ?`, cutoff.Format(time.RFC3339Nano))
 	if err != nil {

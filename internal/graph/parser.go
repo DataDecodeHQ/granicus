@@ -3,6 +3,7 @@ package graph
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ var depPattern = regexp.MustCompile(`^\s*(?:--|#)\s*depends_on:\s*(\S+)\s*$`)
 
 const maxScanLines = 50
 
+// ParseDependencies extracts dependency names from a source file's granicus directives or legacy comments.
 func ParseDependencies(filePath string) ([]string, error) {
 	found, d, err := ParseDirectivesWithBlock(filePath)
 	if err != nil {
@@ -60,6 +62,7 @@ type AssetDirectives struct {
 	Produces     []string
 }
 
+// ParseAllDependencies parses dependencies for every asset in the pipeline config.
 func ParseAllDependencies(cfg *config.PipelineConfig, projectRoot string) (map[string][]string, error) {
 	result := make(map[string][]string)
 	var missing []string
@@ -86,6 +89,7 @@ func ParseAllDependencies(cfg *config.PipelineConfig, projectRoot string) (map[s
 	return result, nil
 }
 
+// ParseAllDirectives parses both dependencies and full directives for every asset in the pipeline config.
 func ParseAllDirectives(cfg *config.PipelineConfig, projectRoot string) (map[string][]string, map[string]*Directives, error) {
 	deps := make(map[string][]string)
 	directives := make(map[string]*Directives)
@@ -117,6 +121,7 @@ func ParseAllDirectives(cfg *config.PipelineConfig, projectRoot string) (map[str
 	return deps, directives, nil
 }
 
+// SourcePhantomNodes creates no-op asset inputs for declared sources so checks can depend on them.
 func SourcePhantomNodes(cfg *config.PipelineConfig) []AssetInput {
 	var inputs []AssetInput
 	for name := range cfg.Sources {
@@ -129,12 +134,17 @@ func SourcePhantomNodes(cfg *config.PipelineConfig) []AssetInput {
 	return inputs
 }
 
+// ConfigToAssetInputs converts pipeline config assets into graph AssetInput structs.
 func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 	inputs := make([]AssetInput, len(cfg.Assets))
 	for i, a := range cfg.Assets {
 		var timeout time.Duration
 		if a.Timeout != "" {
-			timeout, _ = time.ParseDuration(a.Timeout)
+			var terr error
+			timeout, terr = time.ParseDuration(a.Timeout)
+			if terr != nil {
+				slog.Warn("invalid asset timeout, using zero", "asset", a.Name, "timeout", a.Timeout, "error", terr)
+			}
 		}
 		var maxAttempts int
 		var backoffBase time.Duration
@@ -142,7 +152,11 @@ func ConfigToAssetInputs(cfg *config.PipelineConfig) []AssetInput {
 		if a.Retry != nil {
 			maxAttempts = a.Retry.MaxAttempts
 			if a.Retry.BackoffBase != "" {
-				backoffBase, _ = time.ParseDuration(a.Retry.BackoffBase)
+				var berr error
+				backoffBase, berr = time.ParseDuration(a.Retry.BackoffBase)
+				if berr != nil {
+					slog.Warn("invalid retry backoff_base, using zero", "asset", a.Name, "backoff_base", a.Retry.BackoffBase, "error", berr)
+				}
 			}
 			retryableErrors = a.Retry.RetryableErrors
 		}

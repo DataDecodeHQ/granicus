@@ -10,6 +10,7 @@ type Interval struct {
 	End   string
 }
 
+// GenerateIntervals produces a sequence of time intervals between startDate and endDate using the given unit (hour, day, week, month).
 func GenerateIntervals(startDate, endDate, unit string) ([]Interval, error) {
 	start, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
@@ -64,6 +65,7 @@ func formatTime(t time.Time, unit string) string {
 	return t.Format("2006-01-02")
 }
 
+// ComputeMissing returns intervals that are not yet complete, including the last N completed intervals if lookback is set.
 func ComputeMissing(allIntervals []Interval, completed []IntervalState, lookback int) []Interval {
 	completeSet := make(map[string]bool)
 	for _, c := range completed {
@@ -107,6 +109,7 @@ func ComputeMissing(allIntervals []Interval, completed []IntervalState, lookback
 	return missing
 }
 
+// ApplyBatchSize truncates the interval list to at most batchSize entries.
 func ApplyBatchSize(intervals []Interval, batchSize int) []Interval {
 	if batchSize <= 0 || len(intervals) <= batchSize {
 		return intervals

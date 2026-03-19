@@ -26,10 +26,12 @@ type GCSRunner struct {
 	Timeout    time.Duration
 }
 
+// NewGCSRunner creates a GCSRunner for the given GCS connection.
 func NewGCSRunner(conn *config.ConnectionConfig) *GCSRunner {
 	return &GCSRunner{Connection: conn, Timeout: DefaultTimeout}
 }
 
+// Run executes a GCS operation by delegating to a subprocess with bucket and prefix environment variables.
 func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -99,10 +101,12 @@ type S3Runner struct {
 	Timeout    time.Duration
 }
 
+// NewS3Runner creates an S3Runner for the given S3 connection.
 func NewS3Runner(conn *config.ConnectionConfig) *S3Runner {
 	return &S3Runner{Connection: conn, Timeout: DefaultTimeout}
 }
 
+// Run executes an S3 operation by delegating to a subprocess with S3 environment variables.
 func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -184,10 +188,12 @@ type IcebergRunner struct {
 	Timeout    time.Duration
 }
 
+// NewIcebergRunner creates an IcebergRunner for the given connection (not yet implemented).
 func NewIcebergRunner(conn *config.ConnectionConfig) *IcebergRunner {
 	return &IcebergRunner{Connection: conn, Timeout: DefaultTimeout}
 }
 
+// Run always returns a failure result because the Iceberg connector is not yet implemented.
 func (r *IcebergRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	return NodeResult{
 		AssetName: asset.Name,

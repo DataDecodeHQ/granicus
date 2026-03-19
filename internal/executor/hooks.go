@@ -16,6 +16,7 @@ import (
 
 type PostRunHook func(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) error
 
+// WriteContextHook returns a post-run hook that syncs schemas, lineage, and assets to a local context database.
 func WriteContextHook(bqClient *bigquery.Client) PostRunHook {
 	return func(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, _ *RunResult) error {
 		dbPath := filepath.Join(projectRoot, ".granicus", "context.db")
@@ -29,6 +30,7 @@ func WriteContextHook(bqClient *bigquery.Client) PostRunHook {
 	}
 }
 
+// DuckDBAssemblyHook returns a post-run hook that builds a DuckDB file from dashboard parquet data.
 func DuckDBAssemblyHook() PostRunHook {
 	return func(_ *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) error {
 		if !assetSucceeded(rr, "publish_dashboard_parquet") {
@@ -85,6 +87,7 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// RunPostHooks executes all post-run hooks in order and returns the number of failures.
 func RunPostHooks(hooks []PostRunHook, g *graph.Graph, cfg *config.PipelineConfig, projectRoot string, rr *RunResult) int {
 	failures := 0
 	for _, hook := range hooks {

@@ -40,7 +40,10 @@ gcloud run deploy granicus-engine \
   --cpu-boost \
   --no-cpu-throttling \
   --port=8080 \
-  --set-env-vars="GRANICUS_FIRESTORE_PROJECT=${PROJECT},GRANICUS_PIPELINES_BUCKET=granicus-pipelines,GRANICUS_OPS_BUCKET=granicus-ops,GRANICUS_PIPELINE_SOURCE=gcs" \
+  --set-env-vars="GRANICUS_FIRESTORE_PROJECT=${PROJECT},GRANICUS_PIPELINES_BUCKET=${GRANICUS_PIPELINES_BUCKET:-granicus-pipelines},GRANICUS_OPS_BUCKET=granicus-ops,GRANICUS_PIPELINE_SOURCE=gcs,GRANICUS_STATE_BACKEND=firestore" \
+  --service-account="granicus-engine@${PROJECT}.iam.gserviceaccount.com" \
+  --command="granicus" \
+  --args="serve,--env,dev" \
   --labels=service=granicus,env=dev \
   --no-allow-unauthenticated
 

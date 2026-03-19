@@ -7,6 +7,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// GenerateStandardsCheckNodes creates check nodes that validate email, phone, and currency format standards.
 func GenerateStandardsCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)

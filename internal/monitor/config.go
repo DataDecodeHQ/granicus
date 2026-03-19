@@ -91,6 +91,7 @@ type SegmentConfig struct {
 	Windows          []string `yaml:"windows,omitempty"`
 }
 
+// ResolvedWarningThreshold returns the warning threshold, falling back to defaults then the package default.
 func (cm *ColumnMetric) ResolvedWarningThreshold(defaults DefaultsConfig) float64 {
 	if cm.WarningThreshold != nil {
 		return *cm.WarningThreshold
@@ -101,6 +102,7 @@ func (cm *ColumnMetric) ResolvedWarningThreshold(defaults DefaultsConfig) float6
 	return DefaultWarningThreshold
 }
 
+// ResolvedErrorThreshold returns the error threshold, falling back to defaults then the package default.
 func (cm *ColumnMetric) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	if cm.ErrorThreshold != nil {
 		return *cm.ErrorThreshold
@@ -111,6 +113,7 @@ func (cm *ColumnMetric) ResolvedErrorThreshold(defaults DefaultsConfig) float64 
 	return DefaultErrorThreshold
 }
 
+// ResolvedWindows returns the comparison windows, falling back to defaults.
 func (cm *ColumnMetric) ResolvedWindows(defaults DefaultsConfig) []string {
 	if len(cm.Windows) > 0 {
 		return cm.Windows
@@ -118,6 +121,7 @@ func (cm *ColumnMetric) ResolvedWindows(defaults DefaultsConfig) []string {
 	return resolvedDefaultWindows(defaults)
 }
 
+// ResolvedWarningThreshold returns the warning threshold, falling back to defaults then the package default.
 func (rc *RateConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float64 {
 	if rc.WarningThreshold != nil {
 		return *rc.WarningThreshold
@@ -128,6 +132,7 @@ func (rc *RateConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float64 
 	return DefaultWarningThreshold
 }
 
+// ResolvedErrorThreshold returns the error threshold, falling back to defaults then the package default.
 func (rc *RateConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	if rc.ErrorThreshold != nil {
 		return *rc.ErrorThreshold
@@ -138,6 +143,7 @@ func (rc *RateConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	return DefaultErrorThreshold
 }
 
+// ResolvedWindows returns the comparison windows, falling back to defaults.
 func (rc *RateConfig) ResolvedWindows(defaults DefaultsConfig) []string {
 	if len(rc.Windows) > 0 {
 		return rc.Windows
@@ -145,6 +151,7 @@ func (rc *RateConfig) ResolvedWindows(defaults DefaultsConfig) []string {
 	return resolvedDefaultWindows(defaults)
 }
 
+// ResolvedWarningThreshold returns the warning threshold, falling back to defaults then the package default.
 func (sc *SegmentConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float64 {
 	if sc.WarningThreshold != nil {
 		return *sc.WarningThreshold
@@ -155,6 +162,7 @@ func (sc *SegmentConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float
 	return DefaultWarningThreshold
 }
 
+// ResolvedErrorThreshold returns the error threshold, falling back to defaults then the package default.
 func (sc *SegmentConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	if sc.ErrorThreshold != nil {
 		return *sc.ErrorThreshold
@@ -165,6 +173,7 @@ func (sc *SegmentConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64
 	return DefaultErrorThreshold
 }
 
+// ResolvedWindows returns the comparison windows, falling back to defaults.
 func (sc *SegmentConfig) ResolvedWindows(defaults DefaultsConfig) []string {
 	if len(sc.Windows) > 0 {
 		return sc.Windows

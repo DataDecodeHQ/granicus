@@ -16,6 +16,7 @@ type EnvironmentConfig struct {
 	Environments map[string]*EnvironmentOverride `yaml:"environments"`
 }
 
+// LoadEnvironmentConfig reads and parses an environment override YAML file.
 func LoadEnvironmentConfig(path string) (*EnvironmentConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -37,6 +38,7 @@ func LoadEnvironmentConfig(path string) (*EnvironmentConfig, error) {
 	return &cfg, nil
 }
 
+// MergeEnvironment applies environment-specific connection overrides and prefix to a copy of the base pipeline config.
 func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName string) (*PipelineConfig, error) {
 	env, ok := envCfg.Environments[envName]
 	if !ok {
@@ -85,6 +87,7 @@ func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName s
 	return &merged, nil
 }
 
+// StateDBPath returns the filesystem path to the state database for the given environment.
 func StateDBPath(projectRoot, envName string) string {
 	if envName == "" {
 		envName = "dev"
