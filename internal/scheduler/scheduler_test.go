@@ -166,6 +166,58 @@ assets:
 	}
 }
 
+func TestScheduler_ConfigReloadOnRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping cron test in short mode")
+	}
+
+	db := newTestDB(t)
+	configDir := t.TempDir()
+
+	writeConfig(t, configDir, "reload.yaml", `
+pipeline: reload
+schedule: "* * * * * *"
+assets:
+  - name: original_asset
+    type: shell
+    source: a.sh
+`)
+
+	var lastAssetName atomic.Value
+	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+		if len(cfg.Assets) > 0 {
+			lastAssetName.Store(cfg.Assets[0].Name)
+		}
+	}, nil)
+
+	s.cron = newCronWithSeconds()
+	s.LoadAndRegister()
+	s.Start()
+	defer s.Stop()
+
+	// Wait for first run
+	time.Sleep(1500 * time.Millisecond)
+	if name, ok := lastAssetName.Load().(string); !ok || name != "original_asset" {
+		t.Fatalf("expected original_asset, got %v", lastAssetName.Load())
+	}
+
+	// Update config on disk
+	writeConfig(t, configDir, "reload.yaml", `
+pipeline: reload
+schedule: "* * * * * *"
+assets:
+  - name: updated_asset
+    type: shell
+    source: b.sh
+`)
+
+	// Wait for next run with fresh config
+	time.Sleep(1500 * time.Millisecond)
+	if name, ok := lastAssetName.Load().(string); !ok || name != "updated_asset" {
+		t.Errorf("expected updated_asset after config change, got %v", lastAssetName.Load())
+	}
+}
+
 func TestScheduler_LockSkipsOverlap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping lock test in short mode")

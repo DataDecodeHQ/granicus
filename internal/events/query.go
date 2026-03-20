@@ -146,7 +146,7 @@ func (s *Store) queryEvents(query string, args ...any) ([]Event, error) {
 func (s *Store) GetRunSummary(runID string) (*RunSummary, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
-		EventType: "run_started,run_completed",
+		EventType: "run_started,run_completed,run_failed",
 	})
 	if err != nil {
 		return nil, err
@@ -166,6 +166,10 @@ func (s *Store) GetRunSummary(runID string) (*RunSummary, error) {
 			summary.Skipped = getDetailInt(e.Details, "skipped")
 			summary.TotalNodes = getDetailInt(e.Details, "total_nodes")
 			summary.DurationSeconds = getDetailFloat(e.Details, "duration_seconds")
+		case "run_failed":
+			summary.EndTime = e.Timestamp
+			summary.Status = "failed"
+			summary.DurationSeconds = float64(e.DurationMs) / 1000.0
 		}
 	}
 

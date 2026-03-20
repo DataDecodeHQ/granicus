@@ -173,6 +173,7 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 	}
 	LogSubprocessLaunch(asset.Name, "s3", len(env), hasS3Credentials)
 
+	// Contract: Go owns this boundary. Base env + runner-specific vars. S3 credentials passed via AWS_* env vars.
 	sub := RunSubprocess(SubprocessConfig{
 		Command: inferCommand(asset.Source, projectRoot),
 		Env:     env,

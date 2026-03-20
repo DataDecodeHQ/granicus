@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/Andrew-DataDecode/Granicus/schemas/pipeline.schema.json",
+  "$id": "https://github.com/DataDecodeHQ/granicus/schemas/pipeline.schema.json",
   "title": "Granicus Pipeline Config",
   "description": "Schema for pipeline.yaml — the Granicus pipeline definition file.",
   "type": "object",

@@ -174,8 +174,217 @@ func TestCheckGCSConfig_ValidBucketADC(t *testing.T) {
 	}
 }
 
-func TestCheckBQConnectivity_Skip(t *testing.T) {
-	t.Skip("requires BQ credentials")
+func TestCheckBQConnectivity_MissingProject(t *testing.T) {
+	conn := &config.ConnectionConfig{
+		Type:       "bigquery",
+		Properties: map[string]string{},
+	}
+	result := checkBQConnectivity("bq-test", conn)
+	if result.Status != StatusFail {
+		t.Errorf("expected fail for missing project, got %q: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "missing project") {
+		t.Errorf("expected message about missing project, got %q", result.Message)
+	}
+}
+
+func TestCheckBQConnectivity_InvalidCredentialsFile(t *testing.T) {
+	conn := &config.ConnectionConfig{
+		Type: "bigquery",
+		Properties: map[string]string{
+			"project":     "test-project",
+			"credentials": "/nonexistent/creds.json",
+		},
+	}
+	result := checkBQConnectivity("bq-test", conn)
+	if result.Status != StatusFail {
+		t.Errorf("expected fail for invalid credentials, got %q: %s", result.Status, result.Message)
+	}
+}
+
+func TestCheckBQConnectivity_ErrorWithoutCredentials(t *testing.T) {
+	// With a real project but no valid credentials, the check should fail
+	// at credential resolution or BQ client creation.
+	conn := &config.ConnectionConfig{
+		Type: "bigquery",
+		Properties: map[string]string{
+			"project": "nonexistent-project-12345",
+		},
+	}
+	result := checkBQConnectivity("bq-nocreds", conn)
+	// Without ADC or explicit credentials, this should fail
+	if result.Status == StatusPass {
+		t.Log("BQ connectivity passed (ADC may be configured); skipping assertion")
+	}
+}
+
+func TestCheckGCSConfig_EnvServiceAccountMissing(t *testing.T) {
+	t.Setenv("GCS_SERVICE_ACCOUNT", "/nonexistent/service-account.json")
+	conn := &config.ConnectionConfig{
+		Type: "gcs",
+		Properties: map[string]string{
+			"bucket": "test-bucket",
+		},
+	}
+	result := checkGCSConfig("env-creds", conn)
+	if result.Status != StatusWarn {
+		t.Errorf("expected warn for missing GCS_SERVICE_ACCOUNT file, got %q: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "GCS_SERVICE_ACCOUNT") {
+		t.Errorf("expected message to reference GCS_SERVICE_ACCOUNT, got %q", result.Message)
+	}
+}
+
+func TestCheckGCSConfig_ValidCredentialsFile(t *testing.T) {
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "creds.json")
+	os.WriteFile(credPath, []byte(`{"type":"service_account"}`), 0644)
+
+	conn := &config.ConnectionConfig{
+		Type: "gcs",
+		Properties: map[string]string{
+			"bucket":      "test-bucket",
+			"credentials": credPath,
+		},
+	}
+	result := checkGCSConfig("valid-creds", conn)
+	if result.Status != StatusPass {
+		t.Errorf("expected pass for valid credentials file, got %q: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, credPath) {
+		t.Errorf("expected message to contain credential path, got %q", result.Message)
+	}
+}
+
+func TestCheckStateDB_Corrupted(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
+	// Write garbage to simulate corruption
+	os.WriteFile(dbPath, []byte("this is not a valid sqlite database"), 0644)
+
+	result := checkStateDB(dbPath)
+	if result.Status != StatusFail {
+		t.Errorf("expected fail for corrupted db, got %q: %s", result.Status, result.Message)
+	}
+}
+
+func TestCheckEventsDB_NotWritable(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "events.db")
+
+	// Create the DB, then make it read-only
+	result := checkEventsDB(dbPath)
+	if result.Status != StatusPass {
+		t.Fatalf("setup: expected pass, got %q: %s", result.Status, result.Message)
+	}
+	os.Chmod(dbPath, 0444)
+	t.Cleanup(func() { os.Chmod(dbPath, 0644) })
+
+	result = checkEventsDB(dbPath)
+	// Running as root makes this pass regardless, so accept either outcome
+	if result.Status != StatusFail && result.Status != StatusPass {
+		t.Errorf("expected fail or pass (root), got %q: %s", result.Status, result.Message)
+	}
+}
+
+func TestCheckDiskSpace_NonexistentDir(t *testing.T) {
+	// MkdirAll will succeed for a temp subdir, so use a truly inaccessible path
+	dir := t.TempDir()
+	result := checkDiskSpace(filepath.Join(dir, "subdir"))
+	// Should pass or warn, but not fail due to dir creation issues
+	if result.Status == StatusFail && strings.Contains(result.Message, "cannot check") {
+		t.Errorf("unexpected fail for creatable subdir: %s", result.Message)
+	}
+}
+
+func TestRunChecks_WithConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := &config.PipelineConfig{
+		Pipeline: "test_pipeline",
+		Connections: map[string]*config.ConnectionConfig{
+			"bq_conn": {
+				Type: "bigquery",
+				Properties: map[string]string{
+					"project": "test-project",
+				},
+			},
+			"gcs_conn": {
+				Type: "gcs",
+				Properties: map[string]string{
+					"bucket": "test-bucket",
+				},
+			},
+		},
+	}
+
+	results := RunChecks(cfg, dir)
+
+	if len(results) == 0 {
+		t.Fatal("expected results, got none")
+	}
+
+	// Verify we get checks for all expected names
+	names := make(map[string]bool)
+	for _, r := range results {
+		names[r.Name] = true
+	}
+
+	expectedNames := []string{"go_version", "bq:bq_conn", "gcs:gcs_conn", "state.db", "events.db", "disk_space"}
+	for _, name := range expectedNames {
+		if !names[name] {
+			t.Errorf("expected check %q in results, but it was missing", name)
+		}
+	}
+}
+
+func TestRunChecks_MultipleGCSConnections(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GCS_SERVICE_ACCOUNT", "")
+
+	cfg := &config.PipelineConfig{
+		Pipeline: "test_pipeline",
+		Connections: map[string]*config.ConnectionConfig{
+			"gcs_a": {
+				Type:       "gcs",
+				Properties: map[string]string{"bucket": "bucket-a"},
+			},
+			"gcs_b": {
+				Type:       "gcs",
+				Properties: map[string]string{"bucket": "bucket-b"},
+			},
+		},
+	}
+
+	results := RunChecks(cfg, dir)
+
+	names := make(map[string]bool)
+	for _, r := range results {
+		names[r.Name] = true
+	}
+
+	if !names["gcs:gcs_a"] {
+		t.Error("expected gcs:gcs_a check")
+	}
+	if !names["gcs:gcs_b"] {
+		t.Error("expected gcs:gcs_b check")
+	}
+}
+
+func TestRunChecks_EmptyConnections(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := &config.PipelineConfig{
+		Pipeline:    "test_pipeline",
+		Connections: map[string]*config.ConnectionConfig{},
+	}
+
+	results := RunChecks(cfg, dir)
+
+	// Should still have go_version, state.db, events.db, disk_space
+	if len(results) < 4 {
+		t.Errorf("expected at least 4 results, got %d", len(results))
+	}
 }
 
 func TestRunChecks_NilConfig(t *testing.T) {

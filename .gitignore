@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+/granicus
 *.exe
 *.dll
 *.so

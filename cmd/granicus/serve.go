@@ -365,12 +365,28 @@ func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, to
 	g, _, err := buildPipelineGraph(pec.cfg, parseRoot)
 	if err != nil {
 		slog.Error("graph build error", "run_id", pec.runID, "error", err)
+		if emitErr := pec.eventStore.Emit(events.Event{
+			RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "run_failed", Severity: "error",
+			DurationMs: time.Since(start).Milliseconds(),
+			Summary:    fmt.Sprintf("Pipeline %s failed: graph build error: %v", pec.cfg.Pipeline, err),
+			Details:    map[string]any{"stage": "graph_build", "error": err.Error()},
+		}); emitErr != nil {
+			slog.Warn("event emission failed", "event_type", "run_failed", "error", emitErr)
+		}
 		return
 	}
 
 	stateStore, err := initStateBackend(pec.projectRoot, pec.cfg.Pipeline, "")
 	if err != nil {
 		slog.Error("state store error", "run_id", pec.runID, "error", err)
+		if emitErr := pec.eventStore.Emit(events.Event{
+			RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "run_failed", Severity: "error",
+			DurationMs: time.Since(start).Milliseconds(),
+			Summary:    fmt.Sprintf("Pipeline %s failed: state store error: %v", pec.cfg.Pipeline, err),
+			Details:    map[string]any{"stage": "state_init", "error": err.Error()},
+		}); emitErr != nil {
+			slog.Warn("event emission failed", "event_type", "run_failed", "error", emitErr)
+		}
 		return
 	}
 	defer stateStore.Close()

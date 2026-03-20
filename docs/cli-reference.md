@@ -259,11 +259,15 @@ granicus events [flags]
 |------|-------------|
 | `run_started` | Pipeline run began |
 | `run_completed` | Pipeline run finished |
+| `run_failed` | Pipeline run failed before execution (graph build or state init error) |
 | `pipeline_triggered` | Pipeline triggered via webhook |
-| `node_started` | Individual asset execution began |
-| `node_succeeded` | Asset completed successfully |
-| `node_failed` | Asset execution failed |
-| `node_skipped` | Asset was skipped |
+| `asset_started` | Individual asset execution began |
+| `asset_succeeded` | Asset completed successfully |
+| `asset_failed` | Asset execution failed |
+| `asset_skipped` | Asset was skipped (failed dependency) |
+| `lock_acquired` | Pipeline execution lock acquired |
+| `lock_released` | Pipeline execution lock released |
+| `lock_contention` | Pipeline run skipped (lock already held) |
 | `stale_lock_recovered` | Stale execution lock was recovered on serve startup |
 | `interval_recovered` | Orphaned interval was recovered on serve startup |
 
@@ -457,6 +461,10 @@ server:
 - Recovers orphaned intervals that have been `in_progress` longer than `--orphan-timeout`
 - Watches `--config-dir` for config file changes and reloads automatically
 - Shuts down gracefully on `SIGTERM`/`SIGINT`, draining in-progress runs (up to 5 minutes)
+
+**Config reload:** The scheduler reloads pipeline config from disk on every scheduled and polled run. This means config changes (e.g., adding assets, changing connections) take effect on the next scheduled execution without restarting the server. If a config reload fails, a `run_failed` event is emitted and the run is skipped.
+
+**Error handling:** If a pipeline run fails before asset execution (graph build error, state store init error), a `run_failed` event is emitted. This prevents ghost runs where `run_started` exists but no completion event is recorded.
 
 ---
 

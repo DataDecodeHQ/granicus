@@ -232,6 +232,32 @@ func TestGetRunSummary(t *testing.T) {
 	}
 }
 
+func TestGetRunSummary_RunFailed(t *testing.T) {
+	s := newTestStore(t)
+	s.Emit(Event{
+		RunID: "rf1", Pipeline: "pipe", EventType: "run_started",
+		Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	s.Emit(Event{
+		RunID: "rf1", Pipeline: "pipe", EventType: "run_failed", Severity: "error",
+		Timestamp:  time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC),
+		DurationMs: 1000,
+		Summary:    "Pipeline pipe failed: graph build error",
+		Details:    map[string]any{"stage": "graph_build", "error": "bad config"},
+	})
+
+	summary, err := s.GetRunSummary("rf1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Status != "failed" {
+		t.Errorf("expected status 'failed', got %q", summary.Status)
+	}
+	if summary.DurationSeconds != 1.0 {
+		t.Errorf("expected duration 1.0s, got %f", summary.DurationSeconds)
+	}
+}
+
 func TestGetRunSummary_NotFound(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.GetRunSummary("nonexistent")

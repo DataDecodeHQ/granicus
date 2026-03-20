@@ -30,6 +30,7 @@ type Scheduler struct {
 	eventStore  *events.Store
 	entries     map[string]cron.EntryID // pipeline name -> cron entry ID
 	configs     map[string]*config.PipelineConfig
+	configPaths map[string]string // pipeline name -> config file path
 }
 
 // NewScheduler creates a scheduler that loads pipeline configs from the given source and registers cron jobs.
@@ -59,6 +60,7 @@ func NewScheduler(src source.PipelineSource, projectRoot string, db *sql.DB, run
 		eventStore:  eventStore,
 		entries:     make(map[string]cron.EntryID),
 		configs:     make(map[string]*config.PipelineConfig),
+		configPaths: make(map[string]string),
 	}, nil
 }
 
@@ -82,7 +84,7 @@ func (s *Scheduler) LoadAndRegister() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	configs, err := scanConfigDir(s.configDir)
+	results, err := scanConfigDir(s.configDir)
 	if err != nil {
 		return err
 	}
@@ -93,13 +95,14 @@ func (s *Scheduler) LoadAndRegister() error {
 		delete(s.entries, name)
 	}
 	s.configs = make(map[string]*config.PipelineConfig)
+	s.configPaths = make(map[string]string)
 
 	// Register new entries
-	for name, cfg := range configs {
-		if cfg.Schedule == "" {
+	for name, sr := range results {
+		if sr.cfg.Schedule == "" {
 			continue
 		}
-		if err := s.registerPipeline(name, cfg); err != nil {
+		if err := s.registerPipeline(name, sr.cfg, sr.path); err != nil {
 			slog.Warn("scheduler skipping pipeline", "pipeline", name, "error", err)
 		}
 	}
@@ -112,7 +115,7 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	configs, err := scanConfigDir(s.configDir)
+	results, err := scanConfigDir(s.configDir)
 	if err != nil {
 		slog.Error("scheduler reload error", "error", err)
 		return
@@ -120,29 +123,30 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 
 	// Find removed
 	for name, entryID := range s.entries {
-		if _, ok := configs[name]; !ok {
+		if _, ok := results[name]; !ok {
 			s.cron.Remove(entryID)
 			delete(s.entries, name)
 			delete(s.configs, name)
+			delete(s.configPaths, name)
 			removed = append(removed, name)
 		}
 	}
 
 	// Find added and updated
-	for name, cfg := range configs {
-		if cfg.Schedule == "" {
+	for name, sr := range results {
+		if sr.cfg.Schedule == "" {
 			continue
 		}
 		oldCfg, exists := s.configs[name]
 		if !exists {
-			if err := s.registerPipeline(name, cfg); err == nil {
+			if err := s.registerPipeline(name, sr.cfg, sr.path); err == nil {
 				added = append(added, name)
 			}
-		} else if oldCfg.Schedule != cfg.Schedule {
+		} else if oldCfg.Schedule != sr.cfg.Schedule {
 			if id, ok := s.entries[name]; ok {
 				s.cron.Remove(id)
 			}
-			if err := s.registerPipeline(name, cfg); err == nil {
+			if err := s.registerPipeline(name, sr.cfg, sr.path); err == nil {
 				updated = append(updated, name)
 			}
 		}
@@ -154,35 +158,53 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 // RegisterAssetPolls registers cron entries for gcs_ingest assets with poll_interval.
 // Each poll triggers a run targeting just that asset.
 func (s *Scheduler) RegisterAssetPolls() {
-	for _, cfg := range s.configs {
+	for name, cfg := range s.configs {
+		configPath := s.configPaths[name]
 		for _, asset := range cfg.Assets {
 			if asset.Type != "gcs_ingest" || asset.PollInterval == "" {
 				continue
 			}
 			assetName := asset.Name
-			cfgCopy := *cfg
+			pipelineName := cfg.Pipeline
+			cfgPath := configPath
 			entryID, err := s.cron.AddFunc(asset.PollInterval, func() {
-				s.runWithLock(cfgCopy.Pipeline+"/"+assetName, &cfgCopy)
+				freshCfg, err := config.LoadConfig(cfgPath)
+				if err != nil {
+					slog.Error("config reload failed for poll", "pipeline", pipelineName, "asset", assetName, "error", err)
+					return
+				}
+				s.runWithLock(pipelineName+"/"+assetName, freshCfg)
 			})
 			if err != nil {
 				slog.Warn("scheduler: invalid poll_interval", "asset", assetName, "schedule", asset.PollInterval, "error", err)
 				continue
 			}
-			s.entries[cfgCopy.Pipeline+"/poll:"+assetName] = entryID
+			s.entries[cfg.Pipeline+"/poll:"+assetName] = entryID
 		}
 	}
 }
 
-func (s *Scheduler) registerPipeline(name string, cfg *config.PipelineConfig) error {
-	cfgCopy := *cfg
+func (s *Scheduler) registerPipeline(name string, cfg *config.PipelineConfig, configPath string) error {
+	pipelineName := name
+	cfgPath := configPath
 	entryID, err := s.cron.AddFunc(cfg.Schedule, func() {
-		s.runWithLock(name, &cfgCopy)
+		freshCfg, err := config.LoadConfig(cfgPath)
+		if err != nil {
+			slog.Error("config reload failed", "pipeline", pipelineName, "path", cfgPath, "error", err)
+			s.emitEvent(events.Event{
+				Pipeline: pipelineName, EventType: "run_failed", Severity: "error",
+				Summary: fmt.Sprintf("Config reload failed for %s: %v", pipelineName, err),
+			})
+			return
+		}
+		s.runWithLock(pipelineName, freshCfg)
 	})
 	if err != nil {
 		return fmt.Errorf("invalid schedule %q: %w", cfg.Schedule, err)
 	}
 	s.entries[name] = entryID
 	s.configs[name] = cfg
+	s.configPaths[name] = configPath
 	return nil
 }
 
@@ -256,13 +278,18 @@ func (s *Scheduler) Config(name string) *config.PipelineConfig {
 	return s.configs[name]
 }
 
-func scanConfigDir(dir string) (map[string]*config.PipelineConfig, error) {
+type scanResult struct {
+	cfg  *config.PipelineConfig
+	path string
+}
+
+func scanConfigDir(dir string) (map[string]scanResult, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading config dir: %w", err)
 	}
 
-	configs := make(map[string]*config.PipelineConfig)
+	results := make(map[string]scanResult)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			// Check subdirectory for pipeline.yaml (supports multi-pipeline dirs)
@@ -273,7 +300,7 @@ func scanConfigDir(dir string) (map[string]*config.PipelineConfig, error) {
 					slog.Warn("scheduler skipping config", "file", subPath, "error", cerr)
 					continue
 				}
-				configs[cfg.Pipeline] = cfg
+				results[cfg.Pipeline] = scanResult{cfg: cfg, path: subPath}
 			}
 			continue
 		}
@@ -291,8 +318,8 @@ func scanConfigDir(dir string) (map[string]*config.PipelineConfig, error) {
 			slog.Warn("scheduler skipping config", "file", name, "error", err)
 			continue
 		}
-		configs[cfg.Pipeline] = cfg
+		results[cfg.Pipeline] = scanResult{cfg: cfg, path: path}
 	}
 
-	return configs, nil
+	return results, nil
 }

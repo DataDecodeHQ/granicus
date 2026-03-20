@@ -163,6 +163,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 			estimatedBytes = dryStatus.Statistics.TotalBytesProcessed
 		}
 	}
+	// Contract: Go owns this boundary. SQL queries execute directly against BigQuery via API.
 	LogSQLExecution(asset.Name, r.Connection.Properties["dataset"], r.ValidateSQL, estimatedBytes)
 	job, err := q.Run(ctx)
 	if err != nil {
@@ -272,6 +273,9 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 	defer client.Close()
+
+	// Contract: Go owns this boundary. Check queries execute directly against BigQuery.
+	LogSQLExecution(asset.Name, r.Connection.Properties["dataset"], false, 0)
 
 	// Check queries are always single-statement SELECTs; pass @start/@end as
 	// BQ named parameters rather than substituting into the SQL string.
