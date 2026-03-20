@@ -117,6 +117,7 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 	}
 
 	// Contract: Go owns this boundary. ResultEnvelope schema in result/envelope.go
+	LogCloudRunDispatch(asset.Name, d.image, result.EnvelopeVersion, runID)
 	slog.Info("dispatching to Cloud Run Job",
 		"asset", asset.Name, "run_id", runID, "project", d.project)
 

@@ -96,9 +96,12 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 		env = append(env, "GRANICUS_DEST_PROJECT="+destConn.Properties["project"])
 		env = append(env, "GRANICUS_DEST_DATASET="+destConn.Properties["dataset"])
 	}
-	if creds := resolveGCSCredentials(srcConn); creds != "" {
-		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
+	hasCredentials := resolveGCSCredentials(srcConn) != ""
+	if hasCredentials {
+		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+resolveGCSCredentials(srcConn))
+		LogCredentialCrossing("gcs_subprocess", "gcs", asset.Name, runID)
 	}
+	LogSubprocessLaunch(asset.Name, "gcs_ingest", len(env), hasCredentials)
 
 	// Contract: Go owns this boundary. Base env + runner-specific vars. Legacy env vars preserved for backward compat.
 	sub := RunSubprocess(SubprocessConfig{
@@ -116,6 +119,7 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 	} else {
 		result.Metadata = parseMetaLines(sub.Stdout)
 	}
+	LogSubprocessComplete(asset.Name, "gcs_ingest", result.ExitCode, result.Duration, result.Metadata != nil)
 
 	return result
 }

@@ -78,9 +78,12 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	if pp := r.Connection.Properties["partition_prefix"]; pp != "" {
 		env = append(env, "GRANICUS_GCS_PARTITION_PREFIX="+pp)
 	}
-	if creds := resolveGCSCredentials(r.Connection); creds != "" {
-		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
+	hasCredentials := resolveGCSCredentials(r.Connection) != ""
+	if hasCredentials {
+		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+resolveGCSCredentials(r.Connection))
+		LogCredentialCrossing("gcs_subprocess", "gcs", asset.Name, runID)
 	}
+	LogSubprocessLaunch(asset.Name, "gcs", len(env), hasCredentials)
 
 	// Contract: Go owns this boundary. Base env + runner-specific vars. Legacy env vars preserved for backward compat.
 	sub := RunSubprocess(SubprocessConfig{
@@ -95,6 +98,7 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
 		result.Metadata = meta
 	}
+	LogSubprocessComplete(asset.Name, "gcs", result.ExitCode, result.Duration, result.Metadata != nil)
 
 	return result
 }
@@ -149,12 +153,17 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 		"GRANICUS_S3_ENDPOINT="+endpoint,
 		"GRANICUS_S3_PREFIX="+r.Connection.Properties["prefix"],
 	)
+	hasS3Credentials := r.Connection.Properties["access_key"] != "" || r.Connection.Properties["secret_key"] != ""
 	if key := r.Connection.Properties["access_key"]; key != "" {
 		env = append(env, "AWS_ACCESS_KEY_ID="+key)
 	}
 	if secret := r.Connection.Properties["secret_key"]; secret != "" {
 		env = append(env, "AWS_SECRET_ACCESS_KEY="+secret)
 	}
+	if hasS3Credentials {
+		LogCredentialCrossing("s3_subprocess", "s3", asset.Name, runID)
+	}
+	LogSubprocessLaunch(asset.Name, "s3", len(env), hasS3Credentials)
 
 	sub := RunSubprocess(SubprocessConfig{
 		Command: inferCommand(asset.Source, projectRoot),
@@ -168,6 +177,7 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
 		result.Metadata = meta
 	}
+	LogSubprocessComplete(asset.Name, "s3", result.ExitCode, result.Duration, result.Metadata != nil)
 
 	return result
 }

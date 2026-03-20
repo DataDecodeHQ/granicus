@@ -157,6 +157,7 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 	})
 
 	// Contract: Go owns this boundary. Base env vars per contracts/env_contract.json
+	LogSubprocessLaunch(asset.Name, "shell", len(env), false)
 	start := time.Now()
 	sub := RunSubprocess(SubprocessConfig{
 		Command: []string{"bash", asset.Source},
@@ -170,6 +171,7 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
 		result.Metadata = meta
 	}
+	LogSubprocessComplete(asset.Name, "shell", result.ExitCode, result.Duration, result.Metadata != nil)
 
 	return result
 }

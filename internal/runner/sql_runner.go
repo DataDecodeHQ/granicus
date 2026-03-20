@@ -19,9 +19,10 @@ import (
 )
 
 type SQLRunner struct {
-	Timeout    time.Duration
-	Connection *config.ConnectionConfig
-	FuncMap    template.FuncMap
+	Timeout     time.Duration
+	Connection  *config.ConnectionConfig
+	FuncMap     template.FuncMap
+	ValidateSQL bool
 }
 
 // NewSQLRunner creates a SQLRunner for the given BigQuery connection.
@@ -109,6 +110,60 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 			Value: asset.IntervalEnd,
 		})
 	}
+	var estimatedBytes int64
+	if r.ValidateSQL {
+		dryQ := client.Query(string(rendered))
+		dryQ.DryRun = true
+		if !isMultiStatementScript(rendered) && asset.IntervalStart != "" {
+			dryQ.Parameters = append(dryQ.Parameters, bigquery.QueryParameter{
+				Name:  "start",
+				Value: asset.IntervalStart,
+			})
+			dryQ.Parameters = append(dryQ.Parameters, bigquery.QueryParameter{
+				Name:  "end",
+				Value: asset.IntervalEnd,
+			})
+		}
+		dryJob, dryErr := dryQ.Run(ctx)
+		if dryErr != nil {
+			return NodeResult{
+				AssetName: asset.Name,
+				Status:    "failed",
+				StartTime: start,
+				EndTime:   time.Now(),
+				Duration:  time.Since(start),
+				Error:     fmt.Sprintf("dry-run validation failed: %v", dryErr),
+				ExitCode:  1,
+			}
+		}
+		dryStatus, dryErr := dryJob.Wait(ctx)
+		if dryErr != nil {
+			return NodeResult{
+				AssetName: asset.Name,
+				Status:    "failed",
+				StartTime: start,
+				EndTime:   time.Now(),
+				Duration:  time.Since(start),
+				Error:     fmt.Sprintf("dry-run validation failed: %v", dryErr),
+				ExitCode:  1,
+			}
+		}
+		if dryStatus.Err() != nil {
+			return NodeResult{
+				AssetName: asset.Name,
+				Status:    "failed",
+				StartTime: start,
+				EndTime:   time.Now(),
+				Duration:  time.Since(start),
+				Error:     fmt.Sprintf("dry-run validation failed: %v", dryStatus.Err()),
+				ExitCode:  1,
+			}
+		}
+		if dryStatus.Statistics != nil {
+			estimatedBytes = dryStatus.Statistics.TotalBytesProcessed
+		}
+	}
+	LogSQLExecution(asset.Name, r.Connection.Properties["dataset"], r.ValidateSQL, estimatedBytes)
 	job, err := q.Run(ctx)
 	if err != nil {
 		return NodeResult{

@@ -82,12 +82,18 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		Refs:         refs,
 	})
 
+	hasCredentials := (destConn != nil && destConn.Properties["credentials"] != "") ||
+		(srcConn != nil && srcConn.Properties["credentials"] != "")
+
 	if destConn != nil && destConn.Properties["credentials"] != "" {
 		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", destConn.Name, "credential_method", "file")
+		LogCredentialCrossing("python_subprocess", destConn.Type, asset.Name, runID)
 	}
 	if srcConn != nil && srcConn.Properties["credentials"] != "" {
 		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", srcConn.Name, "credential_method", "file")
+		LogCredentialCrossing("python_subprocess", srcConn.Type, asset.Name, runID)
 	}
+	LogSubprocessLaunch(asset.Name, "python", len(env), hasCredentials)
 
 	if err := validateEnv(env, asset.Name, runID); err != nil {
 		return NodeResult{
@@ -120,6 +126,7 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 			result.Metadata = meta
 		}
 	}
+	LogSubprocessComplete(asset.Name, "python", result.ExitCode, result.Duration, result.Metadata != nil)
 
 	return result
 }
