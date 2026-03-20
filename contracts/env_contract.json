@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DataDecodeHQ/granicus/contracts/env_contract.json",
+  "title": "Granicus Environment Contract",
+  "description": "Defines environment variables set by PythonRunner (and ShellRunner) when launching subprocess assets, plus the metadata output shape written back to Go.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "GRANICUS_ASSET_NAME",
+    "GRANICUS_RUN_ID",
+    "GRANICUS_PROJECT_ROOT",
+    "GRANICUS_METADATA_PATH"
+  ],
+  "properties": {
+    "GRANICUS_ASSET_NAME": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the asset being executed."
+    },
+    "GRANICUS_RUN_ID": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this pipeline run."
+    },
+    "GRANICUS_PROJECT_ROOT": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path to the pipeline project root directory."
+    },
+    "GRANICUS_METADATA_PATH": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path to the temp JSON file where the subprocess writes MetadataOutput back to Go."
+    },
+    "GRANICUS_INTERVAL_START": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date marking the start of the execution interval. Present only for scheduled runs."
+    },
+    "GRANICUS_INTERVAL_END": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date marking the end (exclusive) of the execution interval. Present only for scheduled runs."
+    },
+    "GRANICUS_DEST_CONNECTION": {
+      "type": "string",
+      "description": "JSON-encoded destination ConnectionConfig. Must parse to a ConnectionConfig object.",
+      "contentMediaType": "application/json",
+      "contentSchema": { "$ref": "#/$defs/ConnectionConfig" }
+    },
+    "GRANICUS_SOURCE_CONNECTION": {
+      "type": "string",
+      "description": "JSON-encoded source ConnectionConfig. Must parse to a ConnectionConfig object.",
+      "contentMediaType": "application/json",
+      "contentSchema": { "$ref": "#/$defs/ConnectionConfig" }
+    },
+    "GRANICUS_REFS": {
+      "type": "string",
+      "description": "JSON-encoded map of dependency asset name to resolved table reference (e.g. project.dataset.table).",
+      "contentMediaType": "application/json",
+      "contentSchema": { "$ref": "#/$defs/RefsMap" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "ConnectionConfig": {
+      "type": "object",
+      "title": "ConnectionConfig",
+      "description": "Parsed shape of GRANICUS_DEST_CONNECTION and GRANICUS_SOURCE_CONNECTION.",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Connection name as defined in pipeline config."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Backend type identifier (e.g. bigquery, postgres, duckdb).",
+          "examples": ["bigquery", "postgres", "duckdb", "gcs"]
+        }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "description": "Arbitrary string properties forwarded from pipeline connection config."
+      }
+    },
+    "RefsMap": {
+      "type": "object",
+      "title": "RefsMap",
+      "description": "Parsed shape of GRANICUS_REFS. Maps dependency asset name to fully-qualified table reference.",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "examples": [
+        {
+          "upstream_table": "myproject.mydataset.upstream_table"
+        }
+      ]
+    },
+    "MetadataOutput": {
+      "type": "object",
+      "title": "MetadataOutput",
+      "description": "Shape of the JSON file written by the subprocess to GRANICUS_METADATA_PATH. All fields are optional; Go merges whatever is present.",
+      "properties": {
+        "rows_affected": {
+          "type": "number",
+          "description": "Number of rows inserted, updated, or deleted by the primary operation."
+        },
+        "tables_created": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of tables created or replaced during the run."
+        },
+        "duration_seconds": {
+          "type": "number",
+          "description": "Wall-clock duration of the subprocess work in seconds."
+        },
+        "rows_loaded": {
+          "type": "number",
+          "description": "Number of rows loaded in load operations (e.g. GCS -> BQ)."
+        },
+        "load_duration": {
+          "type": "number",
+          "description": "Duration of the load phase in seconds."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-extensions": {
+    "description": "Non-standard GRANICUS_* variables found in Python scripts. These are NOT set by PythonRunner; individual scripts set or consume them outside the standard contract.",
+    "vars": {
+      "GRANICUS_GCS_BUCKET": {
+        "type": "string",
+        "description": "GCS bucket name used by scripts that read from or write to Google Cloud Storage. Set by the calling environment, not by PythonRunner."
+      },
+      "GRANICUS_GCS_PREFIX": {
+        "type": "string",
+        "description": "GCS object key prefix used alongside GRANICUS_GCS_BUCKET. Set by the calling environment, not by PythonRunner."
+      },
+      "GRANICUS_PIPELINE_DIR": {
+        "type": "string",
+        "description": "Absolute path to the specific pipeline subdirectory. Some scripts set this themselves derived from GRANICUS_PROJECT_ROOT; not injected by PythonRunner."
+      }
+    }
+  }
+}

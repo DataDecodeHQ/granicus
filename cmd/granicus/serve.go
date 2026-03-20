@@ -76,9 +76,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		serverCfg = &config.ServerConfig{Server: config.ServerSettings{Port: 8080}}
 	}
 
-	if envName != "dev" && envName != "test" && len(serverCfg.Server.APIKeys) == 0 {
-		slog.Error("refusing to start server without API keys in non-dev environment", "env", envName)
-		return fmt.Errorf("api_keys must be configured in server config for environment %q", envName)
+	var apiKeys []server.APIKey
+	for _, k := range serverCfg.Server.APIKeys {
+		apiKeys = append(apiKeys, server.APIKey{Name: k.Name, Key: k.Key})
+	}
+	if err := server.ValidateAuth(apiKeys); err != nil {
+		slog.Error("auth validation failed", "env", envName, "error", err)
+		return fmt.Errorf("auth validation: %w", err)
 	}
 
 	// Load environment config (optional)
@@ -218,11 +222,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build HTTP server
-	var apiKeys []server.APIKey
-	for _, k := range serverCfg.Server.APIKeys {
-		apiKeys = append(apiKeys, server.APIKey{Name: k.Name, Key: k.Key})
-	}
-
 	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, eventStore,
 		func(cfg *config.PipelineConfig, pr string, runID string, req server.TriggerRequest) {
 			pec := PipelineExecContext{

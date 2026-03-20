@@ -78,3 +78,67 @@ func TestAuth_NoKeysConfigured_PassesThrough(t *testing.T) {
 		t.Errorf("expected 200 when no keys, got %d", w.Code)
 	}
 }
+
+func TestIsCloudMode_Local(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "")
+	t.Setenv("GRANICUS_PIPELINE_SOURCE", "")
+
+	if IsCloudMode() {
+		t.Error("expected false with no env vars set")
+	}
+}
+
+func TestIsCloudMode_Firestore(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "firestore")
+	t.Setenv("GRANICUS_PIPELINE_SOURCE", "")
+
+	if !IsCloudMode() {
+		t.Error("expected true when GRANICUS_STATE_BACKEND=firestore")
+	}
+}
+
+func TestIsCloudMode_GCS(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "")
+	t.Setenv("GRANICUS_PIPELINE_SOURCE", "gcs")
+
+	if !IsCloudMode() {
+		t.Error("expected true when GRANICUS_PIPELINE_SOURCE=gcs")
+	}
+}
+
+func TestValidateAuth_LocalNoKeys(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "")
+	t.Setenv("GRANICUS_PIPELINE_SOURCE", "")
+
+	if err := ValidateAuth(nil); err != nil {
+		t.Errorf("expected nil in local mode with no keys, got %v", err)
+	}
+}
+
+func TestValidateAuth_CloudNoKeys(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "firestore")
+	t.Setenv("GRANICUS_REQUIRE_AUTH", "")
+
+	if err := ValidateAuth(nil); err == nil {
+		t.Error("expected error in cloud mode with no keys")
+	}
+}
+
+func TestValidateAuth_CloudWithKeys(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "firestore")
+	t.Setenv("GRANICUS_REQUIRE_AUTH", "")
+
+	keys := []APIKey{{Name: "prod", Key: "grnc_sk_prod123"}}
+	if err := ValidateAuth(keys); err != nil {
+		t.Errorf("expected nil in cloud mode with keys, got %v", err)
+	}
+}
+
+func TestValidateAuth_CloudOverride(t *testing.T) {
+	t.Setenv("GRANICUS_STATE_BACKEND", "firestore")
+	t.Setenv("GRANICUS_REQUIRE_AUTH", "false")
+
+	if err := ValidateAuth(nil); err != nil {
+		t.Errorf("expected nil when GRANICUS_REQUIRE_AUTH=false, got %v", err)
+	}
+}
