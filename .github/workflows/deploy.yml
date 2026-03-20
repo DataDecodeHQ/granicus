@@ -139,7 +139,7 @@ jobs:
             --cpu 1 \
             --concurrency 1 \
             --ingress all \
-            --no-allow-unauthenticated \
+            --allow-unauthenticated \
             --no-cpu-throttling \
             --cpu-boost \
             --min-instances 0 \

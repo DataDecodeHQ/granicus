@@ -78,6 +78,14 @@ resource "google_cloud_run_v2_service" "engine" {
   }
 }
 
+resource "google_cloud_run_service_iam_member" "public_invoker" {
+  service  = google_cloud_run_v2_service.engine.name
+  project  = var.project_id
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 resource "google_cloud_run_v2_job" "python_runner" {
   # description: Cloud Run Job for dispatched Python pipeline tasks
   name     = "granicus-python-runner"

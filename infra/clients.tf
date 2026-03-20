@@ -51,6 +51,13 @@ resource "google_secret_manager_secret_iam_member" "deploy_client_sa" {
   member    = "serviceAccount:${google_service_account.deploy.email}"
 }
 
+# --- API key for scheduler auth ---
+
+data "google_secret_manager_secret_version" "api_key" {
+  secret  = google_secret_manager_secret.api_key.secret_id
+  project = var.project_id
+}
+
 # --- Scheduler jobs: one per pipeline (from pipeline.yaml via sync script) ---
 
 resource "google_cloud_scheduler_job" "pipeline" {
@@ -63,17 +70,13 @@ resource "google_cloud_scheduler_job" "pipeline" {
   description = "Triggers Granicus pipeline ${each.key} on schedule (${each.value.schedule})"
 
   http_target {
-    uri         = "${google_cloud_run_v2_service.engine.uri}/api/v1/pipelines/${each.key}/trigger"
+    uri         = "${google_cloud_run_v2_service.engine.uri}/api/v1/trigger/${each.key}"
     http_method = "POST"
     headers = {
-      "Content-Type" = "application/json"
+      "Content-Type"  = "application/json"
+      "Authorization" = "Bearer ${data.google_secret_manager_secret_version.api_key.secret_data}"
     }
     body = base64encode(jsonencode({ pipeline = each.key }))
-
-    oidc_token {
-      service_account_email = google_service_account.scheduler.email
-      audience              = google_cloud_run_v2_service.engine.uri
-    }
   }
 }
 
