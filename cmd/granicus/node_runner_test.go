@@ -163,84 +163,54 @@ func TestNodeRunner_ConnectionForAsset_UnknownConnectionName(t *testing.T) {
 	}
 }
 
-// ---- Asset resolution logic: dataset resolution ----
-// These mirror the dataset resolution block inside both runnerFunc closures:
-//
-//   assetCfg := findAssetConfig(cfg, asset.Name)
-//   resolvedDataset := ""
-//   if assetCfg != nil {
-//       defaultDS := ""
-//       if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-//           defaultDS = conn.Properties["dataset"]
-//       }
-//       resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
-//   }
+// ---- resolveAssetRuntime tests ----
 
-func TestNodeRunner_AssetResolution_DatasetFromDestinationConnection(t *testing.T) {
+func TestResolveAssetRuntime_DatasetFromDestinationConnection(t *testing.T) {
 	cfg := minimalPipelineConfig()
-	assetCfg := findAssetConfig(cfg, "stg_orders")
-	if assetCfg == nil {
-		t.Fatal("asset not found")
-	}
-
-	defaultDS := ""
-	if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-		defaultDS = conn.Properties["dataset"]
-	}
-	resolved := cfg.DatasetForAsset(*assetCfg, defaultDS)
-
-	// stg_orders: dest_conn=bq_main → dataset=main_dataset; DatasetForAsset checks
-	// dest_conn first so it returns main_dataset.
-	if resolved != "main_dataset" {
-		t.Errorf("expected %q, got %q", "main_dataset", resolved)
+	dataset, _, _ := resolveAssetRuntime(cfg, "stg_orders")
+	// stg_orders: dest_conn=bq_main → dataset=main_dataset
+	if dataset != "main_dataset" {
+		t.Errorf("expected %q, got %q", "main_dataset", dataset)
 	}
 }
 
-func TestNodeRunner_AssetResolution_DatasetFromLayerMapping(t *testing.T) {
+func TestResolveAssetRuntime_DatasetFromLayerMapping(t *testing.T) {
 	cfg := minimalPipelineConfig()
-	// Use an asset config with layer=staging but no destination_connection,
-	// so DatasetForAsset falls through to layer mapping.
-	assetCfg := config.AssetConfig{
-		Name:  "layer_only",
+	dataset, _, _ := resolveAssetRuntime(cfg, "int_orders")
+	// int_orders: dest_conn=bq_raw → dataset=raw_dataset (dest conn wins over layer mapping)
+	if dataset != "raw_dataset" {
+		t.Errorf("expected %q, got %q", "raw_dataset", dataset)
+	}
+}
+
+func TestResolveAssetRuntime_DatasetFromLayerMappingNoConnection(t *testing.T) {
+	cfg := minimalPipelineConfig()
+	cfg.Assets = append(cfg.Assets, config.AssetConfig{
+		Name:  "layer_only_asset",
 		Type:  "sql",
 		Layer: "staging",
-	}
-	resolved := cfg.DatasetForAsset(assetCfg, "fallback_dataset")
-
-	// staging maps to staging_dataset in cfg.Datasets.
-	if resolved != "staging_dataset" {
-		t.Errorf("expected %q, got %q", "staging_dataset", resolved)
+	})
+	dataset, _, _ := resolveAssetRuntime(cfg, "layer_only_asset")
+	if dataset != "staging_dataset" {
+		t.Errorf("expected %q, got %q", "staging_dataset", dataset)
 	}
 }
 
-func TestNodeRunner_AssetResolution_DatasetFallbackToDefault(t *testing.T) {
+func TestResolveAssetRuntime_UnknownAssetReturnsEmpty(t *testing.T) {
 	cfg := minimalPipelineConfig()
-	// analytics is not in cfg.Datasets and has no destination_connection.
-	assetCfg := config.AssetConfig{
-		Name:  "bare_asset",
-		Type:  "sql",
-		Layer: "analytics",
+	dataset, destConn, sourceConn := resolveAssetRuntime(cfg, "nonexistent")
+	if dataset != "" {
+		t.Errorf("expected empty dataset, got %q", dataset)
 	}
-	resolved := cfg.DatasetForAsset(assetCfg, "fallback_dataset")
-
-	if resolved != "fallback_dataset" {
-		t.Errorf("expected %q, got %q", "fallback_dataset", resolved)
+	if destConn != nil {
+		t.Error("expected nil destConn for unknown asset")
 	}
-}
-
-func TestNodeRunner_AssetResolution_NoLayerNoConnection(t *testing.T) {
-	cfg := minimalPipelineConfig()
-	assetCfg := config.AssetConfig{Name: "bare"}
-	resolved := cfg.DatasetForAsset(assetCfg, "explicit_default")
-	if resolved != "explicit_default" {
-		t.Errorf("expected %q, got %q", "explicit_default", resolved)
+	if sourceConn != nil {
+		t.Error("expected nil sourceConn for unknown asset")
 	}
 }
 
-// ---- Connection resolution for Python/shell runners (dest/source conn) ----
-// Mirrors the resolvedDestConn/resolvedSourceConn block present in both runnerFunc closures.
-
-func TestNodeRunner_AssetResolution_DestAndSourceConnections(t *testing.T) {
+func TestResolveAssetRuntime_DestAndSourceConnections(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Connections: map[string]*config.ConnectionConfig{
 			"bq_dest": {
@@ -264,38 +234,21 @@ func TestNodeRunner_AssetResolution_DestAndSourceConnections(t *testing.T) {
 		},
 	}
 
-	assetCfg := findAssetConfig(cfg, "my_asset")
-	if assetCfg == nil {
-		t.Fatal("asset not found")
-	}
+	_, destConn, sourceConn := resolveAssetRuntime(cfg, "my_asset")
 
-	// Replicate the resolution logic from the runnerFunc closures.
-	var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
-	if assetCfg.DestinationConnection != "" {
-		if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
-			resolvedDestConn = conn
-		}
-	}
-	if assetCfg.SourceConnection != "" {
-		if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
-			resolvedSourceConn = conn
-		}
-	}
-
-	if resolvedDestConn == nil {
+	if destConn == nil {
 		t.Error("expected non-nil destination connection")
-	} else if resolvedDestConn.Properties["dataset"] != "dest_ds" {
-		t.Errorf("dest dataset: expected %q, got %q", "dest_ds", resolvedDestConn.Properties["dataset"])
+	} else if destConn.Properties["dataset"] != "dest_ds" {
+		t.Errorf("dest dataset: expected %q, got %q", "dest_ds", destConn.Properties["dataset"])
 	}
-
-	if resolvedSourceConn == nil {
+	if sourceConn == nil {
 		t.Error("expected non-nil source connection")
-	} else if resolvedSourceConn.Properties["dataset"] != "src_ds" {
-		t.Errorf("src dataset: expected %q, got %q", "src_ds", resolvedSourceConn.Properties["dataset"])
+	} else if sourceConn.Properties["dataset"] != "src_ds" {
+		t.Errorf("src dataset: expected %q, got %q", "src_ds", sourceConn.Properties["dataset"])
 	}
 }
 
-func TestNodeRunner_AssetResolution_MissingConnectionsResolveToNil(t *testing.T) {
+func TestResolveAssetRuntime_MissingConnectionsResolveToNil(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Connections: map[string]*config.ConnectionConfig{},
 		Assets: []config.AssetConfig{
@@ -306,28 +259,26 @@ func TestNodeRunner_AssetResolution_MissingConnectionsResolveToNil(t *testing.T)
 			},
 		},
 	}
-	assetCfg := findAssetConfig(cfg, "asset_a")
-	if assetCfg == nil {
-		t.Fatal("asset not found")
-	}
-
-	var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
-	if assetCfg.DestinationConnection != "" {
-		if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
-			resolvedDestConn = conn
-		}
-	}
-	if assetCfg.SourceConnection != "" {
-		if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
-			resolvedSourceConn = conn
-		}
-	}
-
-	if resolvedDestConn != nil {
+	_, destConn, sourceConn := resolveAssetRuntime(cfg, "asset_a")
+	if destConn != nil {
 		t.Error("expected nil dest connection for missing name")
 	}
-	if resolvedSourceConn != nil {
+	if sourceConn != nil {
 		t.Error("expected nil source connection for missing name")
+	}
+}
+
+func TestResolveAssetRuntime_NoConnectionNoLayer(t *testing.T) {
+	cfg := minimalPipelineConfig()
+	dataset, destConn, sourceConn := resolveAssetRuntime(cfg, "no_connection_asset")
+	if dataset != "" {
+		t.Errorf("expected empty dataset, got %q", dataset)
+	}
+	if destConn != nil {
+		t.Error("expected nil destConn")
+	}
+	if sourceConn != nil {
+		t.Error("expected nil sourceConn")
 	}
 }
 
@@ -777,67 +728,164 @@ func TestNodeRunner_LogEmit_StoreReceivesEvent(t *testing.T) {
 	}
 }
 
-// ---- Stdout/Stderr truncation guard ----
-// Both runnerFunc closures cap Stdout/Stderr at 10*1024 bytes before emitting
-// a node_failed event. These tests lock down the threshold and truncation marker.
+// ---- emitNodeResult tests ----
 
-func TestNodeRunner_Truncation_LargeOutputTruncatedAt10KB(t *testing.T) {
+func TestEmitNodeResult_SuccessEmitsNodeSucceeded(t *testing.T) {
+	store := newTestEventStore(t)
+	cfg := minimalPipelineConfig()
+	asset := config.AssetConfig{Name: "stg_orders", Source: "models/stg_orders.sql"}
+	r := runner.NodeResult{
+		AssetName: "stg_orders",
+		Status:    "success",
+		ExitCode:  0,
+	}
+
+	emitNodeResult(store, "run_001", cfg, asset, r)
+
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_001", EventType: "node_succeeded"})
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 node_succeeded event, got %d", len(emitted))
+	}
+	if emitted[0].Asset != "stg_orders" {
+		t.Errorf("Asset: expected %q, got %q", "stg_orders", emitted[0].Asset)
+	}
+}
+
+func TestEmitNodeResult_FailureEmitsNodeFailed(t *testing.T) {
+	store := newTestEventStore(t)
+	cfg := minimalPipelineConfig()
+	asset := config.AssetConfig{Name: "bad_asset", Source: "models/bad.sql"}
+	r := runner.NodeResult{
+		AssetName: "bad_asset",
+		Status:    "failed",
+		Error:     "exit status 1",
+		Stderr:    "syntax error",
+		ExitCode:  1,
+	}
+
+	emitNodeResult(store, "run_002", cfg, asset, r)
+
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_002", EventType: "node_failed"})
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 node_failed event, got %d", len(emitted))
+	}
+	if emitted[0].Severity != "error" {
+		t.Errorf("Severity: expected %q, got %q", "error", emitted[0].Severity)
+	}
+}
+
+func TestEmitNodeResult_SuccessDoesNotEmitNodeFailed(t *testing.T) {
+	store := newTestEventStore(t)
+	cfg := minimalPipelineConfig()
+	asset := config.AssetConfig{Name: "stg_orders"}
+	r := runner.NodeResult{AssetName: "stg_orders", Status: "success"}
+
+	emitNodeResult(store, "run_003", cfg, asset, r)
+
+	failed, err := store.Query(events.QueryFilters{RunID: "run_003", EventType: "node_failed"})
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("expected no node_failed events for success, got %d", len(failed))
+	}
+}
+
+func TestEmitNodeResult_LargeStdoutTruncatedAt10KB(t *testing.T) {
+	store := newTestEventStore(t)
+	cfg := minimalPipelineConfig()
+	asset := config.AssetConfig{Name: "big_out"}
+
 	const truncLimit = 10 * 1024
-	const marker = "[truncated]"
-
 	largeBuf := make([]byte, truncLimit+100)
 	for i := range largeBuf {
 		largeBuf[i] = 'x'
 	}
-	output := string(largeBuf)
-
-	var truncated string
-	if len(output) > truncLimit {
-		truncated = output[:truncLimit] + marker
-	} else {
-		truncated = output
+	r := runner.NodeResult{
+		AssetName: "big_out",
+		Status:    "failed",
+		Stdout:    string(largeBuf),
+		Stderr:    "",
 	}
 
-	if len(truncated) != truncLimit+len(marker) {
-		t.Errorf("expected length %d, got %d", truncLimit+len(marker), len(truncated))
-	}
-	if truncated[truncLimit:] != marker {
-		t.Errorf("expected truncation marker at byte position %d", truncLimit)
-	}
-}
+	emitNodeResult(store, "run_004", cfg, asset, r)
 
-func TestNodeRunner_Truncation_ShortOutputNotTruncated(t *testing.T) {
-	const truncLimit = 10 * 1024
-	short := "small output"
-
-	var result string
-	if len(short) > truncLimit {
-		result = short[:truncLimit] + "[truncated]"
-	} else {
-		result = short
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_004", EventType: "node_failed"})
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
 	}
-
-	if result != short {
-		t.Errorf("short output should not be truncated, got %q", result)
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(emitted))
+	}
+	stdout, _ := emitted[0].Details["stdout"].(string)
+	if len(stdout) != truncLimit+len("[truncated]") {
+		t.Errorf("expected truncated stdout length %d, got %d", truncLimit+len("[truncated]"), len(stdout))
+	}
+	if stdout[truncLimit:] != "[truncated]" {
+		t.Errorf("expected truncation marker at byte %d", truncLimit)
 	}
 }
 
-func TestNodeRunner_Truncation_ExactlyAtLimitNotTruncated(t *testing.T) {
+func TestEmitNodeResult_LargeStderrTruncatedAt10KB(t *testing.T) {
+	store := newTestEventStore(t)
+	cfg := minimalPipelineConfig()
+	asset := config.AssetConfig{Name: "big_err"}
+
 	const truncLimit = 10 * 1024
-	exact := make([]byte, truncLimit)
-	for i := range exact {
-		exact[i] = 'a'
+	largeBuf := make([]byte, truncLimit+50)
+	for i := range largeBuf {
+		largeBuf[i] = 'e'
 	}
-	output := string(exact)
-
-	var result string
-	if len(output) > truncLimit {
-		result = output[:truncLimit] + "[truncated]"
-	} else {
-		result = output
+	r := runner.NodeResult{
+		AssetName: "big_err",
+		Status:    "failed",
+		Stdout:    "",
+		Stderr:    string(largeBuf),
 	}
 
-	if result != output {
-		t.Errorf("output at exact limit should not be truncated")
+	emitNodeResult(store, "run_005", cfg, asset, r)
+
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_005", EventType: "node_failed"})
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(emitted))
+	}
+	stderr, _ := emitted[0].Details["stderr"].(string)
+	if len(stderr) != truncLimit+len("[truncated]") {
+		t.Errorf("expected truncated stderr length %d, got %d", truncLimit+len("[truncated]"), len(stderr))
+	}
+}
+
+func TestEmitNodeResult_ShortOutputNotTruncated(t *testing.T) {
+	store := newTestEventStore(t)
+	cfg := minimalPipelineConfig()
+	asset := config.AssetConfig{Name: "small_out"}
+	r := runner.NodeResult{
+		AssetName: "small_out",
+		Status:    "failed",
+		Stdout:    "small output",
+		Stderr:    "small error",
+	}
+
+	emitNodeResult(store, "run_006", cfg, asset, r)
+
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_006", EventType: "node_failed"})
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(emitted))
+	}
+	stdout, _ := emitted[0].Details["stdout"].(string)
+	if stdout != "small output" {
+		t.Errorf("expected untruncated stdout, got %q", stdout)
 	}
 }

@@ -44,6 +44,18 @@ func newServeCmd() *cobra.Command {
 	return serveCmd
 }
 
+// PipelineExecContext bundles the shared dependencies needed to execute a pipeline run.
+type PipelineExecContext struct {
+	cfg         *config.PipelineConfig
+	projectRoot string
+	runID       string
+	eventStore  *events.Store
+	dispatch    runner.RunnerDispatch
+	ctx         context.Context
+	poolMgr     *pool.PoolManager
+	assetPools  map[string]string
+}
+
 func runServe(cmd *cobra.Command, args []string) error {
 	logging.Init(true)
 
@@ -161,7 +173,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build run function
 	dispatch := backends.Dispatch
 	runFunc := func(cfg *config.PipelineConfig, pr string) {
-		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore, dispatch, shutdownCtx)
+		pec := PipelineExecContext{
+			cfg:         cfg,
+			projectRoot: pr,
+			eventStore:  eventStore,
+			dispatch:    dispatch,
+			ctx:         shutdownCtx,
+		}
+		runPipelineForScheduler(pec, envName, envCfg)
 	}
 
 	pipeSrc := backends.Source
@@ -208,7 +227,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, eventStore,
 		func(cfg *config.PipelineConfig, pr string, runID string, req server.TriggerRequest) {
-			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req, dispatch, shutdownCtx)
+			pec := PipelineExecContext{
+				cfg:         cfg,
+				projectRoot: pr,
+				runID:       runID,
+				eventStore:  eventStore,
+				dispatch:    dispatch,
+				ctx:         shutdownCtx,
+			}
+			runPipelineForTrigger(pec, envName, envCfg, req)
 		},
 	)
 	srv.SetShutdownCtx(shutdownCtx)
@@ -268,52 +295,52 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, dispatch runner.RunnerDispatch, ctx context.Context) {
+func runPipelineForScheduler(pec PipelineExecContext, envName string, envCfg *config.EnvironmentConfig) {
 	if envCfg != nil {
-		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
+		merged, err := config.MergeEnvironment(pec.cfg, envCfg, envName)
 		if err == nil {
-			cfg = merged
+			pec.cfg = merged
 		}
 	}
 
-	runID := events.GenerateRunID()
-	slog.Info("scheduled run", "pipeline", cfg.Pipeline, "run_id", runID)
-	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools, dispatch, ctx)
+	pec.runID = events.GenerateRunID()
+	slog.Info("scheduled run", "pipeline", pec.cfg.Pipeline, "run_id", pec.runID)
+	pec.poolMgr, pec.assetPools = buildPoolManager(pec.cfg)
+	executePipeline(pec, nil, "", "", "scheduled")
 }
 
-func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest, dispatch runner.RunnerDispatch, ctx context.Context) {
+func runPipelineForTrigger(pec PipelineExecContext, envName string, envCfg *config.EnvironmentConfig, req server.TriggerRequest) {
 	if envCfg != nil {
-		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
+		merged, err := config.MergeEnvironment(pec.cfg, envCfg, envName)
 		if err == nil {
-			cfg = merged
+			pec.cfg = merged
 		}
 	}
 
-	slog.Info("triggered run", "pipeline", cfg.Pipeline, "run_id", runID)
+	slog.Info("triggered run", "pipeline", pec.cfg.Pipeline, "run_id", pec.runID)
 
-	if err := eventStore.Emit(events.Event{
-		RunID: runID, Pipeline: cfg.Pipeline, EventType: "pipeline_triggered",
+	if err := pec.eventStore.Emit(events.Event{
+		RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "pipeline_triggered",
 		Severity: "info",
-		Summary:  fmt.Sprintf("Pipeline %s triggered via webhook", cfg.Pipeline),
+		Summary:  fmt.Sprintf("Pipeline %s triggered via webhook", pec.cfg.Pipeline),
 		Details:  map[string]any{"assets": req.Assets, "from_date": req.FromDate, "to_date": req.ToDate},
 	}); err != nil {
 		slog.Warn("event emission failed", "event_type", "pipeline_triggered", "error", err)
 	}
 
-	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools, dispatch, ctx)
+	pec.poolMgr, pec.assetPools = buildPoolManager(pec.cfg)
+	executePipeline(pec, req.Assets, req.FromDate, req.ToDate, "webhook")
 }
 
-func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string, dispatch runner.RunnerDispatch, ctx context.Context) {
+func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, toDate, trigger string) {
 	start := time.Now()
 
-	if err := eventStore.Emit(events.Event{
-		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started", Severity: "info",
-		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
+	if err := pec.eventStore.Emit(events.Event{
+		RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "run_started", Severity: "info",
+		Summary: fmt.Sprintf("Pipeline %s started", pec.cfg.Pipeline),
 		Details: map[string]any{
-			"asset_count":  len(cfg.Assets),
-			"max_parallel": cfg.MaxParallel,
+			"asset_count":  len(pec.cfg.Assets),
+			"max_parallel": pec.cfg.MaxParallel,
 			"asset_filter": assetFilter,
 			"trigger":      trigger,
 		},
@@ -322,17 +349,17 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	}
 
 	// Use config dir for source resolution when pipeline was fetched from GCS
-	parseRoot := projectRoot
-	if cfg.ConfigDir != "" {
-		parseRoot = cfg.ConfigDir
+	parseRoot := pec.projectRoot
+	if pec.cfg.ConfigDir != "" {
+		parseRoot = pec.cfg.ConfigDir
 	}
-	deps, directives, err := graph.ParseAllDirectives(cfg, parseRoot)
+	deps, directives, err := graph.ParseAllDirectives(pec.cfg, parseRoot)
 	if err != nil {
-		slog.Error("dependency parse error", "run_id", runID, "error", err)
+		slog.Error("dependency parse error", "run_id", pec.runID, "error", err)
 		return
 	}
 
-	inputs := graph.ConfigToAssetInputs(cfg)
+	inputs := graph.ConfigToAssetInputs(pec.cfg)
 	for i := range inputs {
 		if d, ok := directives[inputs[i].Name]; ok {
 			inputs[i].TimeColumn = d.TimeColumn
@@ -352,24 +379,24 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 		}
 	}
 
-	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
+	checkNodes, checkDeps := checker.GenerateCheckNodes(pec.cfg)
 	inputs = append(inputs, checkNodes...)
 	for k, v := range checkDeps {
 		deps[k] = v
 	}
 
-	defaultNodes, defaultDeps := checker.GenerateDefaultCheckNodes(cfg)
+	defaultNodes, defaultDeps := checker.GenerateDefaultCheckNodes(pec.cfg)
 	inputs = append(inputs, defaultNodes...)
 	for k, v := range defaultDeps {
 		deps[k] = v
 	}
 
 	// Add source phantom nodes
-	sourceNodes := graph.SourcePhantomNodes(cfg)
+	sourceNodes := graph.SourcePhantomNodes(pec.cfg)
 	inputs = append(inputs, sourceNodes...)
 
 	// Generate source check nodes
-	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(cfg)
+	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(pec.cfg)
 	inputs = append(inputs, sourceCheckNodes...)
 	for k, v := range sourceCheckDeps {
 		deps[k] = v
@@ -394,36 +421,36 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 
 	g, err := graph.BuildGraph(inputs, deps)
 	if err != nil {
-		slog.Error("graph build error", "run_id", runID, "error", err)
+		slog.Error("graph build error", "run_id", pec.runID, "error", err)
 		return
 	}
 
-	stateStore, err := initStateBackend(projectRoot, cfg.Pipeline, "")
+	stateStore, err := initStateBackend(pec.projectRoot, pec.cfg.Pipeline, "")
 	if err != nil {
-		slog.Error("state store error", "run_id", runID, "error", err)
+		slog.Error("state store error", "run_id", pec.runID, "error", err)
 		return
 	}
 	defer stateStore.Close()
 
-	registry := buildRegistry(cfg, parseRoot)
+	registry := buildRegistry(pec.cfg, parseRoot)
 
-	runnerFunc := buildNodeRunner(cfg, runID, eventStore, registry, nodeRunnerOptions{
-		Dispatch:    dispatch,
-		DispatchCtx: ctx,
-		ConfigDir:   cfg.ConfigDir,
+	runnerFunc := buildNodeRunner(pec.cfg, pec.runID, pec.eventStore, registry, nodeRunnerOptions{
+		Dispatch:    pec.dispatch,
+		DispatchCtx: pec.ctx,
+		ConfigDir:   pec.cfg.ConfigDir,
 	})
 
 	runCfg := executor.RunConfig{
-		MaxParallel: cfg.MaxParallel,
+		MaxParallel: pec.cfg.MaxParallel,
 		Assets:      assetFilter,
-		ProjectRoot: projectRoot,
-		RunID:       runID,
+		ProjectRoot: pec.projectRoot,
+		RunID:       pec.runID,
 		FromDate:    fromDate,
 		ToDate:      toDate,
 		StateStore:  stateStore,
-		PoolManager: poolMgr,
-		AssetPools:  assetPools,
-		Ctx:         ctx,
+		PoolManager: pec.poolMgr,
+		AssetPools:  pec.assetPools,
+		Ctx:         pec.ctx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
@@ -437,8 +464,8 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			failed++
 		case "skipped":
 			skipped++
-			if err := eventStore.Emit(events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+			if err := pec.eventStore.Emit(events.Event{
+				RunID: pec.runID, Pipeline: pec.cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_skipped", Severity: "warning",
 				Summary: fmt.Sprintf("Node %s skipped", r.AssetName),
 			}); err != nil {
@@ -453,8 +480,8 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	}
 
 	totalDuration := rr.EndTime.Sub(start)
-	if err := eventStore.Emit(events.Event{
-		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed", Severity: "info",
+	if err := pec.eventStore.Emit(events.Event{
+		RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "run_completed", Severity: "info",
 		DurationMs: totalDuration.Milliseconds(),
 		Summary:    fmt.Sprintf("Run %s: %d succeeded, %d failed, %d skipped", status, succeeded, failed, skipped),
 		Details: map[string]any{
@@ -470,18 +497,18 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	}
 
 	// Record metrics
-	server.RunsTotal.WithLabelValues(cfg.Pipeline, status).Inc()
-	server.RunDuration.WithLabelValues(cfg.Pipeline).Observe(totalDuration.Seconds())
+	server.RunsTotal.WithLabelValues(pec.cfg.Pipeline, status).Inc()
+	server.RunDuration.WithLabelValues(pec.cfg.Pipeline).Observe(totalDuration.Seconds())
 	for _, r := range rr.Results {
-		server.NodesTotal.WithLabelValues(cfg.Pipeline, r.Status).Inc()
-		server.NodeDuration.WithLabelValues(cfg.Pipeline, r.AssetName, r.Status).Observe(r.Duration.Seconds())
+		server.NodesTotal.WithLabelValues(pec.cfg.Pipeline, r.Status).Inc()
+		server.NodeDuration.WithLabelValues(pec.cfg.Pipeline, r.AssetName, r.Status).Observe(r.Duration.Seconds())
 	}
 
-	slog.Info("run completed", "run_id", runID, "pipeline", cfg.Pipeline, "succeeded", succeeded, "failed", failed, "skipped", skipped, "duration_s", totalDuration.Seconds())
+	slog.Info("run completed", "run_id", pec.runID, "pipeline", pec.cfg.Pipeline, "succeeded", succeeded, "failed", failed, "skipped", skipped, "duration_s", totalDuration.Seconds())
 
 	// Send run summary notification
-	sendRunAlerts(cfg, runID, eventStore, rr, totalDuration)
+	sendRunAlerts(pec.cfg, pec.runID, pec.eventStore, rr, totalDuration)
 
 	// Post-run hooks: context.db + monitor.db
-	runPostRunHooks(cfg, g, projectRoot, rr)
+	runPostRunHooks(pec.cfg, g, pec.projectRoot, rr)
 }

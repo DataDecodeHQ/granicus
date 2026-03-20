@@ -56,6 +56,7 @@ func newBQClient(ctx context.Context, conn *config.ConnectionConfig) (*bigquery.
 	return bigquery.NewClient(ctx, project, opts...)
 }
 
+// dag:boundary
 // collectBQMetadata extracts telemetry and cost metadata from a completed BQ job.
 func collectBQMetadata(status *bigquery.JobStatus, job *bigquery.Job) map[string]string {
 	metadata := make(map[string]string)

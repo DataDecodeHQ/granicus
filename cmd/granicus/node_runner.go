@@ -64,32 +64,11 @@ func buildNodeRunner(
 			}
 		}
 
-		// Resolve per-asset dataset from layer routing
-		assetCfg := findAssetConfig(cfg, asset.Name)
-		resolvedDataset := ""
-		if assetCfg != nil {
-			defaultDS := ""
-			if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-				defaultDS = conn.Properties["dataset"]
-			}
-			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
+		resolvedDataset, resolvedDestConn, resolvedSourceConn := resolveAssetRuntime(cfg, asset.Name)
+		ac := config.AssetConfig{Source: asset.Source}
+		if ac2 := findAssetConfig(cfg, asset.Name); ac2 != nil {
+			ac = *ac2
 		}
-
-		// Resolve per-asset connections for Python/shell runners
-		var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
-		if assetCfg != nil {
-			if assetCfg.DestinationConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
-					resolvedDestConn = conn
-				}
-			}
-			if assetCfg.SourceConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
-					resolvedSourceConn = conn
-				}
-			}
-		}
-
 		ra := &runner.Asset{
 			Name:                  asset.Name,
 			Type:                  asset.Type,
@@ -109,13 +88,10 @@ func buildNodeRunner(
 			ResolvedDestConn:      resolvedDestConn,
 			ResolvedSourceConn:    resolvedSourceConn,
 		}
-
-		// Use ConfigDir for source resolution when pipeline was fetched from GCS
 		runRoot := pr
 		if opts.ConfigDir != "" {
 			runRoot = opts.ConfigDir
 		}
-
 		var r runner.NodeResult
 		if opts.Dispatch != nil && opts.Dispatch.Supports(ra.Type) {
 			var derr error
@@ -134,44 +110,7 @@ func buildNodeRunner(
 		} else {
 			r = registry.Run(ra, runRoot, rid)
 		}
-
-		if r.Status == "success" {
-			logEmit(eventStore, events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_succeeded", Severity: "info",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
-				Details: map[string]any{
-					"exit_code":    r.ExitCode,
-					"metadata":     r.Metadata,
-					"stdout_lines": events.CountLines(r.Stdout),
-					"stderr_lines": events.CountLines(r.Stderr),
-				},
-			})
-		} else {
-			stdout := r.Stdout
-			if len(stdout) > 10*1024 {
-				stdout = stdout[:10*1024] + "[truncated]"
-			}
-			stderr := r.Stderr
-			if len(stderr) > 10*1024 {
-				stderr = stderr[:10*1024] + "[truncated]"
-			}
-			logEmit(eventStore, events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_failed", Severity: "error",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
-				Details: map[string]any{
-					"error_message": r.Error,
-					"exit_code":     r.ExitCode,
-					"source_file":   asset.Source,
-					"metadata":      r.Metadata,
-					"stdout":        stdout,
-					"stderr":        stderr,
-				},
-			})
-		}
+		emitNodeResult(eventStore, runID, cfg, ac, r)
 
 		if !opts.OutputJSON && opts.Dispatch == nil {
 			ts := time.Now().Format("15:04:05")
@@ -274,5 +213,72 @@ func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *
 		return conn
 	}
 	return nil
+}
+
+// resolveAssetRuntime resolves the dataset, destination connection, and source connection
+// for the named asset using layer routing and connection lookups from cfg.
+func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset string, destConn, sourceConn *config.ConnectionConfig) {
+	assetCfg := findAssetConfig(cfg, assetName)
+	if assetCfg == nil {
+		return "", nil, nil
+	}
+	defaultDS := ""
+	if conn := connectionForAsset(cfg, assetCfg); conn != nil {
+		defaultDS = conn.Properties["dataset"]
+	}
+	dataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
+	if assetCfg.DestinationConnection != "" {
+		if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
+			destConn = conn
+		}
+	}
+	if assetCfg.SourceConnection != "" {
+		if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
+			sourceConn = conn
+		}
+	}
+	return dataset, destConn, sourceConn
+}
+
+// emitNodeResult emits a node_succeeded or node_failed event to eventStore.
+// Stdout and stderr are truncated to 10 KiB before inclusion in failure details.
+func emitNodeResult(eventStore *events.Store, runID string, cfg *config.PipelineConfig, asset config.AssetConfig, r runner.NodeResult) {
+	if r.Status == "success" {
+		logEmit(eventStore, events.Event{
+			RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+			EventType: "node_succeeded", Severity: "info",
+			DurationMs: r.Duration.Milliseconds(),
+			Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
+			Details: map[string]any{
+				"exit_code":    r.ExitCode,
+				"metadata":     r.Metadata,
+				"stdout_lines": events.CountLines(r.Stdout),
+				"stderr_lines": events.CountLines(r.Stderr),
+			},
+		})
+		return
+	}
+	stdout := r.Stdout
+	if len(stdout) > 10*1024 {
+		stdout = stdout[:10*1024] + "[truncated]"
+	}
+	stderr := r.Stderr
+	if len(stderr) > 10*1024 {
+		stderr = stderr[:10*1024] + "[truncated]"
+	}
+	logEmit(eventStore, events.Event{
+		RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+		EventType: "node_failed", Severity: "error",
+		DurationMs: r.Duration.Milliseconds(),
+		Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
+		Details: map[string]any{
+			"error_message": r.Error,
+			"exit_code":     r.ExitCode,
+			"source_file":   asset.Source,
+			"metadata":      r.Metadata,
+			"stdout":        stdout,
+			"stderr":        stderr,
+		},
+	})
 }
 

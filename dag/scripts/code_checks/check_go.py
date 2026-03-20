@@ -429,6 +429,9 @@ def check_error_handling(lines: list[str], functions: list[dict],
             if re_err_swallowed.search(stripped):
                 if any(p in stripped for p in safe_patterns):
                     continue
+                # Skip if dag:intentional inline comment is present
+                if "dag:intentional" in line:
+                    continue
                 result.add(
                     "WARN", filepath,
                     func["start_line"] + line_idx,

@@ -1761,7 +1761,14 @@ func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 
 		// Collect business metrics
 		project, _ := primaryBQProjectDataset(cfg)
-		business := monitor.CollectBusinessMetrics(context.Background(), bqClient, monCfg, cfg.Pipeline, project, tables)
+		business := monitor.CollectBusinessMetrics(monitor.MonitorContext{
+			Ctx:      context.Background(),
+			BQ:       bqClient,
+			Cfg:      monCfg,
+			Pipeline: cfg.Pipeline,
+			Project:  project,
+			Tables:   tables,
+		})
 
 		// Append all snapshots
 		allSnapshots := append(structural, business...)

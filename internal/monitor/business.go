@@ -13,28 +13,38 @@ import (
 
 const businessQueryTimeout = 120 * time.Second
 
+// MonitorContext bundles the dependencies needed by business metric collectors.
+type MonitorContext struct {
+	Ctx      context.Context
+	BQ       BQQuerier
+	Cfg      *MonitorConfig
+	Pipeline string
+	Project  string
+	Tables   map[string]string
+}
+
 // CollectBusinessMetrics runs aggregate, rate, and segment queries to capture business-level metric snapshots.
-func CollectBusinessMetrics(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipeline, project string, tables map[string]string) []MetricSnapshot {
+func CollectBusinessMetrics(mctx MonitorContext) []MetricSnapshot {
 	now := time.Now().UTC().Format(time.RFC3339)
 	var all []MetricSnapshot
 
-	all = append(all, collectAggregates(ctx, bq, cfg, pipeline, project, tables, now)...)
-	all = append(all, collectRates(ctx, bq, cfg, pipeline, project, tables, now)...)
-	all = append(all, collectSegments(ctx, bq, cfg, pipeline, project, tables, now)...)
+	all = append(all, collectAggregates(mctx, mctx.Cfg.Monitoring.Metrics, now)...)
+	all = append(all, collectRates(mctx, mctx.Cfg.Monitoring.Rates, now)...)
+	all = append(all, collectSegments(mctx, mctx.Cfg.Monitoring.Segments, now)...)
 
 	return all
 }
 
-func collectAggregates(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipeline, project string, tables map[string]string, now string) []MetricSnapshot {
+func collectAggregates(mctx MonitorContext, aggregates []MetricConfig, now string) []MetricSnapshot {
 	var snapshots []MetricSnapshot
 
-	for _, mc := range cfg.Monitoring.Metrics {
-		dataset, ok := tables[mc.Table]
+	for _, mc := range aggregates {
+		dataset, ok := mctx.Tables[mc.Table]
 		if !ok {
 			slog.Warn("aggregate table not found in tables map", "table", mc.Table)
 			continue
 		}
-		results, err := runAggregateQuery(ctx, bq, mc, project, dataset)
+		results, err := runAggregateQuery(mctx.Ctx, mctx.BQ, mc, mctx.Project, dataset)
 		if err != nil {
 			slog.Warn("aggregate query failed", "table", mc.Table, "error", err)
 			continue
@@ -44,7 +54,7 @@ func collectAggregates(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pi
 			key := aggregateKey(col.Column, col.Aggregate)
 			if val, ok := results[key]; ok {
 				snapshots = append(snapshots, MetricSnapshot{
-					Pipeline:    pipeline,
+					Pipeline:    mctx.Pipeline,
 					TableName:   mc.Table,
 					ColumnName:  col.Column,
 					MetricName:  col.Aggregate,
@@ -116,27 +126,27 @@ func aggregateKey(column, aggregate string) string {
 	return aggregate + "_" + column
 }
 
-func collectRates(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipeline, project string, tables map[string]string, now string) []MetricSnapshot {
+func collectRates(mctx MonitorContext, rates []RateConfig, now string) []MetricSnapshot {
 	var snapshots []MetricSnapshot
 
-	for _, rc := range cfg.Monitoring.Rates {
-		numDS, ok := tables[rc.Numerator.Table]
+	for _, rc := range rates {
+		numDS, ok := mctx.Tables[rc.Numerator.Table]
 		if !ok {
 			slog.Warn("rate numerator table not found in tables map", "rate", rc.Name, "table", rc.Numerator.Table)
 			continue
 		}
-		numVal, err := runScalarAggregate(ctx, bq, rc.Numerator.Table, rc.Numerator.Aggregate, project, numDS)
+		numVal, err := runScalarAggregate(mctx.Ctx, mctx.BQ, rc.Numerator.Table, rc.Numerator.Aggregate, mctx.Project, numDS)
 		if err != nil {
 			slog.Warn("rate numerator query failed", "rate", rc.Name, "error", err)
 			continue
 		}
 
-		denDS, ok := tables[rc.Denominator.Table]
+		denDS, ok := mctx.Tables[rc.Denominator.Table]
 		if !ok {
 			slog.Warn("rate denominator table not found in tables map", "rate", rc.Name, "table", rc.Denominator.Table)
 			continue
 		}
-		denVal, err := runScalarAggregate(ctx, bq, rc.Denominator.Table, rc.Denominator.Aggregate, project, denDS)
+		denVal, err := runScalarAggregate(mctx.Ctx, mctx.BQ, rc.Denominator.Table, rc.Denominator.Aggregate, mctx.Project, denDS)
 		if err != nil {
 			slog.Warn("rate denominator query failed", "rate", rc.Name, "error", err)
 			continue
@@ -148,7 +158,7 @@ func collectRates(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipelin
 		}
 
 		snapshots = append(snapshots, MetricSnapshot{
-			Pipeline:    pipeline,
+			Pipeline:    mctx.Pipeline,
 			TableName:   rc.Numerator.Table,
 			ColumnName:  rc.Name,
 			MetricName:  "rate",
@@ -194,16 +204,16 @@ func scalarAggregateExpr(aggregate string) string {
 	}
 }
 
-func collectSegments(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipeline, project string, tables map[string]string, now string) []MetricSnapshot {
+func collectSegments(mctx MonitorContext, segments []SegmentConfig, now string) []MetricSnapshot {
 	var snapshots []MetricSnapshot
 
-	for _, sc := range cfg.Monitoring.Segments {
-		dataset, ok := tables[sc.Table]
+	for _, sc := range segments {
+		dataset, ok := mctx.Tables[sc.Table]
 		if !ok {
 			slog.Warn("segment table not found in tables map", "table", sc.Table)
 			continue
 		}
-		rows, err := runSegmentQuery(ctx, bq, sc, project, dataset)
+		rows, err := runSegmentQuery(mctx.Ctx, mctx.BQ, sc, mctx.Project, dataset)
 		if err != nil {
 			slog.Warn("segment query failed", "table", sc.Table, "error", err)
 			continue
@@ -211,7 +221,7 @@ func collectSegments(ctx context.Context, bq BQQuerier, cfg *MonitorConfig, pipe
 
 		for segValue, metricValue := range rows {
 			snapshots = append(snapshots, MetricSnapshot{
-				Pipeline:     pipeline,
+				Pipeline:     mctx.Pipeline,
 				TableName:    sc.Table,
 				ColumnName:   sc.SegmentColumn,
 				MetricName:   sc.Metric,
