@@ -128,12 +128,28 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Update Cloud Run image
+      - name: Deploy to Cloud Run
         run: |
-          gcloud run services update ${{ env.ENGINE_SERVICE }} \
+          gcloud run deploy ${{ env.ENGINE_SERVICE }} \
             --image ${{ needs.build.outputs.image_tag }} \
             --region ${{ env.CLOUD_RUN_REGION }} \
-            --project ${{ env.GCP_PROJECT_ID }}
+            --project ${{ env.GCP_PROJECT_ID }} \
+            --port 8080 \
+            --memory 1Gi \
+            --cpu 1 \
+            --concurrency 1 \
+            --no-allow-unauthenticated \
+            --no-cpu-throttling \
+            --cpu-boost \
+            --min-instances 0 \
+            --max-instances 3 \
+            --timeout 3600 \
+            --set-env-vars "\
+              GRANICUS_FIRESTORE_PROJECT=${{ env.GCP_PROJECT_ID }},\
+              GRANICUS_PIPELINES_BUCKET=granicus-pipelines,\
+              GRANICUS_OPS_BUCKET=granicus-ops,\
+              GRANICUS_PIPELINE_SOURCE=gcs,\
+              GRANICUS_STATE_BACKEND=firestore"
 
       - name: Get service URL
         id: url
