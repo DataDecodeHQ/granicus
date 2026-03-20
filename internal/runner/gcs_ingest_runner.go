@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -52,14 +54,31 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 		}
 	}
 
-	env := []string{
-		"GRANICUS_GCS_BUCKET=" + bucket,
-		"GRANICUS_GCS_PREFIX=" + srcConn.Properties["prefix"],
-		"GRANICUS_ASSET_NAME=" + asset.Name,
-		"GRANICUS_RUN_ID=" + runID,
-		"GRANICUS_PROJECT_ROOT=" + projectRoot,
-		"GRANICUS_INGEST_MODE=true",
+	metadataFile, err := os.CreateTemp("", "granicus-metadata-*.json")
+	if err != nil {
+		return NodeResult{
+			AssetName: asset.Name, Status: "failed", StartTime: start,
+			EndTime: time.Now(), Duration: time.Since(start),
+			Error: fmt.Sprintf("creating metadata file: %v", err), ExitCode: -1,
+		}
 	}
+	metadataPath := metadataFile.Name()
+	metadataFile.Close()
+	defer os.Remove(metadataPath)
+
+	env := buildSubprocessEnv(SubprocessEnvConfig{
+		Asset:        asset,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		MetadataPath: metadataPath,
+		DestConn:     destConn,
+	})
+
+	env = append(env,
+		"GRANICUS_GCS_BUCKET="+bucket,
+		"GRANICUS_GCS_PREFIX="+srcConn.Properties["prefix"],
+		"GRANICUS_INGEST_MODE=true",
+	)
 
 	if fp := srcConn.Properties["file_pattern"]; fp != "" {
 		env = append(env, "GRANICUS_GCS_FILE_PATTERN="+fp)
@@ -73,18 +92,12 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 	if ap := srcConn.Properties["archive_prefix"]; ap != "" {
 		env = append(env, "GRANICUS_GCS_ARCHIVE_PREFIX="+ap)
 	}
-	if creds := resolveGCSCredentials(srcConn); creds != "" {
-		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
-	}
-
 	if destConn != nil {
 		env = append(env, "GRANICUS_DEST_PROJECT="+destConn.Properties["project"])
 		env = append(env, "GRANICUS_DEST_DATASET="+destConn.Properties["dataset"])
 	}
-
-	if asset.IntervalStart != "" {
-		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
-		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
+	if creds := resolveGCSCredentials(srcConn); creds != "" {
+		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
 	}
 
 	sub := RunSubprocess(SubprocessConfig{
@@ -96,8 +109,12 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 
 	result := NodeResultFromSubprocess(asset.Name, start, sub)
 
-	// Parse metadata from stdout lines like "GRANICUS_META:key=value"
-	result.Metadata = parseMetaLines(sub.Stdout)
+	// Prefer metadata file; fall back to stdout GRANICUS_META: line parsing.
+	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
+		result.Metadata = meta
+	} else {
+		result.Metadata = parseMetaLines(sub.Stdout)
+	}
 
 	return result
 }
@@ -117,4 +134,3 @@ func parseMetaLines(stdout string) map[string]string {
 	}
 	return meta
 }
-

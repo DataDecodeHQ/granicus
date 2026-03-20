@@ -114,15 +114,25 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		}
 	}
 
-	env := []string{
-		"GRANICUS_ASSET_NAME=" + asset.Name,
-		"GRANICUS_RUN_ID=" + runID,
-		"GRANICUS_PROJECT_ROOT=" + projectRoot,
+	metadataFile, err := os.CreateTemp("", "granicus-metadata-*.json")
+	if err != nil {
+		return NodeResult{
+			AssetName: asset.Name,
+			Status:    "failed",
+			Error:     fmt.Sprintf("creating metadata file: %v", err),
+			ExitCode:  -1,
+		}
 	}
-	if asset.IntervalStart != "" {
-		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
-		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
-	}
+	metadataPath := metadataFile.Name()
+	metadataFile.Close()
+	defer os.Remove(metadataPath)
+
+	env := buildSubprocessEnv(SubprocessEnvConfig{
+		Asset:        asset,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		MetadataPath: metadataPath,
+	})
 
 	start := time.Now()
 	sub := RunSubprocess(SubprocessConfig{
@@ -132,7 +142,13 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 
-	return NodeResultFromSubprocess(asset.Name, start, sub)
+	result := NodeResultFromSubprocess(asset.Name, start, sub)
+
+	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
+		result.Metadata = meta
+	}
+
+	return result
 }
 
 func makeExecutable(source, projectRoot string) error {

@@ -44,16 +44,34 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
+	metadataFile, err := os.CreateTemp("", "granicus-metadata-*.json")
+	if err != nil {
+		return NodeResult{
+			AssetName: asset.Name, Status: "failed", StartTime: start,
+			EndTime: time.Now(), Duration: time.Since(start),
+			Error: fmt.Sprintf("creating metadata file: %v", err), ExitCode: -1,
+		}
+	}
+	metadataPath := metadataFile.Name()
+	metadataFile.Close()
+	defer os.Remove(metadataPath)
+
 	// GCS operations delegate to shell/python scripts that use gsutil or the GCS client
 	// The runner sets up environment variables and delegates
+	env := buildSubprocessEnv(SubprocessEnvConfig{
+		Asset:        asset,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		MetadataPath: metadataPath,
+		DestConn:     r.Connection,
+	})
+
+	// Legacy runner-specific vars kept for backward compatibility
 	prefix := r.Connection.Properties["prefix"]
-	env := []string{
-		"GRANICUS_GCS_BUCKET=" + bucket,
-		"GRANICUS_GCS_PREFIX=" + prefix,
-		"GRANICUS_ASSET_NAME=" + asset.Name,
-		"GRANICUS_RUN_ID=" + runID,
-		"GRANICUS_PROJECT_ROOT=" + projectRoot,
-	}
+	env = append(env,
+		"GRANICUS_GCS_BUCKET="+bucket,
+		"GRANICUS_GCS_PREFIX="+prefix,
+	)
 	if format := r.Connection.Properties["format"]; format != "" {
 		env = append(env, "GRANICUS_GCS_FORMAT="+format)
 	}
@@ -63,10 +81,6 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	if creds := resolveGCSCredentials(r.Connection); creds != "" {
 		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
 	}
-	if asset.IntervalStart != "" {
-		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
-		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
-	}
 
 	sub := RunSubprocess(SubprocessConfig{
 		Command: inferCommand(asset.Source, projectRoot),
@@ -75,7 +89,13 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 
-	return NodeResultFromSubprocess(asset.Name, start, sub)
+	result := NodeResultFromSubprocess(asset.Name, start, sub)
+
+	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
+		result.Metadata = meta
+	}
+
+	return result
 }
 
 type S3Runner struct {
@@ -93,7 +113,6 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 	start := time.Now()
 
 	bucket := r.Connection.Properties["bucket"]
-	endpoint := r.Connection.Properties["endpoint"]
 	if bucket == "" {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
@@ -102,23 +121,38 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 		}
 	}
 
-	env := []string{
-		"GRANICUS_S3_BUCKET=" + bucket,
-		"GRANICUS_S3_ENDPOINT=" + endpoint,
-		"GRANICUS_S3_PREFIX=" + r.Connection.Properties["prefix"],
-		"GRANICUS_ASSET_NAME=" + asset.Name,
-		"GRANICUS_RUN_ID=" + runID,
-		"GRANICUS_PROJECT_ROOT=" + projectRoot,
+	metadataFile, err := os.CreateTemp("", "granicus-metadata-*.json")
+	if err != nil {
+		return NodeResult{
+			AssetName: asset.Name, Status: "failed", StartTime: start,
+			EndTime: time.Now(), Duration: time.Since(start),
+			Error: fmt.Sprintf("creating metadata file: %v", err), ExitCode: -1,
+		}
 	}
+	metadataPath := metadataFile.Name()
+	metadataFile.Close()
+	defer os.Remove(metadataPath)
+
+	env := buildSubprocessEnv(SubprocessEnvConfig{
+		Asset:        asset,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		MetadataPath: metadataPath,
+		DestConn:     r.Connection,
+	})
+
+	// Legacy runner-specific vars kept for backward compatibility
+	endpoint := r.Connection.Properties["endpoint"]
+	env = append(env,
+		"GRANICUS_S3_BUCKET="+bucket,
+		"GRANICUS_S3_ENDPOINT="+endpoint,
+		"GRANICUS_S3_PREFIX="+r.Connection.Properties["prefix"],
+	)
 	if key := r.Connection.Properties["access_key"]; key != "" {
 		env = append(env, "AWS_ACCESS_KEY_ID="+key)
 	}
 	if secret := r.Connection.Properties["secret_key"]; secret != "" {
 		env = append(env, "AWS_SECRET_ACCESS_KEY="+secret)
-	}
-	if asset.IntervalStart != "" {
-		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
-		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
 	}
 
 	sub := RunSubprocess(SubprocessConfig{
@@ -128,7 +162,13 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 
-	return NodeResultFromSubprocess(asset.Name, start, sub)
+	result := NodeResultFromSubprocess(asset.Name, start, sub)
+
+	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
+		result.Metadata = meta
+	}
+
+	return result
 }
 
 func inferCommand(source, projectRoot string) []string {

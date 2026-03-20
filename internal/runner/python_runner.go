@@ -52,18 +52,6 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 	metadataFile.Close()
 	defer os.Remove(metadataPath)
 
-	env := []string{
-		"GRANICUS_ASSET_NAME=" + asset.Name,
-		"GRANICUS_RUN_ID=" + runID,
-		"GRANICUS_PROJECT_ROOT=" + projectRoot,
-		"GRANICUS_METADATA_PATH=" + metadataPath,
-	}
-
-	if asset.IntervalStart != "" {
-		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
-		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
-	}
-
 	destConn := r.DestinationConnection
 	if destConn == nil {
 		destConn = asset.ResolvedDestConn
@@ -72,37 +60,33 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 	if srcConn == nil {
 		srcConn = asset.ResolvedSourceConn
 	}
-	if destConn != nil {
-		connJSON, _ := json.Marshal(flattenConnection(destConn))
-		env = append(env, "GRANICUS_DEST_CONNECTION="+string(connJSON))
-	}
-	if srcConn != nil {
-		connJSON, _ := json.Marshal(flattenConnection(srcConn))
-		env = append(env, "GRANICUS_SOURCE_CONNECTION="+string(connJSON))
-	}
 
+	var refs map[string]string
 	if r.RefFunc != nil && len(asset.DependsOn) > 0 {
-		refs := make(map[string]string, len(asset.DependsOn))
+		refs = make(map[string]string, len(asset.DependsOn))
 		for _, dep := range asset.DependsOn {
 			resolved, err := r.RefFunc(dep)
 			if err == nil {
 				refs[dep] = strings.ReplaceAll(resolved, "`", "")
 			}
 		}
-		if refsJSON, err := json.Marshal(refs); err == nil {
-			env = append(env, "GRANICUS_REFS="+string(refsJSON))
-		}
 	}
+
+	env := buildSubprocessEnv(SubprocessEnvConfig{
+		Asset:        asset,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		MetadataPath: metadataPath,
+		DestConn:     destConn,
+		SrcConn:      srcConn,
+		Refs:         refs,
+	})
 
 	if destConn != nil && destConn.Properties["credentials"] != "" {
 		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", destConn.Name, "credential_method", "file")
 	}
 	if srcConn != nil && srcConn.Properties["credentials"] != "" {
 		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", srcConn.Name, "credential_method", "file")
-	}
-
-	if sdkPath := findSDKPath(); sdkPath != "" {
-		env = appendPythonPath(env, sdkPath)
 	}
 
 	if err := validateEnv(env, asset.Name, runID); err != nil {
