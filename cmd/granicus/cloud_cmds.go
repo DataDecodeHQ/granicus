@@ -1,19 +1,20 @@
 package main
 
 import (
-	"context"
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-
-	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
-	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
 // newPushCmd creates the granicus push command.
@@ -40,37 +41,98 @@ func runPush(cmd *cobra.Command, args []string) error {
 		pipeline = inferPipelineName(sourceDir)
 	}
 
-	ctx := context.Background()
-	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
+	tmpFile, err := os.CreateTemp("", "granicus-push-*.tar.gz")
 	if err != nil {
-		return fmt.Errorf("connecting to version store: %w", err)
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if err := createTarGz(tmpFile, sourceDir); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("creating archive: %w", err)
+	}
+	tmpFile.Close()
+
+	fields := map[string]string{"pipeline": pipeline}
+	if activate {
+		fields["activate"] = "true"
 	}
 
-	ver, err := src.Register(ctx, pipeline, sourceDir)
+	data, err := cloudPostMultipart("/api/v1/registry/push", "archive", tmpFile.Name(), fields)
 	if err != nil {
 		return fmt.Errorf("push failed: %w", err)
 	}
 
-	if activate {
-		if err := src.Activate(ctx, pipeline, ver.Number); err != nil {
-			return fmt.Errorf("activate failed: %w", err)
-		}
-		ver.Active = true
+	if jsonOutput {
+		fmt.Println(string(data))
+		return nil
 	}
 
-	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(ver)
+	var ver struct {
+		Pipeline    string    `json:"pipeline"`
+		Number      int       `json:"number"`
+		ContentHash string    `json:"content_hash"`
+		FileCount   int       `json:"file_count"`
+		SizeBytes   int64     `json:"size_bytes"`
+		Active      bool      `json:"active"`
+	}
+	if err := json.Unmarshal(data, &ver); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	fmt.Printf("Pushed %s v%d (%s)\n", pipeline, ver.Number, ver.ContentHash)
+	fmt.Printf("  Files: %d, Size: %d bytes\n", ver.FileCount, ver.SizeBytes)
+	if ver.Active {
+		color.Green("  Activated: yes")
 	} else {
-		fmt.Printf("Pushed %s v%d (%s)\n", pipeline, ver.Number, ver.ContentHash)
-		fmt.Printf("  Files: %d, Size: %d bytes\n", ver.FileCount, ver.SizeBytes)
-		if activate {
-			color.Green("  Activated: yes")
-		} else {
-			fmt.Printf("  Activate with: granicus activate %s %d\n", pipeline, ver.Number)
-		}
+		fmt.Printf("  Activate with: granicus activate %s %d\n", pipeline, ver.Number)
 	}
 
 	return nil
+}
+
+// createTarGz creates a tar.gz archive of the given directory.
+func createTarGz(w io.Writer, sourceDir string) error {
+	gw := gzip.NewWriter(w)
+	defer gw.Close()
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = rel
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(tw, f)
+		return err
+	})
 }
 
 // newActivateCmd creates the granicus activate command.
@@ -92,13 +154,9 @@ func runActivate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid version number: %s", args[1])
 	}
 
-	ctx := context.Background()
-	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
+	body := map[string]int{"version": version}
+	_, err = cloudPost("/api/v1/registry/"+pipeline+"/activate", body)
 	if err != nil {
-		return fmt.Errorf("connecting to version store: %w", err)
-	}
-
-	if err := src.Activate(ctx, pipeline, version); err != nil {
 		return fmt.Errorf("activate failed: %w", err)
 	}
 
@@ -122,20 +180,26 @@ func runVersions(cmd *cobra.Command, args []string) error {
 	pipeline := args[0]
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	ctx := context.Background()
-	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
-	if err != nil {
-		return fmt.Errorf("connecting to version store: %w", err)
-	}
-
-	versions, err := src.List(ctx, pipeline)
+	data, err := cloudGet("/api/v1/registry/" + pipeline + "/versions")
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(versions)
+		fmt.Println(string(data))
 		return nil
+	}
+
+	var versions []struct {
+		Number      int       `json:"number"`
+		ContentHash string    `json:"content_hash"`
+		PushedBy    string    `json:"pushed_by"`
+		PushedAt    time.Time `json:"pushed_at"`
+		FileCount   int       `json:"file_count"`
+		Active      bool      `json:"active"`
+	}
+	if err := json.Unmarshal(data, &versions); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	for _, v := range versions {
@@ -164,38 +228,40 @@ func newDiffCmd() *cobra.Command {
 
 func runDiff(cmd *cobra.Command, args []string) error {
 	pipeline := args[0]
-	vA, _ := strconv.Atoi(args[1])
-	vB, _ := strconv.Atoi(args[2])
+	vA := args[1]
+	vB := args[2]
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	ctx := context.Background()
-	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
-	if err != nil {
-		return fmt.Errorf("connecting to version store: %w", err)
-	}
-
-	added, removed, modified, err := src.Diff(ctx, pipeline, vA, vB)
+	path := fmt.Sprintf("/api/v1/registry/%s/diff?v1=%s&v2=%s", pipeline, url.QueryEscape(vA), url.QueryEscape(vB))
+	data, err := cloudGet(path)
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"added": added, "removed": removed, "modified": modified,
-		})
+		fmt.Println(string(data))
 		return nil
 	}
 
-	for _, f := range added {
+	var result struct {
+		Added    []string `json:"added"`
+		Removed  []string `json:"removed"`
+		Modified []string `json:"modified"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	for _, f := range result.Added {
 		color.Green("+ %s", f)
 	}
-	for _, f := range removed {
+	for _, f := range result.Removed {
 		color.Red("- %s", f)
 	}
-	for _, f := range modified {
+	for _, f := range result.Modified {
 		color.Yellow("~ %s", f)
 	}
-	if len(added) == 0 && len(removed) == 0 && len(modified) == 0 {
+	if len(result.Added) == 0 && len(result.Removed) == 0 && len(result.Modified) == 0 {
 		fmt.Println("No changes")
 	}
 	return nil
@@ -205,7 +271,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 func newHistoryCmd2() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cloud-history",
-		Short: "Show pipeline run history from Firestore",
+		Short: "Show pipeline run history from cloud",
 		RunE:  cloudGate(runHistory2),
 	}
 	cmd.Flags().String("pipeline", "", "Filter by pipeline name (required)")
@@ -222,26 +288,20 @@ func runHistory2(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	sinceTime, err := parseSince(since)
-	if err != nil {
-		return err
-	}
-
-	ctx := context.Background()
-	backend, err := newFirestoreBackend(ctx, pipeline)
-	if err != nil {
-		return err
-	}
-	defer backend.Close()
-
-	runs, err := backend.ListRuns(ctx, pipeline, nil, sinceTime, limit)
+	path := fmt.Sprintf("/api/v1/state/%s/history?since=%s&limit=%d", pipeline, url.QueryEscape(since), limit)
+	data, err := cloudGet(path)
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(runs)
+		fmt.Println(string(data))
 		return nil
+	}
+
+	var runs []runRecord
+	if err := json.Unmarshal(data, &runs); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	for _, r := range runs {
@@ -249,18 +309,22 @@ func runHistory2(cmd *cobra.Command, args []string) error {
 		if r.Status == "failed" || r.Status == "crashed" {
 			statusColor = color.RedString(r.Status)
 		}
+		runIDDisplay := r.RunID
+		if len(runIDDisplay) > 20 {
+			runIDDisplay = runIDDisplay[:20]
+		}
 		fmt.Printf("%s  %s  %s  %d/%d/%d (ok/fail/skip)  %s\n",
-			r.RunID[:20], statusColor, r.StartedAt.Format("2006-01-02 15:04"),
+			runIDDisplay, statusColor, r.StartedAt.Format("2006-01-02 15:04"),
 			r.Succeeded, r.Failed, r.Skipped, r.TriggerContext)
 	}
 	return nil
 }
 
-// newEventsCmd2 creates the granicus events command for Firestore.
+// newEventsCmd2 creates the granicus events command.
 func newEventsCmd2() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cloud-events",
-		Short: "Show run events from Firestore",
+		Short: "Show run events from cloud",
 		RunE:  cloudGate(runEvents2),
 	}
 	cmd.Flags().String("run-id", "", "Run ID (required)")
@@ -275,26 +339,25 @@ func runEvents2(cmd *cobra.Command, args []string) error {
 	eventType, _ := cmd.Flags().GetString("type")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	ctx := context.Background()
-	backend, err := newFirestoreBackend(ctx, "")
-	if err != nil {
-		return err
-	}
-	defer backend.Close()
-
-	var types []string
+	// Events endpoint needs a pipeline in the path; use "_all" as convention
+	path := fmt.Sprintf("/api/v1/state/_all/events?run_id=%s", url.QueryEscape(runID))
 	if eventType != "" {
-		types = strings.Split(eventType, ",")
+		path += "&type=" + url.QueryEscape(eventType)
 	}
 
-	events, err := backend.ListEvents(ctx, runID, types)
+	data, err := cloudGet(path)
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(events)
+		fmt.Println(string(data))
 		return nil
+	}
+
+	var events []eventRecord
+	if err := json.Unmarshal(data, &events); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	for _, e := range events {
@@ -329,50 +392,25 @@ func runFailures(cmd *cobra.Command, args []string) error {
 	since, _ := cmd.Flags().GetString("since")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	sinceTime, err := parseSince(since)
+	target := pipeline
+	if target == "" {
+		target = "_all"
+	}
+
+	path := fmt.Sprintf("/api/v1/state/%s/failures?since=%s", target, url.QueryEscape(since))
+	data, err := cloudGet(path)
 	if err != nil {
 		return err
-	}
-
-	ctx := context.Background()
-	backend, err := newFirestoreBackend(ctx, pipeline)
-	if err != nil {
-		return err
-	}
-	defer backend.Close()
-
-	runs, err := backend.ListRuns(ctx, pipeline, []string{"failed", "crashed"}, sinceTime, 50)
-	if err != nil {
-		return err
-	}
-
-	type failureRecord struct {
-		RunID          string                `json:"run_id"`
-		Pipeline       string                `json:"pipeline"`
-		Status         string                `json:"status"`
-		StartedAt      time.Time             `json:"started_at"`
-		ErrorSummary   string                `json:"error_summary"`
-		TriggerContext string                `json:"trigger_context"`
-		FailedEvents   []state.EventDoc      `json:"failed_events,omitempty"`
-	}
-
-	var records []failureRecord
-	for _, r := range runs {
-		events, _ := backend.ListEvents(ctx, r.RunID, []string{"asset_failed", "node_failed"})
-		records = append(records, failureRecord{
-			RunID:          r.RunID,
-			Pipeline:       r.Pipeline,
-			Status:         r.Status,
-			StartedAt:      r.StartedAt,
-			ErrorSummary:   r.ErrorSummary,
-			TriggerContext: r.TriggerContext,
-			FailedEvents:   events,
-		})
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(records)
+		fmt.Println(string(data))
 		return nil
+	}
+
+	var records []failureRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	for _, r := range records {
@@ -408,74 +446,39 @@ func runStats(cmd *cobra.Command, args []string) error {
 	since, _ := cmd.Flags().GetString("since")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	sinceTime, err := parseSince(since)
+	path := fmt.Sprintf("/api/v1/state/%s/stats?node=%s&since=%s",
+		pipeline, url.QueryEscape(node), url.QueryEscape(since))
+	data, err := cloudGet(path)
 	if err != nil {
 		return err
-	}
-
-	ctx := context.Background()
-	backend, err := newFirestoreBackend(ctx, pipeline)
-	if err != nil {
-		return err
-	}
-	defer backend.Close()
-
-	runs, err := backend.ListRuns(ctx, pipeline, nil, sinceTime, 0)
-	if err != nil {
-		return err
-	}
-
-	var totalRuns, successes, failures int
-	var totalDuration int64
-	errorCounts := make(map[string]int)
-
-	for _, r := range runs {
-		events, _ := backend.ListEvents(ctx, r.RunID, nil)
-		for _, e := range events {
-			if e.Node != node {
-				continue
-			}
-			switch e.EventType {
-			case "asset_succeeded", "node_succeeded":
-				totalRuns++
-				successes++
-				totalDuration += e.DurationMs
-			case "asset_failed", "node_failed":
-				totalRuns++
-				failures++
-				totalDuration += e.DurationMs
-				errorCounts[e.Error]++
-			}
-		}
-	}
-
-	stats := map[string]any{
-		"node":         node,
-		"pipeline":     pipeline,
-		"total_runs":   totalRuns,
-		"successes":    successes,
-		"failures":     failures,
-		"success_rate": 0.0,
-		"avg_duration_ms": 0,
-		"top_errors":   errorCounts,
-	}
-	if totalRuns > 0 {
-		stats["success_rate"] = float64(successes) / float64(totalRuns)
-		stats["avg_duration_ms"] = totalDuration / int64(totalRuns)
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(stats)
+		fmt.Println(string(data))
 		return nil
 	}
 
-	fmt.Printf("Node: %s (pipeline: %s)\n", node, pipeline)
-	fmt.Printf("  Runs: %d  Success: %d  Failed: %d  Rate: %.1f%%\n",
-		totalRuns, successes, failures, stats["success_rate"].(float64)*100)
-	if totalRuns > 0 {
-		fmt.Printf("  Avg duration: %dms\n", stats["avg_duration_ms"])
+	var stats struct {
+		Node          string         `json:"node"`
+		Pipeline      string         `json:"pipeline"`
+		TotalRuns     int            `json:"total_runs"`
+		Successes     int            `json:"successes"`
+		Failures      int            `json:"failures"`
+		SuccessRate   float64        `json:"success_rate"`
+		AvgDurationMs int64          `json:"avg_duration_ms"`
+		TopErrors     map[string]int `json:"top_errors"`
 	}
-	for errMsg, count := range errorCounts {
+	if err := json.Unmarshal(data, &stats); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	fmt.Printf("Node: %s (pipeline: %s)\n", stats.Node, stats.Pipeline)
+	fmt.Printf("  Runs: %d  Success: %d  Failed: %d  Rate: %.1f%%\n",
+		stats.TotalRuns, stats.Successes, stats.Failures, stats.SuccessRate*100)
+	if stats.TotalRuns > 0 {
+		fmt.Printf("  Avg duration: %dms\n", stats.AvgDurationMs)
+	}
+	for errMsg, count := range stats.TopErrors {
 		fmt.Printf("  Error (%dx): %s\n", count, errMsg)
 	}
 	return nil
@@ -495,21 +498,19 @@ func newCloudStatusCmd() *cobra.Command {
 func runCloudStatus(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	ctx := context.Background()
-	backend, err := newFirestoreBackend(ctx, "")
-	if err != nil {
-		return err
-	}
-	defer backend.Close()
-
-	runs, err := backend.ListRuns(ctx, "", []string{"running"}, time.Time{}, 50)
+	data, err := cloudGet("/api/v1/state/_all/status")
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(runs)
+		fmt.Println(string(data))
 		return nil
+	}
+
+	var runs []runRecord
+	if err := json.Unmarshal(data, &runs); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	if len(runs) == 0 {
@@ -519,8 +520,12 @@ func runCloudStatus(cmd *cobra.Command, args []string) error {
 
 	for _, r := range runs {
 		dur := time.Since(r.StartedAt).Round(time.Second)
+		runIDDisplay := r.RunID
+		if len(runIDDisplay) > 20 {
+			runIDDisplay = runIDDisplay[:20]
+		}
 		fmt.Printf("%s  %s  running for %s  (%d nodes)\n",
-			r.Pipeline, r.RunID[:20], dur, r.NodeCount)
+			r.Pipeline, runIDDisplay, dur, r.NodeCount)
 	}
 	return nil
 }
@@ -545,21 +550,20 @@ func runIntervals(cmd *cobra.Command, args []string) error {
 	asset, _ := cmd.Flags().GetString("asset")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	ctx := context.Background()
-	backend, err := newFirestoreBackend(ctx, pipeline)
-	if err != nil {
-		return err
-	}
-	defer backend.Close()
-
-	intervals, err := backend.GetIntervals(asset)
+	path := fmt.Sprintf("/api/v1/state/%s/intervals?asset=%s", pipeline, url.QueryEscape(asset))
+	data, err := cloudGet(path)
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(intervals)
+		fmt.Println(string(data))
 		return nil
+	}
+
+	var intervals []intervalRecord
+	if err := json.Unmarshal(data, &intervals); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
 	}
 
 	for _, iv := range intervals {
@@ -578,11 +582,51 @@ func runIntervals(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// --- Helpers ---
+// --- Response types for JSON decoding ---
 
-func newFirestoreBackend(ctx context.Context, pipeline string) (*state.FirestoreStateBackend, error) {
-	return state.NewFirestoreStateBackend(ctx, "", pipeline)
+type runRecord struct {
+	RunID          string    `json:"run_id"`
+	Pipeline       string    `json:"pipeline"`
+	Status         string    `json:"status"`
+	StartedAt      time.Time `json:"started_at"`
+	Succeeded      int       `json:"succeeded"`
+	Failed         int       `json:"failed"`
+	Skipped        int       `json:"skipped"`
+	NodeCount      int       `json:"node_count"`
+	TriggerContext string    `json:"trigger_context"`
+	ErrorSummary   string    `json:"error_summary"`
 }
+
+type eventRecord struct {
+	RunID      string    `json:"run_id"`
+	Node       string    `json:"node"`
+	EventType  string    `json:"event_type"`
+	Error      string    `json:"error"`
+	DurationMs int64     `json:"duration_ms"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
+type failureRecord struct {
+	RunID          string        `json:"run_id"`
+	Pipeline       string        `json:"pipeline"`
+	Status         string        `json:"status"`
+	StartedAt      time.Time     `json:"started_at"`
+	ErrorSummary   string        `json:"error_summary"`
+	TriggerContext string        `json:"trigger_context"`
+	FailedEvents   []eventRecord `json:"failed_events,omitempty"`
+}
+
+type intervalRecord struct {
+	AssetName     string `json:"AssetName"`
+	IntervalStart string `json:"IntervalStart"`
+	IntervalEnd   string `json:"IntervalEnd"`
+	Status        string `json:"Status"`
+	RunID         string `json:"RunID"`
+	StartedAt     string `json:"StartedAt"`
+	CompletedAt   string `json:"CompletedAt"`
+}
+
+// --- Helpers ---
 
 func parseSince(s string) (time.Time, error) {
 	if len(s) < 2 {
@@ -608,12 +652,10 @@ func parseSince(s string) (time.Time, error) {
 }
 
 func inferPipelineName(dir string) string {
-	// Try reading pipeline.yaml from the directory
 	cfg, err := loadPipelineYAML(dir)
 	if err == nil && cfg != "" {
 		return cfg
 	}
-	// Fall back to directory name
 	parts := strings.Split(strings.TrimRight(dir, "/"), "/")
 	return parts[len(parts)-1]
 }
@@ -625,7 +667,6 @@ func loadPipelineYAML(dir string) (string, error) {
 		if err != nil {
 			continue
 		}
-		// Quick extract pipeline name
 		for _, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(line, "pipeline:") {
 				return strings.TrimSpace(strings.TrimPrefix(line, "pipeline:")), nil

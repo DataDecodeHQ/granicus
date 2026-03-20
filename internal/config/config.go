@@ -193,7 +193,7 @@ type PipelineConfig struct {
 	ConfigDir    string                       `yaml:"-"` // directory containing this config file
 }
 
-// DatasetForAsset returns the output dataset for an asset, resolving from connection, layer mapping, or the provided default.
+// DatasetForAsset returns the output dataset for an asset, resolving from resource, layer mapping, or the provided default.
 func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset string) string {
 	if asset.DestinationResource != "" {
 		if conn, ok := cfg.Resources[asset.DestinationResource]; ok {
@@ -511,12 +511,12 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		return nil, err
 	}
 
-	// Populate connection names from map keys
+	// Populate resource names from map keys
 	for name, conn := range cfg.Resources {
 		conn.Name = name
 	}
 
-	// Validate connection properties
+	// Validate resource properties
 	if err := ValidateResources(&cfg); err != nil {
 		return nil, err
 	}
@@ -544,7 +544,7 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 }
 
 
-// ValidateResources checks that all connections have the required properties for their type.
+// ValidateResources checks that all resources have the required properties for their type.
 func ValidateResources(cfg *PipelineConfig) error {
 	for name, conn := range cfg.Resources {
 		required, known := resourceRequirements[conn.Type]
@@ -553,7 +553,7 @@ func ValidateResources(cfg *PipelineConfig) error {
 		}
 		for _, prop := range required {
 			if conn.Properties[prop] == "" {
-				return fmt.Errorf("connection %q (type %s): missing required property %q", name, conn.Type, prop)
+				return fmt.Errorf("resource %q (type %s): missing required property %q", name, conn.Type, prop)
 			}
 		}
 	}

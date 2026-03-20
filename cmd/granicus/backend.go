@@ -15,7 +15,7 @@ import (
 // Backends holds all initialized backend components.
 type Backends struct {
 	State    state.StateBackend
-	Source   pipe_registry.PipelineRegistry
+	Registry pipe_registry.PipelineRegistry
 	Dispatch runner.RunnerDispatch
 }
 
@@ -26,7 +26,7 @@ func initBackends(projectRoot, configDir, envName string) (*Backends, error) {
 		return nil, fmt.Errorf("state backend: %w", err)
 	}
 
-	pipeSrc, err := initPipelineSource(configDir)
+	pipeReg, err := initPipelineRegistry(configDir)
 	if err != nil {
 		stateBackend.Close()
 		return nil, fmt.Errorf("pipeline source: %w", err)
@@ -55,7 +55,7 @@ func initBackends(projectRoot, configDir, envName string) (*Backends, error) {
 
 	return &Backends{
 		State:    stateBackend,
-		Source:   pipeSrc,
+		Registry: pipeReg,
 		Dispatch: dispatch,
 	}, nil
 }
@@ -96,9 +96,9 @@ func initRunnerDispatch() (runner.RunnerDispatch, error) {
 	}
 }
 
-// initPipelineSource creates the appropriate PipelineSource based on env vars.
+// initPipelineRegistry creates the appropriate PipelineRegistry based on env vars.
 // GRANICUS_PIPELINE_SOURCE=local (default) or gcs.
-func initPipelineSource(configDir string) (pipe_registry.PipelineRegistry, error) {
+func initPipelineRegistry(configDir string) (pipe_registry.PipelineRegistry, error) {
 	mode := os.Getenv("GRANICUS_PIPELINE_SOURCE")
 
 	switch mode {

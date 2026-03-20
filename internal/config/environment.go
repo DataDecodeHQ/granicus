@@ -28,17 +28,17 @@ func LoadEnvironmentConfig(path string) (*EnvironmentConfig, error) {
 		return nil, fmt.Errorf("parsing env config: %w", err)
 	}
 
-	// Populate connection names
+	// Populate resource names
 	for _, env := range cfg.Environments {
-		for name, conn := range env.Resources {
-			conn.Name = name
+		for name, res := range env.Resources {
+			res.Name = name
 		}
 	}
 
 	return &cfg, nil
 }
 
-// MergeEnvironment applies environment-specific connection overrides and prefix to a copy of the base pipeline config.
+// MergeEnvironment applies environment-specific resource overrides and prefix to a copy of the base pipeline config.
 func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName string) (*PipelineConfig, error) {
 	env, ok := envCfg.Environments[envName]
 	if !ok {
@@ -50,7 +50,7 @@ func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName s
 	merged.Assets = make([]AssetConfig, len(base.Assets))
 	copy(merged.Assets, base.Assets)
 
-	// Copy connections map
+	// Copy resources map
 	merged.Resources = make(map[string]*ResourceConfig)
 	for k, v := range base.Resources {
 		cp := *v
@@ -61,7 +61,7 @@ func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName s
 		merged.Resources[k] = &cp
 	}
 
-	// Override connection properties from environment
+	// Override resource properties from environment
 	for name, envConn := range env.Resources {
 		if existing, ok := merged.Resources[name]; ok {
 			for k, v := range envConn.Properties {

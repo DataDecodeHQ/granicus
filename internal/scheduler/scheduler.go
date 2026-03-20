@@ -15,6 +15,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
+	"github.com/DataDecodeHQ/granicus/internal/schedule"
 )
 
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
@@ -79,15 +80,21 @@ func (s *Scheduler) LockStore() *LockStore {
 	return s.lockStore
 }
 
+// findScheduleYML looks for schedule.yml in the config directory.
+func (s *Scheduler) findScheduleYML() string {
+	p := filepath.Join(s.configDir, "schedule.yml")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
 // LoadAndRegister scans the config directory and registers all pipeline schedules, replacing any existing entries.
+// It first checks for schedule.yml; if found, it uses that for schedule definitions (filtering to mode:local
+// and mode:auto entries). Otherwise it falls back to reading schedules from individual pipeline.yaml files.
 func (s *Scheduler) LoadAndRegister() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	results, err := scanConfigDir(s.configDir)
-	if err != nil {
-		return err
-	}
 
 	// Unregister all existing entries
 	for name, entryID := range s.entries {
@@ -97,7 +104,60 @@ func (s *Scheduler) LoadAndRegister() error {
 	s.configs = make(map[string]*config.PipelineConfig)
 	s.configPaths = make(map[string]string)
 
-	// Register new entries
+	// Try schedule.yml first
+	if schedPath := s.findScheduleYML(); schedPath != "" {
+		return s.loadFromScheduleYML(schedPath)
+	}
+
+	// Fallback: read schedules from pipeline.yaml files
+	slog.Warn("schedule.yml not found, falling back to pipeline.yaml schedule fields (deprecated)")
+	return s.loadFromPipelineConfigs()
+}
+
+func (s *Scheduler) loadFromScheduleYML(path string) error {
+	schedCfg, err := schedule.LoadScheduleConfig(path)
+	if err != nil {
+		return fmt.Errorf("loading schedule.yml: %w", err)
+	}
+
+	// Load all pipeline configs so we can register them with their full config
+	results, err := scanConfigDir(s.configDir)
+	if err != nil {
+		return err
+	}
+
+	for name, entry := range schedCfg.Schedules {
+		if !entry.IsEnabled() {
+			continue
+		}
+		// Skip cloud-only entries
+		if entry.Mode == "cloud" {
+			continue
+		}
+
+		sr, ok := results[name]
+		if !ok {
+			slog.Warn("schedule.yml references unknown pipeline", "pipeline", name)
+			continue
+		}
+
+		// Override the pipeline config's schedule with the one from schedule.yml
+		sr.cfg.Schedule = entry.Cron
+
+		if err := s.registerPipeline(name, sr.cfg, sr.path); err != nil {
+			slog.Warn("scheduler skipping pipeline", "pipeline", name, "error", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Scheduler) loadFromPipelineConfigs() error {
+	results, err := scanConfigDir(s.configDir)
+	if err != nil {
+		return err
+	}
+
 	for name, sr := range results {
 		if sr.cfg.Schedule == "" {
 			continue
@@ -121,9 +181,41 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 		return
 	}
 
+	// Build effective schedule map: schedule.yml overrides if present
+	type effective struct {
+		schedule string
+		sr       scanResult
+	}
+	effectiveSchedules := make(map[string]effective)
+
+	if schedPath := s.findScheduleYML(); schedPath != "" {
+		schedCfg, serr := schedule.LoadScheduleConfig(schedPath)
+		if serr != nil {
+			slog.Error("scheduler reload: schedule.yml error", "error", serr)
+			return
+		}
+		for name, entry := range schedCfg.Schedules {
+			if !entry.IsEnabled() || entry.Mode == "cloud" {
+				continue
+			}
+			sr, ok := results[name]
+			if !ok {
+				continue
+			}
+			effectiveSchedules[name] = effective{schedule: entry.Cron, sr: sr}
+		}
+	} else {
+		for name, sr := range results {
+			if sr.cfg.Schedule == "" {
+				continue
+			}
+			effectiveSchedules[name] = effective{schedule: sr.cfg.Schedule, sr: sr}
+		}
+	}
+
 	// Find removed
 	for name, entryID := range s.entries {
-		if _, ok := results[name]; !ok {
+		if _, ok := effectiveSchedules[name]; !ok {
 			s.cron.Remove(entryID)
 			delete(s.entries, name)
 			delete(s.configs, name)
@@ -133,20 +225,18 @@ func (s *Scheduler) Reload() (added, removed, updated []string) {
 	}
 
 	// Find added and updated
-	for name, sr := range results {
-		if sr.cfg.Schedule == "" {
-			continue
-		}
+	for name, eff := range effectiveSchedules {
+		eff.sr.cfg.Schedule = eff.schedule
 		oldCfg, exists := s.configs[name]
 		if !exists {
-			if err := s.registerPipeline(name, sr.cfg, sr.path); err == nil {
+			if err := s.registerPipeline(name, eff.sr.cfg, eff.sr.path); err == nil {
 				added = append(added, name)
 			}
-		} else if oldCfg.Schedule != sr.cfg.Schedule {
+		} else if oldCfg.Schedule != eff.schedule {
 			if id, ok := s.entries[name]; ok {
 				s.cron.Remove(id)
 			}
-			if err := s.registerPipeline(name, sr.cfg, sr.path); err == nil {
+			if err := s.registerPipeline(name, eff.sr.cfg, eff.sr.path); err == nil {
 				updated = append(updated, name)
 			}
 		}

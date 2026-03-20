@@ -180,38 +180,38 @@ func findAssetConfig(cfg *config.PipelineConfig, name string) *config.AssetConfi
 	return nil
 }
 
-// connectionForAsset returns the destination connection config for an asset, or nil.
-func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *config.ResourceConfig {
-	connName := asset.DestinationResource
-	if connName == "" {
+// resourceForAsset returns the destination resource config for an asset, or nil.
+func resourceForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *config.ResourceConfig {
+	resName := asset.DestinationResource
+	if resName == "" {
 		return nil
 	}
-	if conn, ok := cfg.Resources[connName]; ok {
-		return conn
+	if res, ok := cfg.Resources[resName]; ok {
+		return res
 	}
 	return nil
 }
 
-// resolveAssetRuntime resolves the dataset, destination connection, and source connection
-// for the named asset using layer routing and connection lookups from cfg.
+// resolveAssetRuntime resolves the dataset, destination resource, and source resource
+// for the named asset using layer routing and resource lookups from cfg.
 func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset string, destConn, sourceConn *config.ResourceConfig) {
 	assetCfg := findAssetConfig(cfg, assetName)
 	if assetCfg == nil {
 		return "", nil, nil
 	}
 	defaultDS := ""
-	if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-		defaultDS = conn.Properties["dataset"]
+	if res := resourceForAsset(cfg, assetCfg); res != nil {
+		defaultDS = res.Properties["dataset"]
 	}
 	dataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
 	if assetCfg.DestinationResource != "" {
-		if conn, ok := cfg.Resources[assetCfg.DestinationResource]; ok {
-			destConn = conn
+		if res, ok := cfg.Resources[assetCfg.DestinationResource]; ok {
+			destConn = res
 		}
 	}
 	if assetCfg.SourceResource != "" {
-		if conn, ok := cfg.Resources[assetCfg.SourceResource]; ok {
-			sourceConn = conn
+		if res, ok := cfg.Resources[assetCfg.SourceResource]; ok {
+			sourceConn = res
 		}
 	}
 	return dataset, destConn, sourceConn

@@ -24,7 +24,7 @@ func newTestEventStore(t *testing.T) *events.Store {
 	return s
 }
 
-// minimalPipelineConfig returns a PipelineConfig with two bigquery connections and
+// minimalPipelineConfig returns a PipelineConfig with two bigquery resources and
 // a set of assets for use across multiple tests.
 func minimalPipelineConfig() *config.PipelineConfig {
 	return &config.PipelineConfig{
@@ -74,7 +74,7 @@ func minimalPipelineConfig() *config.PipelineConfig {
 				Layer:  "analytics",
 			},
 			{
-				Name: "no_connection_asset",
+				Name: "no_resource_asset",
 				Type: "shell",
 			},
 		},
@@ -121,44 +121,44 @@ func TestNodeRunner_FindAssetConfig_ReturnsCorrectElement(t *testing.T) {
 	}
 }
 
-// ---- connectionForAsset tests ----
+// ---- resourceForAsset tests ----
 
-func TestNodeRunner_ConnectionForAsset_WithDestinationResource(t *testing.T) {
+func TestNodeRunner_ResourceForAsset_WithDestinationResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	asset := findAssetConfig(cfg, "stg_orders")
 	if asset == nil {
 		t.Fatal("asset not found")
 	}
-	conn := connectionForAsset(cfg, asset)
+	conn := resourceForAsset(cfg, asset)
 	if conn == nil {
-		t.Fatal("expected non-nil connection")
+		t.Fatal("expected non-nil resource")
 	}
 	if conn.Properties["dataset"] != "main_dataset" {
 		t.Errorf("expected dataset %q, got %q", "main_dataset", conn.Properties["dataset"])
 	}
 }
 
-func TestNodeRunner_ConnectionForAsset_NoDestinationResource(t *testing.T) {
+func TestNodeRunner_ResourceForAsset_NoDestinationResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
-	asset := findAssetConfig(cfg, "no_connection_asset")
+	asset := findAssetConfig(cfg, "no_resource_asset")
 	if asset == nil {
 		t.Fatal("asset not found")
 	}
-	conn := connectionForAsset(cfg, asset)
+	conn := resourceForAsset(cfg, asset)
 	if conn != nil {
 		t.Errorf("expected nil for asset without destination_resource, got %+v", conn)
 	}
 }
 
-func TestNodeRunner_ConnectionForAsset_UnknownConnectionName(t *testing.T) {
+func TestNodeRunner_ResourceForAsset_UnknownResourceName(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	asset := &config.AssetConfig{
 		Name:                  "orphan",
 		DestinationResource: "does_not_exist",
 	}
-	conn := connectionForAsset(cfg, asset)
+	conn := resourceForAsset(cfg, asset)
 	if conn != nil {
-		t.Errorf("expected nil for unknown connection name, got %+v", conn)
+		t.Errorf("expected nil for unknown resource name, got %+v", conn)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestResolveAssetRuntime_DatasetFromLayerMapping(t *testing.T) {
 	}
 }
 
-func TestResolveAssetRuntime_DatasetFromLayerMappingNoConnection(t *testing.T) {
+func TestResolveAssetRuntime_DatasetFromLayerMappingNoResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	cfg.Assets = append(cfg.Assets, config.AssetConfig{
 		Name:  "layer_only_asset",
@@ -236,18 +236,18 @@ func TestResolveAssetRuntime_DestAndSourceResources(t *testing.T) {
 	_, destConn, sourceConn := resolveAssetRuntime(cfg, "my_asset")
 
 	if destConn == nil {
-		t.Error("expected non-nil destination connection")
+		t.Error("expected non-nil destination resource")
 	} else if destConn.Properties["dataset"] != "dest_ds" {
 		t.Errorf("dest dataset: expected %q, got %q", "dest_ds", destConn.Properties["dataset"])
 	}
 	if sourceConn == nil {
-		t.Error("expected non-nil source connection")
+		t.Error("expected non-nil source resource")
 	} else if sourceConn.Properties["dataset"] != "src_ds" {
 		t.Errorf("src dataset: expected %q, got %q", "src_ds", sourceConn.Properties["dataset"])
 	}
 }
 
-func TestResolveAssetRuntime_MissingConnectionsResolveToNil(t *testing.T) {
+func TestResolveAssetRuntime_MissingResourcesResolveToNil(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Resources: map[string]*config.ResourceConfig{},
 		Assets: []config.AssetConfig{
@@ -260,16 +260,16 @@ func TestResolveAssetRuntime_MissingConnectionsResolveToNil(t *testing.T) {
 	}
 	_, destConn, sourceConn := resolveAssetRuntime(cfg, "asset_a")
 	if destConn != nil {
-		t.Error("expected nil dest connection for missing name")
+		t.Error("expected nil dest resource for missing name")
 	}
 	if sourceConn != nil {
-		t.Error("expected nil source connection for missing name")
+		t.Error("expected nil source resource for missing name")
 	}
 }
 
-func TestResolveAssetRuntime_NoConnectionNoLayer(t *testing.T) {
+func TestResolveAssetRuntime_NoResourceNoLayer(t *testing.T) {
 	cfg := minimalPipelineConfig()
-	dataset, destConn, sourceConn := resolveAssetRuntime(cfg, "no_connection_asset")
+	dataset, destConn, sourceConn := resolveAssetRuntime(cfg, "no_resource_asset")
 	if dataset != "" {
 		t.Errorf("expected empty dataset, got %q", dataset)
 	}
@@ -290,7 +290,7 @@ func buildRunnerAsset(graphAsset *graph.Asset, cfg *config.PipelineConfig) *runn
 	resolvedDataset := ""
 	if assetCfg != nil {
 		defaultDS := ""
-		if conn := connectionForAsset(cfg, assetCfg); conn != nil {
+		if conn := resourceForAsset(cfg, assetCfg); conn != nil {
 			defaultDS = conn.Properties["dataset"]
 		}
 		resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
@@ -329,7 +329,7 @@ func buildRunnerAsset(graphAsset *graph.Asset, cfg *config.PipelineConfig) *runn
 	}
 }
 
-func TestNodeRunner_RunnerAsset_DatasetResolvedViaDestConnection(t *testing.T) {
+func TestNodeRunner_RunnerAsset_DatasetResolvedViaDestResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	gAsset := &graph.Asset{
 		Name:                  "stg_orders",

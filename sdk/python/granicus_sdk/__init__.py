@@ -49,9 +49,6 @@ class ResourceConfig:
         return cls(name=name, type=conn_type, properties=props)
 
 
-# Backward compat alias
-ConnectionConfig = ResourceConfig
-
 
 @dataclass
 class GranicusEnv:
@@ -199,4 +196,4 @@ class GranicusEnv:
         self.metadata_path.write_text(json.dumps(data))
 
 
-__all__ = ["GranicusEnv", "ResourceConfig", "ConnectionConfig", "GranicusContractError"]
+__all__ = ["GranicusEnv", "ResourceConfig", "GranicusContractError"]

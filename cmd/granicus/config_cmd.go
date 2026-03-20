@@ -21,6 +21,7 @@ func newConfigCmd() *cobra.Command {
 		Short: "Show resolved configuration from all layers",
 		RunE:  runConfigShow,
 	}
+	addJSONFlag(showCmd)
 
 	cmd.AddCommand(showCmd)
 	return cmd
@@ -89,6 +90,27 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	}
 
 	mode := resolveMode(cliCfg, false)
+
+	if wantJSON(cmd) {
+		out := map[string]string{"mode": string(mode)}
+		if cliCfg.Endpoint != "" {
+			out["endpoint"] = cliCfg.Endpoint
+		}
+		if cliCfg.APIKey != "" {
+			masked := cliCfg.APIKey
+			if len(masked) > 8 {
+				masked = masked[:4] + "..." + masked[len(masked)-4:]
+			}
+			out["api_key"] = masked
+		}
+		if cliCfg.Org != "" {
+			out["org"] = cliCfg.Org
+		}
+		if cliCfg.Pipeline != "" {
+			out["pipeline"] = cliCfg.Pipeline
+		}
+		return outputJSON(out)
+	}
 
 	fmt.Printf("Mode:     %s\n", mode)
 	if cliCfg.Endpoint != "" {

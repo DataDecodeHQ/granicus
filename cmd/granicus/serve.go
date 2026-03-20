@@ -194,7 +194,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		runPipelineForScheduler(pec, envName, envCfg)
 	}
 
-	pipeSrc := backends.Source
+	pipeSrc := backends.Registry
 
 	// Create scheduler
 	sched, err := scheduler.NewScheduler(pipeSrc, projectRoot, db, runFunc, eventStore)

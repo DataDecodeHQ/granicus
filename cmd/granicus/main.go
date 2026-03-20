@@ -150,7 +150,8 @@ func main() {
 	runCmd.Flags().Bool("keep-test-data", false, "Preserve test dataset after run")
 	runCmd.Flags().Bool("downstream-only", false, "With --assets, run only downstream dependents (skip upstream)")
 	runCmd.Flags().Bool("only", false, "With --assets, run only the named assets (skip upstream and downstream)")
-	runCmd.Flags().String("output", "", "Output format (json)")
+	runCmd.Flags().String("output", "", "Output format (json) [deprecated: use --json]")
+	addJSONFlag(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running (assets, intervals, checks)")
 
 	validateCmd := &cobra.Command{
@@ -161,8 +162,7 @@ func main() {
 	}
 	validateCmd.Flags().String("project-root", ".", "Project root directory")
 	validateCmd.Flags().Bool("strict", false, "Promote warnings to errors")
-	validateCmd.Flags().Bool("json", false, "Output validation results as JSON")
-	validateCmd.Flags().String("output", "", "Output format (json)")
+	addJSONFlag(validateCmd)
 	validateCmd.Flags().Bool("quiet", false, "Only show errors and warnings")
 
 	statusCmd := &cobra.Command{
@@ -172,7 +172,8 @@ func main() {
 		RunE:  runStatus,
 	}
 	statusCmd.Flags().String("project-root", ".", "Project root directory")
-	statusCmd.Flags().String("output", "", "Output format (json)")
+	statusCmd.Flags().String("output", "", "Output format (json) [deprecated: use --json]")
+	addJSONFlag(statusCmd)
 
 	historyCmd := &cobra.Command{
 		Use:   "history",
@@ -181,16 +182,22 @@ func main() {
 	}
 	historyCmd.Flags().Int("limit", 10, "Number of runs to show")
 	historyCmd.Flags().String("project-root", ".", "Project root directory")
-	historyCmd.Flags().String("output", "", "Output format (json)")
+	historyCmd.Flags().String("output", "", "Output format (json) [deprecated: use --json]")
+	addJSONFlag(historyCmd)
 	historyCmd.Flags().Bool("costs", false, "Show per-run BQ cost summary (total bytes, cost, cache hit rate)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if wantJSON(cmd) {
+				return outputJSON(map[string]string{"version": version})
+			}
 			fmt.Printf("granicus %s\n", version)
+			return nil
 		},
 	}
+	addJSONFlag(versionCmd)
 
 	gcCmd := &cobra.Command{
 		Use:   "gc",
@@ -200,6 +207,7 @@ func main() {
 	gcCmd.Flags().Int("retention-days", 30, "Delete runs older than this many days")
 	gcCmd.Flags().String("project-root", ".", "Project root directory")
 	gcCmd.Flags().Bool("dry-run", false, "Show what would be cleaned without deleting")
+	addJSONFlag(gcCmd)
 
 	backupCmd := &cobra.Command{
 		Use:   "backup",
@@ -209,6 +217,7 @@ func main() {
 	backupCmd.Flags().String("project-root", ".", "Project root directory")
 	backupCmd.Flags().String("output", "", "Output path (default: alongside state.db)")
 	backupCmd.Flags().Int("keep", 7, "Number of backups to retain")
+	addJSONFlag(backupCmd)
 
 	eventsCmd := &cobra.Command{
 		Use:   "events",
@@ -222,8 +231,7 @@ func main() {
 	eventsCmd.Flags().String("pipeline", "", "Filter by pipeline")
 	eventsCmd.Flags().String("since", "", "Show events since duration (e.g., 24h, 7d)")
 	eventsCmd.Flags().Int("limit", 50, "Maximum events to show")
-	eventsCmd.Flags().Bool("json", false, "Output as JSON")
-	eventsCmd.Flags().String("output", "", "Output format (json)")
+	addJSONFlag(eventsCmd)
 
 	modelsCmd := &cobra.Command{
 		Use:   "models [asset_name]",
@@ -233,7 +241,8 @@ func main() {
 	}
 	modelsCmd.Flags().String("project-root", ".", "Project root directory")
 	modelsCmd.Flags().String("diff", "", "Show diff between two versions (e.g., 1,2)")
-	modelsCmd.Flags().String("output", "", "Output format (json)")
+	modelsCmd.Flags().String("output", "", "Output format (json) [deprecated: use --json]")
+	addJSONFlag(modelsCmd)
 
 	migrateCmd := &cobra.Command{
 		Use:   "migrate <config.yaml>",
@@ -243,6 +252,7 @@ func main() {
 	}
 	migrateCmd.Flags().Bool("dry-run", false, "Show what would change without modifying the file")
 	migrateCmd.Flags().String("from-version", "", "Override detected config version (e.g., 0.2)")
+	addJSONFlag(migrateCmd)
 
 	completionCmd := &cobra.Command{
 		Use:   "completion <bash|zsh|fish|powershell>",
@@ -260,13 +270,15 @@ func main() {
 		RunE:  runDoctor,
 	}
 	doctorCmd.Flags().String("project-root", ".", "Project root directory")
-	doctorCmd.Flags().String("output", "", "Output format (json)")
+	doctorCmd.Flags().String("output", "", "Output format (json) [deprecated: use --json]")
+	addJSONFlag(doctorCmd)
 
 	rootCmd.AddCommand(runCmd, validateCmd, statusCmd, historyCmd, versionCmd, newServeCmd(), gcCmd, backupCmd, eventsCmd, modelsCmd, migrateCmd, completionCmd, doctorCmd,
 		newPushCmd(), newActivateCmd(), newVersionsCmd(), newDiffCmd(),
 		newHistoryCmd2(), newEventsCmd2(), newFailuresCmd(), newStatsCmd(),
 		newCloudStatusCmd(), newIntervalsCmd(),
-		newTriggerCmd(), newSubscribeCmd(), newConfigCmd(), newLoginCmd())
+		newTriggerCmd(), newSubscribeCmd(), newConfigCmd(), newLoginCmd(),
+		newScheduleCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -316,9 +328,9 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 	// Build ref() function with pipeline context
 	defaultDS := ""
 	if cfg.Resources != nil {
-		for _, conn := range cfg.Resources {
-			if conn.Type == "bigquery" {
-				defaultDS = conn.Properties["dataset"]
+		for _, res := range cfg.Resources {
+			if res.Type == "bigquery" {
+				defaultDS = res.Properties["dataset"]
 				break
 			}
 		}
@@ -343,16 +355,16 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		for name, src := range cfg.Sources {
 			rs := runner.ResolvedSource{Identifier: src.Identifier}
 			if src.Resource != "" {
-				if conn, ok := cfg.Resources[src.Resource]; ok {
-					rs.ResourceType = conn.Type
-					rs.Project = conn.Properties["project"]
+				if res, ok := cfg.Resources[src.Resource]; ok {
+					rs.ResourceType = res.Type
+					rs.Project = res.Properties["project"]
 				}
 			} else {
-				// Default to first bigquery connection
-				for _, conn := range cfg.Resources {
-					if conn.Type == "bigquery" {
+				// Default to first bigquery resource
+				for _, res := range cfg.Resources {
+					if res.Type == "bigquery" {
 						rs.ResourceType = "bigquery"
-						rs.Project = conn.Properties["project"]
+						rs.Project = res.Properties["project"]
 						break
 					}
 				}
@@ -363,25 +375,25 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		funcMap["source"] = sourceFunc
 	}
 
-	// Register runners per connection type
+	// Register runners per resource type
 	if cfg.Resources != nil {
-		for _, conn := range cfg.Resources {
-			switch conn.Type {
+		for _, res := range cfg.Resources {
+			switch res.Type {
 			case "bigquery":
-				sqlR := runner.NewSQLRunner(conn)
+				sqlR := runner.NewSQLRunner(res)
 				sqlR.FuncMap = funcMap
 				reg.Register("sql", sqlR)
-				checkR := runner.NewSQLCheckRunner(conn)
+				checkR := runner.NewSQLCheckRunner(res)
 				checkR.FuncMap = funcMap
 				reg.Register("sql_check", checkR)
 			case "gcs":
-				reg.Register("gcs", runner.NewGCSRunner(conn))
-				reg.Register("gcs_export", runner.NewGCSRunner(conn))
-				reg.Register("gcs_ingest", runner.NewGCSIngestRunner(conn, nil))
+				reg.Register("gcs", runner.NewGCSRunner(res))
+				reg.Register("gcs_export", runner.NewGCSRunner(res))
+				reg.Register("gcs_ingest", runner.NewGCSIngestRunner(res, nil))
 			case "s3":
-				reg.Register("s3", runner.NewS3Runner(conn))
+				reg.Register("s3", runner.NewS3Runner(res))
 			case "iceberg":
-				reg.Register("iceberg", runner.NewIcebergRunner(conn))
+				reg.Register("iceberg", runner.NewIcebergRunner(res))
 			}
 		}
 	}
@@ -559,8 +571,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 	testMode, _ := cmd.Flags().GetBool("test")
 	testWindow, _ := cmd.Flags().GetString("test-window")
 	keepTestData, _ := cmd.Flags().GetBool("keep-test-data")
-	outputFormat, _ := cmd.Flags().GetString("output")
-	outputJSON := outputFormat == "json"
+	asJSON := wantJSON(cmd)
+	if outputFormat, _ := cmd.Flags().GetString("output"); outputFormat == "json" {
+		asJSON = true
+	}
+	outputJSON := asJSON
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	if testWindow != "" && !testMode {
@@ -658,20 +673,20 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	defer stateStore.Close()
 
-	// Test mode: create temporary dataset and override connection properties
+	// Test mode: create temporary dataset and override resource properties
 	if testMode {
-		for _, conn := range cfg.Resources {
-			if conn.Type == "bigquery" {
-				baseDataset := conn.Properties["dataset"]
+		for _, res := range cfg.Resources {
+			if res.Type == "bigquery" {
+				baseDataset := res.Properties["dataset"]
 				testDatasetName := testmode.TestDatasetName(baseDataset, runID)
 				if !outputJSON {
 					fmt.Printf("Test mode: using dataset %s\n", testDatasetName)
 				}
-				conn.Properties["dataset"] = testDatasetName
+				res.Properties["dataset"] = testDatasetName
 				break
 			}
 		}
-		// Rebuild registry with updated connection properties
+		// Rebuild registry with updated resource properties
 		registry = buildRegistry(cfg, projectRoot)
 	}
 
@@ -867,11 +882,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	strict, _ := cmd.Flags().GetBool("strict")
-	asJSON, _ := cmd.Flags().GetBool("json")
-	outputFormat, _ := cmd.Flags().GetString("output")
-	if outputFormat == "json" {
-		asJSON = true
-	}
+	asJSON := wantJSON(cmd)
 	quiet, _ := cmd.Flags().GetBool("quiet")
 
 	cfg, g, missingFiles, err := loadAndBuild(args[0], projectRoot)
@@ -1122,8 +1133,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	projectRoot, _ := cmd.Flags().GetString("project-root")
-	outputFormat, _ := cmd.Flags().GetString("output")
-	outputJSON := outputFormat == "json"
+	asJSON := wantJSON(cmd)
+	if outputFormat, _ := cmd.Flags().GetString("output"); outputFormat == "json" {
+		asJSON = true
+	}
+	outputJSON := asJSON
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	eventStore, err := events.New(eventsDBPath)
@@ -1238,9 +1252,12 @@ func runHistory(cmd *cobra.Command, args []string) error {
 
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	limit, _ := cmd.Flags().GetInt("limit")
-	outputFormat, _ := cmd.Flags().GetString("output")
 	showCosts, _ := cmd.Flags().GetBool("costs")
-	outputJSON := outputFormat == "json"
+	asJSON := wantJSON(cmd)
+	if outputFormat, _ := cmd.Flags().GetString("output"); outputFormat == "json" {
+		asJSON = true
+	}
+	outputJSON := asJSON
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	eventStore, err := events.New(eventsDBPath)
@@ -1347,6 +1364,7 @@ func runGC(cmd *cobra.Command, args []string) error {
 	}
 
 	_ = dryRun // local gc does not support dry-run yet
+	gcJSON := wantJSON(cmd)
 
 	// Clean old JSONL runs (legacy)
 	result, err := gc.Collect(projectRoot, retentionDays)
@@ -1354,11 +1372,16 @@ func runGC(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if result.RunsDeleted > 0 {
-		fmt.Printf("Deleted %d legacy runs, freed %s\n", result.RunsDeleted, gc.FormatBytes(result.BytesFreed))
-	}
-	if result.TestCleanup > 0 {
-		fmt.Printf("Cleaned up %d test artifacts\n", result.TestCleanup)
+	var eventsDeleted int
+	var eventsDBSize int64
+
+	if !gcJSON {
+		if result.RunsDeleted > 0 {
+			fmt.Printf("Deleted %d legacy runs, freed %s\n", result.RunsDeleted, gc.FormatBytes(result.BytesFreed))
+		}
+		if result.TestCleanup > 0 {
+			fmt.Printf("Cleaned up %d test artifacts\n", result.TestCleanup)
+		}
 	}
 
 	// Clean events
@@ -1375,14 +1398,29 @@ func runGC(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("event gc: %w", err)
 		}
-		if deleted > 0 {
-			fmt.Printf("Deleted %d events older than %d days\n", deleted, retentionDays)
+		eventsDeleted = deleted
+		if !gcJSON {
+			if deleted > 0 {
+				fmt.Printf("Deleted %d events older than %d days\n", deleted, retentionDays)
+			}
+			if info, err := os.Stat(eventsDBPath); err == nil {
+				fmt.Printf("Events DB: %s\n", gc.FormatBytes(info.Size()))
+			}
+		} else {
+			if info, err := os.Stat(eventsDBPath); err == nil {
+				eventsDBSize = info.Size()
+			}
 		}
+	}
 
-		// Report DB size
-		if info, err := os.Stat(eventsDBPath); err == nil {
-			fmt.Printf("Events DB: %s\n", gc.FormatBytes(info.Size()))
-		}
+	if gcJSON {
+		return outputJSON(map[string]any{
+			"runs_deleted":     result.RunsDeleted,
+			"bytes_freed":      result.BytesFreed,
+			"test_cleanup":     result.TestCleanup,
+			"events_deleted":   eventsDeleted,
+			"events_db_bytes":  eventsDBSize,
+		})
 	}
 
 	return nil
@@ -1392,6 +1430,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	output, _ := cmd.Flags().GetString("output")
 	keep, _ := cmd.Flags().GetInt("keep")
+	backupJSON := wantJSON(cmd)
 
 	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
 
@@ -1399,15 +1438,19 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("State backup: %s\n", backupPath)
+	if !backupJSON {
+		fmt.Printf("State backup: %s\n", backupPath)
+	}
 
 	// Backup events.db
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	if _, statErr := os.Stat(eventsDBPath); statErr == nil {
 		eventsBackup, err := backup.BackupStateDB(eventsDBPath, "")
 		if err != nil {
-			fmt.Printf("Warning: events backup failed: %v\n", err)
-		} else {
+			if !backupJSON {
+				fmt.Printf("Warning: events backup failed: %v\n", err)
+			}
+		} else if !backupJSON {
 			fmt.Printf("Events backup: %s\n", eventsBackup)
 		}
 	}
@@ -1417,9 +1460,21 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("pruning: %w", err)
 		}
-		if pruned > 0 {
+		if pruned > 0 && !backupJSON {
 			fmt.Printf("Pruned %d old backups\n", pruned)
 		}
+	}
+
+	if backupJSON {
+		info, _ := os.Stat(backupPath)
+		var sizeBytes int64
+		if info != nil {
+			sizeBytes = info.Size()
+		}
+		return outputJSON(map[string]any{
+			"path":       backupPath,
+			"size_bytes": sizeBytes,
+		})
 	}
 
 	return nil
@@ -1433,11 +1488,7 @@ func runEvents(cmd *cobra.Command, args []string) error {
 	pipeline, _ := cmd.Flags().GetString("pipeline")
 	since, _ := cmd.Flags().GetString("since")
 	limit, _ := cmd.Flags().GetInt("limit")
-	asJSON, _ := cmd.Flags().GetBool("json")
-	outputFormat, _ := cmd.Flags().GetString("output")
-	if outputFormat == "json" {
-		asJSON = true
-	}
+	asJSON := wantJSON(cmd)
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	if _, err := os.Stat(eventsDBPath); os.IsNotExist(err) {
@@ -1642,8 +1693,11 @@ func showModelHistory(eventStore *events.Store, asset string, outputJSON bool) e
 func runModels(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	diffFlag, _ := cmd.Flags().GetString("diff")
-	outputFormat, _ := cmd.Flags().GetString("output")
-	outputJSON := outputFormat == "json"
+	asJSON := wantJSON(cmd)
+	if outputFormat, _ := cmd.Flags().GetString("output"); outputFormat == "json" {
+		asJSON = true
+	}
+	outputJSON := asJSON
 
 	eventsDBPath := filepath.Join(projectRoot, ".granicus", "events.db")
 	if _, err := os.Stat(eventsDBPath); os.IsNotExist(err) {
@@ -1759,22 +1813,22 @@ func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 }
 
 func primaryBQProjectDataset(cfg *config.PipelineConfig) (string, string) {
-	for _, conn := range cfg.Resources {
-		if conn.Type == "bigquery" {
-			return conn.Properties["project"], conn.Properties["dataset"]
+	for _, res := range cfg.Resources {
+		if res.Type == "bigquery" {
+			return res.Properties["project"], res.Properties["dataset"]
 		}
 	}
 	return "", ""
 }
 
 func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
-	for _, conn := range cfg.Resources {
-		if conn.Type != "bigquery" {
+	for _, res := range cfg.Resources {
+		if res.Type != "bigquery" {
 			continue
 		}
 		var opts []option.ClientOption
 		credMethod := "default"
-		if creds := conn.Properties["credentials"]; creds != "" {
+		if creds := res.Properties["credentials"]; creds != "" {
 			gcreds, err := credentials.NewCredentialsFromFile(
 				credentials.ServiceAccount,
 				creds,
@@ -1789,12 +1843,12 @@ func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
 			opts = append(opts, option.WithTokenSource(oauth2adapt.TokenSourceFromTokenProvider(gcreds)))
 			credMethod = "file"
 		}
-		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
+		client, err := bigquery.NewClient(context.Background(), res.Properties["project"], opts...)
 		if err != nil {
 			slog.Warn("could not create BQ client for context", "error", err)
 			return nil
 		}
-		slog.Info("credential_access", "event", "bq_client_create", "connection", conn.Name, "credential_method", credMethod)
+		slog.Info("credential_access", "event", "bq_client_create", "resource", res.Name, "credential_method", credMethod)
 		return client
 	}
 	return nil
@@ -1807,14 +1861,14 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 	type dsKey struct{ project, dataset, creds string }
 	seen := map[dsKey]bool{}
 
-	for _, conn := range cfg.Resources {
-		if conn.Type != "bigquery" {
+	for _, res := range cfg.Resources {
+		if res.Type != "bigquery" {
 			continue
 		}
 		key := dsKey{
-			project: conn.Properties["project"],
-			dataset: conn.Properties["dataset"],
-			creds:   conn.Properties["credentials"],
+			project: res.Properties["project"],
+			dataset: res.Properties["dataset"],
+			creds:   res.Properties["credentials"],
 		}
 		if key.dataset == "" || seen[key] {
 			continue
@@ -1840,7 +1894,7 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 			return fmt.Errorf("creating BQ client for %s: %w", key.dataset, err)
 		}
 
-		location := conn.Properties["location"]
+		location := res.Properties["location"]
 		if location == "" {
 			location = "us-central1"
 		}
@@ -1871,6 +1925,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	configPath := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	fromVersionFlag, _ := cmd.Flags().GetString("from-version")
+	migrateJSON := wantJSON(cmd)
 
 	content, err := os.ReadFile(configPath)
 	if err != nil {
@@ -1888,16 +1943,32 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	if result.AlreadyCurrent {
+		if migrateJSON {
+			return outputJSON(map[string]any{
+				"path":    configPath,
+				"dry_run": dryRun,
+				"applied": false,
+			})
+		}
 		fmt.Printf("Config is already at version %s, nothing to do.\n", migrate.LatestVersion)
 		return nil
 	}
 
-	fmt.Printf("Migrating %s: %s -> %s\n", configPath, result.FromVersion, result.ToVersion)
-	for _, c := range result.Changes {
-		fmt.Printf("  - %s\n", c.Description)
+	if !migrateJSON {
+		fmt.Printf("Migrating %s: %s -> %s\n", configPath, result.FromVersion, result.ToVersion)
+		for _, c := range result.Changes {
+			fmt.Printf("  - %s\n", c.Description)
+		}
 	}
 
 	if dryRun {
+		if migrateJSON {
+			return outputJSON(map[string]any{
+				"path":    configPath,
+				"dry_run": true,
+				"applied": false,
+			})
+		}
 		fmt.Println("\n(dry-run: no changes written)")
 		return nil
 	}
@@ -1906,10 +1977,20 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("creating backup: %w", err)
 	}
-	fmt.Printf("Backup written: %s\n", backupPath)
+	if !migrateJSON {
+		fmt.Printf("Backup written: %s\n", backupPath)
+	}
 
 	if err := os.WriteFile(configPath, result.Content, 0644); err != nil {
 		return fmt.Errorf("writing migrated config: %w", err)
+	}
+
+	if migrateJSON {
+		return outputJSON(map[string]any{
+			"path":    configPath,
+			"dry_run": false,
+			"applied": true,
+		})
 	}
 
 	fmt.Printf("Migration complete: %s\n", configPath)
@@ -1938,8 +2019,11 @@ type jsonDoctorOutput struct {
 
 func runDoctor(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
-	outputFormat, _ := cmd.Flags().GetString("output")
-	outputJSON := outputFormat == "json"
+	asJSON := wantJSON(cmd)
+	if outputFormat, _ := cmd.Flags().GetString("output"); outputFormat == "json" {
+		asJSON = true
+	}
+	outputJSON := asJSON
 
 	var cfg *config.PipelineConfig
 	if len(args) > 0 {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -185,5 +186,96 @@ func TestStatus_404ForMissingRun(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestHandleAdminPrune_Success(t *testing.T) {
+	srv, _ := setupServer(t)
+	srv.SetPruneFunc(func(ctx context.Context, retentionDays int, dryRun bool) (map[string]any, error) {
+		return map[string]any{
+			"runs_archived":    5,
+			"runs_pruned":      3,
+			"intervals_pruned": 10,
+		}, nil
+	})
+	handler := srv.Handler()
+
+	body := bytes.NewBufferString(`{"retention_days": 30}`)
+	req := httptest.NewRequest("POST", "/api/v1/admin/prune", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["runs_archived"] != float64(5) {
+		t.Errorf("expected runs_archived=5, got %v", resp["runs_archived"])
+	}
+	if resp["runs_pruned"] != float64(3) {
+		t.Errorf("expected runs_pruned=3, got %v", resp["runs_pruned"])
+	}
+	if resp["intervals_pruned"] != float64(10) {
+		t.Errorf("expected intervals_pruned=10, got %v", resp["intervals_pruned"])
+	}
+}
+
+func TestHandleAdminPrune_DryRun(t *testing.T) {
+	srv, _ := setupServer(t)
+
+	var receivedDryRun bool
+	srv.SetPruneFunc(func(ctx context.Context, retentionDays int, dryRun bool) (map[string]any, error) {
+		receivedDryRun = dryRun
+		return map[string]any{
+			"runs_archived":    0,
+			"runs_pruned":      0,
+			"intervals_pruned": 0,
+			"dry_run":          true,
+		}, nil
+	})
+	handler := srv.Handler()
+
+	body := bytes.NewBufferString(`{"retention_days": 30, "dry_run": true}`)
+	req := httptest.NewRequest("POST", "/api/v1/admin/prune", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !receivedDryRun {
+		t.Error("expected PruneFunc to receive dryRun=true")
+	}
+}
+
+func TestHandleAdminPrune_NotConfigured(t *testing.T) {
+	srv, _ := setupServer(t)
+	handler := srv.Handler()
+
+	body := bytes.NewBufferString(`{"retention_days": 30}`)
+	req := httptest.NewRequest("POST", "/api/v1/admin/prune", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleAdminPrune_MethodNotAllowed(t *testing.T) {
+	srv, _ := setupServer(t)
+	handler := srv.Handler()
+
+	req := httptest.NewRequest("GET", "/api/v1/admin/prune", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d: %s", w.Code, w.Body.String())
 	}
 }

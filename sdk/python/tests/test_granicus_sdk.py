@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import warnings
 
-from granicus_sdk import GranicusContractError, GranicusEnv, ResourceConfig, ConnectionConfig
+from granicus_sdk import GranicusContractError, GranicusEnv, ResourceConfig
 
 
 _REQUIRED_VARS = {
@@ -142,8 +142,6 @@ class TestGranicusSDK(unittest.TestCase):
         self.assertIsNone(env.source_connection)
         self.assertIsNone(env.refs)
 
-    def test_connection_config_backward_compat_alias(self):
-        self.assertIs(ConnectionConfig, ResourceConfig)
 
 
 if __name__ == "__main__":
