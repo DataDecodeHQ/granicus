@@ -1,22 +1,14 @@
 package main
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 
+	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/spf13/cobra"
 )
-
-const configFileName = ".granicus-config.json"
-
-type granulusConfig struct {
-	Cloud struct {
-		APIKey   string `json:"api_key,omitempty"`
-		Endpoint string `json:"endpoint,omitempty"`
-	} `json:"cloud"`
-}
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -24,156 +16,96 @@ func newConfigCmd() *cobra.Command {
 		Short: "Manage Granicus CLI configuration",
 	}
 
-	setCmd := &cobra.Command{
-		Use:   "set <key> <value>",
-		Short: "Set a config value",
-		Args:  cobra.ExactArgs(2),
-		RunE:  runConfigSet,
-	}
-
-	getCmd := &cobra.Command{
-		Use:   "get <key>",
-		Short: "Get a config value",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runConfigGet,
-	}
-
 	showCmd := &cobra.Command{
 		Use:   "show",
-		Short: "Show all configuration",
+		Short: "Show resolved configuration from all layers",
 		RunE:  runConfigShow,
 	}
 
-	cmd.AddCommand(setCmd, getCmd, showCmd)
+	cmd.AddCommand(showCmd)
 	return cmd
 }
 
-func configPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, configFileName)
+func newLoginCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "login",
+		Short: "Configure API credentials for cloud mode",
+		Long:  "Prompts for endpoint and API key, then writes to ~/.granicus/config.json.",
+		RunE:  runLogin,
+	}
+	cmd.Flags().String("endpoint", "", "API endpoint URL")
+	cmd.Flags().String("api-key", "", "API key")
+	return cmd
 }
 
-func loadConfig() (*granulusConfig, error) {
-	cfg := &granulusConfig{}
-	data, err := os.ReadFile(configPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
-		return nil, err
-	}
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, err
-	}
-	return cfg, nil
-}
+func runLogin(cmd *cobra.Command, args []string) error {
+	endpoint, _ := cmd.Flags().GetString("endpoint")
+	apiKey, _ := cmd.Flags().GetString("api-key")
 
-func saveConfig(cfg *granulusConfig) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
+	reader := bufio.NewReader(os.Stdin)
+
+	if endpoint == "" {
+		fmt.Print("Endpoint (e.g. https://api.granicus.io): ")
+		line, _ := reader.ReadString('\n')
+		endpoint = strings.TrimSpace(line)
 	}
-	return os.WriteFile(configPath(), data, 0600)
-}
-
-func runConfigSet(cmd *cobra.Command, args []string) error {
-	key, value := args[0], args[1]
-
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
+	if endpoint == "" {
+		return fmt.Errorf("endpoint is required")
 	}
 
-	switch key {
-	case "cloud.api_key":
-		cfg.Cloud.APIKey = value
-	case "cloud.endpoint":
-		cfg.Cloud.Endpoint = value
-	default:
-		return fmt.Errorf("unknown config key: %s (valid: cloud.api_key, cloud.endpoint)", key)
+	if apiKey == "" {
+		fmt.Print("API Key: ")
+		line, _ := reader.ReadString('\n')
+		apiKey = strings.TrimSpace(line)
+	}
+	if apiKey == "" {
+		return fmt.Errorf("API key is required")
 	}
 
-	if err := saveConfig(cfg); err != nil {
-		return err
-	}
-	fmt.Printf("Set %s\n", key)
-	return nil
-}
-
-func runConfigGet(cmd *cobra.Command, args []string) error {
-	key := args[0]
-
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
+	uc := &config.UserConfig{
+		Endpoint: endpoint,
+		APIKey:   apiKey,
 	}
 
-	switch key {
-	case "cloud.api_key":
-		if cfg.Cloud.APIKey != "" {
-			fmt.Printf("%s...%s\n", cfg.Cloud.APIKey[:4], cfg.Cloud.APIKey[len(cfg.Cloud.APIKey)-4:])
-		} else {
-			fmt.Println("(not set)")
-		}
-	case "cloud.endpoint":
-		if cfg.Cloud.Endpoint != "" {
-			fmt.Println(cfg.Cloud.Endpoint)
-		} else {
-			fmt.Println("(not set)")
-		}
-	default:
-		return fmt.Errorf("unknown config key: %s", key)
+	// Preserve existing org if set
+	existing, _ := config.LoadUserConfig()
+	if existing != nil && existing.Org != "" {
+		uc.Org = existing.Org
 	}
+
+	if err := config.WriteUserConfig(uc); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+
+	path, _ := config.UserConfigPath()
+	fmt.Printf("Credentials saved to %s\n", path)
 	return nil
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
-	cfg, err := loadConfig()
+	cliCfg, err := config.ResolveCLIConfig(".", "", "")
 	if err != nil {
 		return err
 	}
 
-	mode := "local"
-	if cfg.Cloud.APIKey != "" && cfg.Cloud.Endpoint != "" {
-		mode = "cloud"
-	}
+	mode := resolveMode(cliCfg, false)
 
-	fmt.Printf("Mode: %s\n", mode)
-	fmt.Printf("Endpoint: %s\n", cfg.Cloud.Endpoint)
-	if cfg.Cloud.APIKey != "" {
-		fmt.Printf("API Key: %s...%s\n", cfg.Cloud.APIKey[:4], cfg.Cloud.APIKey[len(cfg.Cloud.APIKey)-4:])
+	fmt.Printf("Mode:     %s\n", mode)
+	if cliCfg.Endpoint != "" {
+		fmt.Printf("Endpoint: %s\n", cliCfg.Endpoint)
+	}
+	if cliCfg.APIKey != "" {
+		masked := cliCfg.APIKey
+		if len(masked) > 8 {
+			masked = masked[:4] + "..." + masked[len(masked)-4:]
+		}
+		fmt.Printf("API Key:  %s\n", masked)
+	}
+	if cliCfg.Org != "" {
+		fmt.Printf("Org:      %s\n", cliCfg.Org)
+	}
+	if cliCfg.Pipeline != "" {
+		fmt.Printf("Pipeline: %s\n", cliCfg.Pipeline)
 	}
 	return nil
-}
-
-// IsCloudMode returns true if the CLI has cloud credentials configured.
-func IsCloudMode() bool {
-	// Check env vars first (set by Cloud Run or explicitly)
-	if os.Getenv("GRANICUS_API_URL") != "" && os.Getenv("GRANICUS_API_KEY") != "" {
-		return true
-	}
-	// Fall back to config file
-	cfg, err := loadConfig()
-	if err != nil {
-		return false
-	}
-	return cfg.Cloud.APIKey != "" && cfg.Cloud.Endpoint != ""
-}
-
-// CloudEndpoint returns the configured engine endpoint.
-func CloudEndpoint() string {
-	if url := os.Getenv("GRANICUS_API_URL"); url != "" {
-		return url
-	}
-	cfg, _ := loadConfig()
-	return cfg.Cloud.Endpoint
-}
-
-// CloudAPIKey returns the configured API key.
-func CloudAPIKey() string {
-	if key := os.Getenv("GRANICUS_API_KEY"); key != "" {
-		return key
-	}
-	cfg, _ := loadConfig()
-	return cfg.Cloud.APIKey
 }
