@@ -55,16 +55,20 @@ func renderSQL(rawSQL []byte, conn *config.ConnectionConfig, asset *Asset, funcM
 func newBQClient(ctx context.Context, conn *config.ConnectionConfig) (*bigquery.Client, error) {
 	project := conn.Properties["project"]
 	var opts []option.ClientOption
-	if creds := conn.Properties["credentials"]; creds != "" {
+	credPath, err := config.ResolveConnectionCredentials(conn)
+	if err != nil {
+		return nil, fmt.Errorf("resolving credentials: %w", err)
+	}
+	if credPath != "" {
 		gcreds, err := credentials.NewCredentialsFromFile(
 			credentials.ServiceAccount,
-			creds,
+			credPath,
 			&credentials.DetectOptions{
 				Scopes: []string{bigquery.Scope},
 			},
 		)
 		if err != nil {
-			return nil, fmt.Errorf("loading credentials file %s: %w", creds, err)
+			return nil, fmt.Errorf("loading credentials file %s: %w", credPath, err)
 		}
 		opts = append(opts, option.WithTokenSource(oauth2adapt.TokenSourceFromTokenProvider(gcreds)))
 	}

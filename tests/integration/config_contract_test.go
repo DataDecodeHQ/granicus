@@ -169,7 +169,7 @@ func TestCredentialPathResolution(t *testing.T) {
 		t.Fatal("bq connection not found")
 	}
 
-	creds := conn.Properties["credentials"]
+	creds := conn.Credentials
 	if creds == "" {
 		t.Fatal("credentials property not found in connection")
 	}
@@ -218,7 +218,7 @@ func TestAbsoluteCredentialPathPassedThrough(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	creds := cfg.Connections["bq"].Properties["credentials"]
+	creds := cfg.Connections["bq"].Credentials
 	if !filepath.IsAbs(creds) {
 		t.Errorf("absolute credential path not preserved: %s", creds)
 	}

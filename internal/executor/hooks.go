@@ -53,11 +53,12 @@ func DuckDBAssemblyHook() PostRunHook {
 			"GRANICUS_GCS_BUCKET="+conn.Properties["bucket"],
 			"GRANICUS_GCS_PREFIX="+conn.Properties["prefix"],
 		)
-		if creds, ok := conn.Properties["credentials"]; ok && creds != "" {
-			if !filepath.IsAbs(creds) {
-				creds = filepath.Join(projectRoot, creds)
+		credPath, _ := config.ResolveConnectionCredentials(conn)
+		if credPath != "" {
+			if !filepath.IsAbs(credPath) {
+				credPath = filepath.Join(projectRoot, credPath)
 			}
-			cmd.Env = append(cmd.Env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
+			cmd.Env = append(cmd.Env, "GOOGLE_APPLICATION_CREDENTIALS="+credPath)
 		}
 		cmd.Dir = projectRoot
 		cmd.Stdout = os.Stdout

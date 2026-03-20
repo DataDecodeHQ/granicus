@@ -12,7 +12,15 @@ import (
 // priority: (1) explicit credentials property, (2) GCS_SERVICE_ACCOUNT env var,
 // (3) empty string (ADC fallback).
 func resolveGCSCredentials(conn *config.ConnectionConfig) string {
-	if creds := conn.Properties["credentials"]; creds != "" {
+	creds := conn.Credentials
+	if creds == "" {
+		creds = conn.Properties["credentials"]
+	}
+	if creds != "" {
+		resolved, err := config.ResolveCredentials(creds)
+		if err == nil {
+			return resolved
+		}
 		return creds
 	}
 	if envCreds := os.Getenv("GCS_SERVICE_ACCOUNT"); envCreds != "" {

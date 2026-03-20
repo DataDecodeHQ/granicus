@@ -81,10 +81,14 @@ func checkBQConnectivity(connName string, conn *config.ConnectionConfig) CheckRe
 	defer cancel()
 
 	var opts []option.ClientOption
-	if creds := conn.Properties["credentials"]; creds != "" {
+	credPath, err := config.ResolveConnectionCredentials(conn)
+	if err != nil {
+		return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("resolving credentials: %v", err)}
+	}
+	if credPath != "" {
 		gcreds, err := credentials.NewCredentialsFromFile(
 			credentials.ServiceAccount,
-			creds,
+			credPath,
 			&credentials.DetectOptions{
 				Scopes: []string{bigquery.Scope},
 			},
@@ -123,11 +127,12 @@ func checkGCSConfig(connName string, conn *config.ConnectionConfig) CheckResult 
 	}
 
 	credMethod := "ADC (Application Default Credentials)"
-	if creds := conn.Properties["credentials"]; creds != "" {
-		if _, err := os.Stat(creds); os.IsNotExist(err) {
-			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("credentials not found: %s", creds)}
+	credPath, _ := config.ResolveConnectionCredentials(conn)
+	if credPath != "" {
+		if _, err := os.Stat(credPath); os.IsNotExist(err) {
+			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("credentials not found: %s", credPath)}
 		}
-		credMethod = "file: " + creds
+		credMethod = "file: " + credPath
 	} else if envCreds := os.Getenv("GCS_SERVICE_ACCOUNT"); envCreds != "" {
 		if _, err := os.Stat(envCreds); os.IsNotExist(err) {
 			return CheckResult{Name: name, Status: StatusWarn, Message: fmt.Sprintf("GCS_SERVICE_ACCOUNT set but file not found: %s", envCreds)}

@@ -82,14 +82,14 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		Refs:         refs,
 	})
 
-	hasCredentials := (destConn != nil && destConn.Properties["credentials"] != "") ||
-		(srcConn != nil && srcConn.Properties["credentials"] != "")
+	hasCredentials := (destConn != nil && destConn.Credentials != "") ||
+		(srcConn != nil && srcConn.Credentials != "")
 
-	if destConn != nil && destConn.Properties["credentials"] != "" {
+	if destConn != nil && destConn.Credentials != "" {
 		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", destConn.Name, "credential_method", "file")
 		LogCredentialCrossing("python_subprocess", destConn.Type, asset.Name, runID)
 	}
-	if srcConn != nil && srcConn.Properties["credentials"] != "" {
+	if srcConn != nil && srcConn.Credentials != "" {
 		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", srcConn.Name, "credential_method", "file")
 		LogCredentialCrossing("python_subprocess", srcConn.Type, asset.Name, runID)
 	}

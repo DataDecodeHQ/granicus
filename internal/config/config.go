@@ -32,9 +32,10 @@ type CompletenessConfig struct {
 }
 
 type ConnectionConfig struct {
-	Name       string            `yaml:"-"`
-	Type       string            `yaml:"type"`
-	Properties map[string]string `yaml:",inline"`
+	Name        string            `yaml:"-"`
+	Type        string            `yaml:"type"`
+	Credentials string            `yaml:"credentials"`
+	Properties  map[string]string `yaml:",inline"`
 }
 
 type CheckConfig struct {

@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/bigquery v1.73.1
 	cloud.google.com/go/firestore v1.21.0
 	cloud.google.com/go/pubsub/v2 v2.0.0
+	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/storage v1.61.3
 	github.com/fatih/color v1.18.0
 	github.com/fsnotify/fsnotify v1.9.0
