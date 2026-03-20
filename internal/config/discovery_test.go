@@ -28,8 +28,8 @@ func TestDiscoverAssets_Basic(t *testing.T) {
 		if a.Type != "sql" {
 			t.Errorf("expected type sql, got %q", a.Type)
 		}
-		if a.DestinationConnection != "bq" {
-			t.Errorf("expected connection bq, got %q", a.DestinationConnection)
+		if a.DestinationResource != "bq" {
+			t.Errorf("expected connection bq, got %q", a.DestinationResource)
 		}
 		if a.Layer != "staging" {
 			t.Errorf("expected layer staging, got %q for %s", a.Layer, a.Name)

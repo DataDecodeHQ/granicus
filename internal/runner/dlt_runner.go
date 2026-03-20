@@ -10,7 +10,7 @@ type DLTRunner struct {
 }
 
 // NewDLTRunner creates a DLTRunner that delegates to a PythonRunner for dlt pipeline execution.
-func NewDLTRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *DLTRunner {
+func NewDLTRunner(destConn, srcConn *config.ResourceConfig, eventStore *events.Store, pipeline string) *DLTRunner {
 	return &DLTRunner{
 		inner: NewPythonRunner(destConn, srcConn, eventStore, pipeline),
 	}

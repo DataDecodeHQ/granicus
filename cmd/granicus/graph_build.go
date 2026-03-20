@@ -82,6 +82,10 @@ func buildPipelineGraph(cfg *config.PipelineConfig, parseRoot string) (*graph.Gr
 		}
 	}
 
+	// Expand multi-output assets (produces: directive) into individual nodes.
+	// Must happen after check generation so check deps referencing parents get rewritten.
+	inputs, deps = graph.ExpandMultiOutputWithDeps(inputs, directives, deps)
+
 	g, err := graph.BuildGraph(inputs, deps)
 	if err != nil {
 		return nil, nil, fmt.Errorf("graph: %w", err)

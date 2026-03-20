@@ -14,7 +14,7 @@ func TestGenerateDefaultCheckNodes_Staging(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationConnection: "bq"},
+			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationResource: "bq"},
 		},
 	}
 
@@ -62,7 +62,7 @@ func TestGenerateDefaultCheckNodes_Entity(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "ent_user", Type: "sql", Layer: "entity", Grain: "user_id", DestinationConnection: "bq"},
+			{Name: "ent_user", Type: "sql", Layer: "entity", Grain: "user_id", DestinationResource: "bq"},
 		},
 	}
 
@@ -79,7 +79,7 @@ func TestGenerateDefaultCheckNodes_Report(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "rpt_summary", Type: "sql", Layer: "report", Grain: "period", DestinationConnection: "bq"},
+			{Name: "rpt_summary", Type: "sql", Layer: "report", Grain: "period", DestinationResource: "bq"},
 		},
 	}
 
@@ -97,7 +97,7 @@ func TestGenerateDefaultCheckNodes_Intermediate_NoUpstream(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "int_orders", Type: "sql", Layer: "intermediate", Grain: "order_id", DestinationConnection: "bq", MinRetentionRatio: &ratio},
+			{Name: "int_orders", Type: "sql", Layer: "intermediate", Grain: "order_id", DestinationResource: "bq", MinRetentionRatio: &ratio},
 		},
 	}
 
@@ -128,7 +128,7 @@ func TestGenerateDefaultCheckNodes_Intermediate_WithUpstream(t *testing.T) {
 				Type:              "sql",
 				Layer:             "intermediate",
 				Grain:             "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Upstream:          []string{"stg_orders"},
 				MinRetentionRatio: &ratio,
 			},
@@ -175,7 +175,7 @@ func TestGenerateDefaultCheckNodes_Intermediate_PrimaryUpstream(t *testing.T) {
 				Type:              "sql",
 				Layer:             "intermediate",
 				Grain:             "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Upstream:          []string{"stg_orders", "stg_customers"},
 				PrimaryUpstream:   "stg_customers",
 				MinRetentionRatio: &ratio,
@@ -208,7 +208,7 @@ func TestGenerateDefaultCheckNodes_Intermediate_FanOutDisabled(t *testing.T) {
 				Type:              "sql",
 				Layer:             "intermediate",
 				Grain:             "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Upstream:          []string{"stg_orders"},
 				MinRetentionRatio: &ratio,
 				FanOutCheck:       &fanOut,
@@ -246,7 +246,7 @@ func TestGenerateDefaultCheckNodes_Intermediate_SQLContent(t *testing.T) {
 				Type:              "sql",
 				Layer:             "intermediate",
 				Grain:             "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Upstream:          []string{"stg_orders"},
 				MinRetentionRatio: &ratio,
 			},
@@ -324,7 +324,7 @@ func TestGenerateDefaultCheckNodes_SQLContent(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationConnection: "bq"},
+			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationResource: "bq"},
 		},
 	}
 
@@ -350,7 +350,7 @@ func TestGenerateDefaultCheckNodesWithDirectives_SourceCompleteness(t *testing.T
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationConnection: "bq"},
+			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationResource: "bq"},
 		},
 	}
 	directives := map[string]graph.Directives{
@@ -392,7 +392,7 @@ func TestGenerateDefaultCheckNodesWithDirectives_SourceCompletenessDefaultPK(t *
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationConnection: "bq"},
+			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationResource: "bq"},
 		},
 	}
 	directives := map[string]graph.Directives{
@@ -421,7 +421,7 @@ func TestGenerateDefaultCheckNodesWithDirectives_NoSourceTable(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationConnection: "bq"},
+			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationResource: "bq"},
 		},
 	}
 	directives := map[string]graph.Directives{
@@ -448,7 +448,7 @@ func TestGenerateDefaultCheckNodes_StagingSQLContent(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_users", Type: "sql", Layer: "staging", Grain: "user_id", DestinationConnection: "bq"},
+			{Name: "stg_users", Type: "sql", Layer: "staging", Grain: "user_id", DestinationResource: "bq"},
 		},
 	}
 
@@ -505,7 +505,7 @@ func TestGenerateDefaultCheckNodesWithDirectives_NilDirectives(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationConnection: "bq"},
+			{Name: "stg_orders", Type: "sql", Layer: "staging", Grain: "order_id", DestinationResource: "bq"},
 		},
 	}
 

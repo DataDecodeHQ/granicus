@@ -22,11 +22,11 @@ type Asset struct {
 	DependedOnBy []string
 	SourceAsset  string // back-reference for multi-output assets
 
-	// Connections
-	DestinationConnection string
-	SourceConnection      string
-	ResolvedDestConn      *config.ConnectionConfig
-	ResolvedSourceConn    *config.ConnectionConfig
+	// Resources
+	DestinationResource string
+	SourceResource      string
+	ResolvedDestConn      *config.ResourceConfig
+	ResolvedSourceConn    *config.ResourceConfig
 
 	// Intervals
 	TimeColumn   string

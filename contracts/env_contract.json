@@ -34,25 +34,25 @@
     },
     "GRANICUS_INTERVAL_START": {
       "type": "string",
-      "format": "date",
-      "description": "ISO 8601 date marking the start of the execution interval. Present only for scheduled runs."
+      "format": "date-time",
+      "description": "ISO 8601 datetime marking the start of the execution interval. Present only for scheduled runs."
     },
     "GRANICUS_INTERVAL_END": {
       "type": "string",
-      "format": "date",
-      "description": "ISO 8601 date marking the end (exclusive) of the execution interval. Present only for scheduled runs."
+      "format": "date-time",
+      "description": "ISO 8601 datetime marking the end (exclusive) of the execution interval. Present only for scheduled runs."
     },
-    "GRANICUS_DEST_CONNECTION": {
+    "GRANICUS_DEST_RESOURCE": {
       "type": "string",
-      "description": "JSON-encoded destination ConnectionConfig. Must parse to a ConnectionConfig object.",
+      "description": "JSON-encoded destination ResourceConfig. Must parse to a ResourceConfig object.",
       "contentMediaType": "application/json",
-      "contentSchema": { "$ref": "#/$defs/ConnectionConfig" }
+      "contentSchema": { "$ref": "#/$defs/ResourceConfig" }
     },
-    "GRANICUS_SOURCE_CONNECTION": {
+    "GRANICUS_SOURCE_RESOURCE": {
       "type": "string",
-      "description": "JSON-encoded source ConnectionConfig. Must parse to a ConnectionConfig object.",
+      "description": "JSON-encoded source ResourceConfig. Must parse to a ResourceConfig object.",
       "contentMediaType": "application/json",
-      "contentSchema": { "$ref": "#/$defs/ConnectionConfig" }
+      "contentSchema": { "$ref": "#/$defs/ResourceConfig" }
     },
     "GRANICUS_REFS": {
       "type": "string",
@@ -63,10 +63,10 @@
   },
   "additionalProperties": true,
   "$defs": {
-    "ConnectionConfig": {
+    "ResourceConfig": {
       "type": "object",
-      "title": "ConnectionConfig",
-      "description": "Parsed shape of GRANICUS_DEST_CONNECTION and GRANICUS_SOURCE_CONNECTION.",
+      "title": "ResourceConfig",
+      "description": "Parsed shape of GRANICUS_DEST_RESOURCE and GRANICUS_SOURCE_RESOURCE.",
       "required": ["name", "type"],
       "properties": {
         "name": {

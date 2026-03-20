@@ -11,7 +11,7 @@ import (
 // resolveGCSCredentials returns the credentials file path using the following
 // priority: (1) explicit credentials property, (2) GCS_SERVICE_ACCOUNT env var,
 // (3) empty string (ADC fallback).
-func resolveGCSCredentials(conn *config.ConnectionConfig) string {
+func resolveGCSCredentials(conn *config.ResourceConfig) string {
 	creds := conn.Credentials
 	if creds == "" {
 		creds = conn.Properties["credentials"]
@@ -30,20 +30,20 @@ func resolveGCSCredentials(conn *config.ConnectionConfig) string {
 }
 
 type GCSRunner struct {
-	Connection *config.ConnectionConfig
+	Resource *config.ResourceConfig
 	Timeout    time.Duration
 }
 
 // NewGCSRunner creates a GCSRunner for the given GCS connection.
-func NewGCSRunner(conn *config.ConnectionConfig) *GCSRunner {
-	return &GCSRunner{Connection: conn, Timeout: DefaultTimeout}
+func NewGCSRunner(conn *config.ResourceConfig) *GCSRunner {
+	return &GCSRunner{Resource: conn, Timeout: DefaultTimeout}
 }
 
 // Run executes a GCS operation by delegating to a subprocess with bucket and prefix environment variables.
 func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
-	bucket := r.Connection.Properties["bucket"]
+	bucket := r.Resource.Properties["bucket"]
 	if bucket == "" {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
@@ -71,24 +71,24 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		ProjectRoot:  projectRoot,
 		RunID:        runID,
 		MetadataPath: metadataPath,
-		DestConn:     r.Connection,
+		DestConn:     r.Resource,
 	})
 
 	// Legacy runner-specific vars kept for backward compatibility
-	prefix := r.Connection.Properties["prefix"]
+	prefix := r.Resource.Properties["prefix"]
 	env = append(env,
 		"GRANICUS_GCS_BUCKET="+bucket,
 		"GRANICUS_GCS_PREFIX="+prefix,
 	)
-	if format := r.Connection.Properties["format"]; format != "" {
+	if format := r.Resource.Properties["format"]; format != "" {
 		env = append(env, "GRANICUS_GCS_FORMAT="+format)
 	}
-	if pp := r.Connection.Properties["partition_prefix"]; pp != "" {
+	if pp := r.Resource.Properties["partition_prefix"]; pp != "" {
 		env = append(env, "GRANICUS_GCS_PARTITION_PREFIX="+pp)
 	}
-	hasCredentials := resolveGCSCredentials(r.Connection) != ""
+	hasCredentials := resolveGCSCredentials(r.Resource) != ""
 	if hasCredentials {
-		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+resolveGCSCredentials(r.Connection))
+		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+resolveGCSCredentials(r.Resource))
 		LogCredentialCrossing("gcs_subprocess", "gcs", asset.Name, runID)
 	}
 	LogSubprocessLaunch(asset.Name, "gcs", len(env), hasCredentials)
@@ -112,20 +112,20 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 }
 
 type S3Runner struct {
-	Connection *config.ConnectionConfig
+	Resource *config.ResourceConfig
 	Timeout    time.Duration
 }
 
 // NewS3Runner creates an S3Runner for the given S3 connection.
-func NewS3Runner(conn *config.ConnectionConfig) *S3Runner {
-	return &S3Runner{Connection: conn, Timeout: DefaultTimeout}
+func NewS3Runner(conn *config.ResourceConfig) *S3Runner {
+	return &S3Runner{Resource: conn, Timeout: DefaultTimeout}
 }
 
 // Run executes an S3 operation by delegating to a subprocess with S3 environment variables.
 func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
-	bucket := r.Connection.Properties["bucket"]
+	bucket := r.Resource.Properties["bucket"]
 	if bucket == "" {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
@@ -151,21 +151,21 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 		ProjectRoot:  projectRoot,
 		RunID:        runID,
 		MetadataPath: metadataPath,
-		DestConn:     r.Connection,
+		DestConn:     r.Resource,
 	})
 
 	// Legacy runner-specific vars kept for backward compatibility
-	endpoint := r.Connection.Properties["endpoint"]
+	endpoint := r.Resource.Properties["endpoint"]
 	env = append(env,
 		"GRANICUS_S3_BUCKET="+bucket,
 		"GRANICUS_S3_ENDPOINT="+endpoint,
-		"GRANICUS_S3_PREFIX="+r.Connection.Properties["prefix"],
+		"GRANICUS_S3_PREFIX="+r.Resource.Properties["prefix"],
 	)
-	hasS3Credentials := r.Connection.Properties["access_key"] != "" || r.Connection.Properties["secret_key"] != ""
-	if key := r.Connection.Properties["access_key"]; key != "" {
+	hasS3Credentials := r.Resource.Properties["access_key"] != "" || r.Resource.Properties["secret_key"] != ""
+	if key := r.Resource.Properties["access_key"]; key != "" {
 		env = append(env, "AWS_ACCESS_KEY_ID="+key)
 	}
-	if secret := r.Connection.Properties["secret_key"]; secret != "" {
+	if secret := r.Resource.Properties["secret_key"]; secret != "" {
 		env = append(env, "AWS_SECRET_ACCESS_KEY="+secret)
 	}
 	if hasS3Credentials {
@@ -208,13 +208,13 @@ func inferCommand(source, projectRoot string) []string {
 
 // Placeholder for Iceberg - would require BigLake/Spark integration
 type IcebergRunner struct {
-	Connection *config.ConnectionConfig
+	Resource *config.ResourceConfig
 	Timeout    time.Duration
 }
 
 // NewIcebergRunner creates an IcebergRunner for the given connection (not yet implemented).
-func NewIcebergRunner(conn *config.ConnectionConfig) *IcebergRunner {
-	return &IcebergRunner{Connection: conn, Timeout: DefaultTimeout}
+func NewIcebergRunner(conn *config.ResourceConfig) *IcebergRunner {
+	return &IcebergRunner{Resource: conn, Timeout: DefaultTimeout}
 }
 
 // Run always returns a failure result because the Iceberg connector is not yet implemented.
@@ -222,7 +222,7 @@ func (r *IcebergRunner) Run(asset *Asset, projectRoot string, runID string) Node
 	return NodeResult{
 		AssetName: asset.Name,
 		Status:    "failed",
-		Error:     fmt.Sprintf("iceberg connector not yet implemented (catalog=%s)", r.Connection.Properties["catalog"]),
+		Error:     fmt.Sprintf("iceberg connector not yet implemented (catalog=%s)", r.Resource.Properties["catalog"]),
 		ExitCode:  -1,
 	}
 }

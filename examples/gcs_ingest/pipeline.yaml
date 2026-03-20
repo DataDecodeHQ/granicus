@@ -1,7 +1,7 @@
 pipeline: gcs_ingest_example
 max_parallel: 2
 
-connections:
+resources:
   gcs_input:
     type: gcs
     bucket: my-data-inbox
@@ -20,6 +20,6 @@ assets:
   - name: ingest_order_files
     type: gcs_ingest
     source: scripts/ingest_orders.sh
-    source_connection: gcs_input
-    destination_connection: bq
+    source_resource: gcs_input
+    destination_resource: bq
     poll_interval: "*/15 * * * *"

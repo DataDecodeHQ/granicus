@@ -26,7 +26,7 @@ type Pruner struct {
 // NewPruner creates a Firestore pruner.
 func NewPruner(ctx context.Context, firestoreProject, archiveBucket string, retentionDays int) (*Pruner, error) {
 	if retentionDays <= 0 {
-		retentionDays = 30
+		retentionDays = 90
 		if env := os.Getenv("GRANICUS_RETENTION_DAYS"); env != "" {
 			if d, err := strconv.Atoi(env); err == nil && d > 0 {
 				retentionDays = d

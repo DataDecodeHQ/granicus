@@ -47,11 +47,11 @@ func TestBuildSubprocessEnv_RequiredOnly(t *testing.T) {
 	if _, ok := m["GRANICUS_INTERVAL_START"]; ok {
 		t.Error("GRANICUS_INTERVAL_START should not be set")
 	}
-	if _, ok := m["GRANICUS_DEST_CONNECTION"]; ok {
-		t.Error("GRANICUS_DEST_CONNECTION should not be set")
+	if _, ok := m["GRANICUS_DEST_RESOURCE"]; ok {
+		t.Error("GRANICUS_DEST_RESOURCE should not be set")
 	}
-	if _, ok := m["GRANICUS_SOURCE_CONNECTION"]; ok {
-		t.Error("GRANICUS_SOURCE_CONNECTION should not be set")
+	if _, ok := m["GRANICUS_SOURCE_RESOURCE"]; ok {
+		t.Error("GRANICUS_SOURCE_RESOURCE should not be set")
 	}
 	if _, ok := m["GRANICUS_REFS"]; ok {
 		t.Error("GRANICUS_REFS should not be set")
@@ -61,8 +61,8 @@ func TestBuildSubprocessEnv_RequiredOnly(t *testing.T) {
 func TestBuildSubprocessEnv_WithInterval(t *testing.T) {
 	asset := &Asset{
 		Name:          "interval_asset",
-		IntervalStart: "2025-01-01",
-		IntervalEnd:   "2025-01-02",
+		IntervalStart: "2025-01-01T00:00:00Z",
+		IntervalEnd:   "2025-01-02T00:00:00Z",
 	}
 	env := buildSubprocessEnv(SubprocessEnvConfig{
 		Asset:        asset,
@@ -73,22 +73,22 @@ func TestBuildSubprocessEnv_WithInterval(t *testing.T) {
 
 	m := envMap(env)
 
-	if m["GRANICUS_INTERVAL_START"] != "2025-01-01" {
+	if m["GRANICUS_INTERVAL_START"] != "2025-01-01T00:00:00Z" {
 		t.Errorf("GRANICUS_INTERVAL_START: got %q", m["GRANICUS_INTERVAL_START"])
 	}
-	if m["GRANICUS_INTERVAL_END"] != "2025-01-02" {
+	if m["GRANICUS_INTERVAL_END"] != "2025-01-02T00:00:00Z" {
 		t.Errorf("GRANICUS_INTERVAL_END: got %q", m["GRANICUS_INTERVAL_END"])
 	}
 }
 
 func TestBuildSubprocessEnv_WithConnections(t *testing.T) {
 	asset := &Asset{Name: "conn_asset"}
-	destConn := &config.ConnectionConfig{
+	destConn := &config.ResourceConfig{
 		Name:       "bq_dest",
 		Type:       "bigquery",
 		Properties: map[string]string{"project": "my-project", "dataset": "my_dataset"},
 	}
-	srcConn := &config.ConnectionConfig{
+	srcConn := &config.ResourceConfig{
 		Name:       "pg_src",
 		Type:       "postgres",
 		Properties: map[string]string{"host": "localhost"},
@@ -105,13 +105,13 @@ func TestBuildSubprocessEnv_WithConnections(t *testing.T) {
 
 	m := envMap(env)
 
-	destRaw, ok := m["GRANICUS_DEST_CONNECTION"]
+	destRaw, ok := m["GRANICUS_DEST_RESOURCE"]
 	if !ok {
-		t.Fatal("GRANICUS_DEST_CONNECTION missing")
+		t.Fatal("GRANICUS_DEST_RESOURCE missing")
 	}
 	var dest map[string]string
 	if err := json.Unmarshal([]byte(destRaw), &dest); err != nil {
-		t.Fatalf("GRANICUS_DEST_CONNECTION not valid JSON: %v", err)
+		t.Fatalf("GRANICUS_DEST_RESOURCE not valid JSON: %v", err)
 	}
 	if dest["name"] != "bq_dest" {
 		t.Errorf("dest name: got %q", dest["name"])
@@ -123,13 +123,13 @@ func TestBuildSubprocessEnv_WithConnections(t *testing.T) {
 		t.Errorf("dest project: got %q", dest["project"])
 	}
 
-	srcRaw, ok := m["GRANICUS_SOURCE_CONNECTION"]
+	srcRaw, ok := m["GRANICUS_SOURCE_RESOURCE"]
 	if !ok {
-		t.Fatal("GRANICUS_SOURCE_CONNECTION missing")
+		t.Fatal("GRANICUS_SOURCE_RESOURCE missing")
 	}
 	var src map[string]string
 	if err := json.Unmarshal([]byte(srcRaw), &src); err != nil {
-		t.Fatalf("GRANICUS_SOURCE_CONNECTION not valid JSON: %v", err)
+		t.Fatalf("GRANICUS_SOURCE_RESOURCE not valid JSON: %v", err)
 	}
 	if src["name"] != "pg_src" {
 		t.Errorf("src name: got %q", src["name"])

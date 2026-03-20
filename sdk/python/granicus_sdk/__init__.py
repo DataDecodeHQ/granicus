@@ -7,6 +7,7 @@ Schema version: 1.0.0
 """
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -27,25 +28,29 @@ class GranicusContractError(Exception):
 
 
 @dataclass
-class ConnectionConfig:
+class ResourceConfig:
     name: str
     type: str
     properties: dict = field(default_factory=dict)
 
     @classmethod
-    def _from_dict(cls, data: dict) -> "ConnectionConfig":
+    def _from_dict(cls, data: dict) -> "ResourceConfig":
         if not isinstance(data, dict):
             raise GranicusContractError(
-                f"ConnectionConfig must be a JSON object, got {type(data).__name__}"
+                f"ResourceConfig must be a JSON object, got {type(data).__name__}"
             )
         name = data.get("name")
         conn_type = data.get("type")
         if not name:
-            raise GranicusContractError("ConnectionConfig missing required field 'name'")
+            raise GranicusContractError("ResourceConfig missing required field 'name'")
         if not conn_type:
-            raise GranicusContractError("ConnectionConfig missing required field 'type'")
+            raise GranicusContractError("ResourceConfig missing required field 'type'")
         props = {k: v for k, v in data.items() if k not in ("name", "type")}
         return cls(name=name, type=conn_type, properties=props)
+
+
+# Backward compat alias
+ConnectionConfig = ResourceConfig
 
 
 @dataclass
@@ -56,8 +61,8 @@ class GranicusEnv:
     metadata_path: Path
     interval_start: Optional[str] = None
     interval_end: Optional[str] = None
-    dest_connection: Optional[ConnectionConfig] = None
-    source_connection: Optional[ConnectionConfig] = None
+    dest_resource: Optional[ResourceConfig] = None
+    source_resource: Optional[ResourceConfig] = None
     refs: Optional[dict] = None
 
     def __init__(self) -> None:
@@ -93,29 +98,63 @@ class GranicusEnv:
         self.project_root = Path(project_root_raw)
         self.metadata_path = Path(metadata_path_raw)
 
-        # Optional scalar fields
-        self.interval_start = env.get("GRANICUS_INTERVAL_START") or None
-        self.interval_end = env.get("GRANICUS_INTERVAL_END") or None
+        # Optional scalar fields — validate ISO 8601 datetime format
+        self.interval_start = self._parse_interval("GRANICUS_INTERVAL_START", env)
+        self.interval_end = self._parse_interval("GRANICUS_INTERVAL_END", env)
 
-        # Optional JSON fields
-        self.dest_connection = self._parse_connection("GRANICUS_DEST_CONNECTION", env)
-        self.source_connection = self._parse_connection("GRANICUS_SOURCE_CONNECTION", env)
+        # Optional JSON fields (new names, with deprecated fallback)
+        self.dest_resource = self._parse_resource("GRANICUS_DEST_RESOURCE", "GRANICUS_DEST_CONNECTION", env)
+        self.source_resource = self._parse_resource("GRANICUS_SOURCE_RESOURCE", "GRANICUS_SOURCE_CONNECTION", env)
         self.refs = self._parse_refs(env)
 
+    @property
+    def dest_connection(self) -> Optional[ResourceConfig]:
+        """Deprecated: use dest_resource instead."""
+        return self.dest_resource
+
+    @property
+    def source_connection(self) -> Optional[ResourceConfig]:
+        """Deprecated: use source_resource instead."""
+        return self.source_resource
+
+    _INTERVAL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
     @staticmethod
-    def _parse_connection(
-        var: str, env: dict
-    ) -> Optional[ConnectionConfig]:
+    def _parse_interval(var: str, env: dict) -> Optional[str]:
         raw = env.get(var)
+        if not raw:
+            return None
+        if not GranicusEnv._INTERVAL_RE.match(raw):
+            raise GranicusContractError(
+                f"{var} must be ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ), got: {raw}"
+            )
+        return raw
+
+    @staticmethod
+    def _parse_resource(
+        var: str, deprecated_var: str, env: dict
+    ) -> Optional[ResourceConfig]:
+        raw = env.get(var)
+        used_var = var
+        if not raw and deprecated_var:
+            raw = env.get(deprecated_var)
+            if raw:
+                used_var = deprecated_var
+                import warnings
+                warnings.warn(
+                    f"{deprecated_var} is deprecated, use {var} instead",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
         if not raw:
             return None
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise GranicusContractError(
-                f"{var} is not valid JSON: {exc}"
+                f"{used_var} is not valid JSON: {exc}"
             ) from exc
-        return ConnectionConfig._from_dict(data)
+        return ResourceConfig._from_dict(data)
 
     @staticmethod
     def _parse_refs(env: dict) -> Optional[dict]:
@@ -160,4 +199,4 @@ class GranicusEnv:
         self.metadata_path.write_text(json.dumps(data))
 
 
-__all__ = ["GranicusEnv", "ConnectionConfig", "GranicusContractError"]
+__all__ = ["GranicusEnv", "ResourceConfig", "ConnectionConfig", "GranicusContractError"]

@@ -36,7 +36,7 @@ func TestGenerateCompletenessCheckNodes_SimpleSourceVsEntity(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -59,8 +59,8 @@ func TestGenerateCompletenessCheckNodes_SimpleSourceVsEntity(t *testing.T) {
 	if n.Type != "sql_check" {
 		t.Errorf("expected sql_check, got %s", n.Type)
 	}
-	if n.DestinationConnection != "bq" {
-		t.Errorf("expected connection bq, got %s", n.DestinationConnection)
+	if n.DestinationResource != "bq" {
+		t.Errorf("expected connection bq, got %s", n.DestinationResource)
 	}
 	if n.SourceAsset != "ent_patient" {
 		t.Errorf("expected SourceAsset ent_patient, got %s", n.SourceAsset)
@@ -123,7 +123,7 @@ func TestGenerateCompletenessCheckNodes_SingleExclusion(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -171,7 +171,7 @@ func TestGenerateCompletenessCheckNodes_MultipleExclusionsAndAdditions(t *testin
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -240,7 +240,7 @@ func TestGenerateCompletenessCheckNodes_CustomTolerance(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -269,7 +269,7 @@ func TestGenerateCompletenessCheckNodes_ExclusionWithFilter(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -316,7 +316,7 @@ func TestGenerateCompletenessCheckNodes_AdditionWithFilter(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -409,7 +409,7 @@ func TestGenerateCompletenessCheckNodes_GrainUsedForEntityPK(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_uuid",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",
@@ -442,7 +442,7 @@ func TestGenerateCompletenessCheckNodes_SQLStructure(t *testing.T) {
 			Name:                  "ent_patient",
 			Type:                  "sql",
 			Source:                "sql/ent_patient.sql",
-			DestinationConnection: "bq",
+			DestinationResource: "bq",
 			Grain:                 "patient_id",
 			Completeness: &config.CompletenessConfig{
 				SourceTable: "stg_patients",

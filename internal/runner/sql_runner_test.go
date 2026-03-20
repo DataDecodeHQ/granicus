@@ -14,7 +14,7 @@ func TestSQLRunner_TemplateSubstitution(t *testing.T) {
 	sqlContent := `CREATE OR REPLACE TABLE {{.Project}}.{{.Dataset}}.test AS SELECT 1`
 	os.WriteFile(filepath.Join(dir, "test.sql"), []byte(sqlContent), 0644)
 
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Name: "bq",
 		Type: "bigquery",
 		Properties: map[string]string{
@@ -40,7 +40,7 @@ func TestSQLRunner_TemplateSubstitution(t *testing.T) {
 }
 
 func TestSQLRunner_MissingFile(t *testing.T) {
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Name:       "bq",
 		Type:       "bigquery",
 		Properties: map[string]string{"project": "p", "dataset": "d"},
@@ -294,7 +294,7 @@ func TestSQLRunner_BadTemplate(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.sql"), []byte(`SELECT {{.Invalid`), 0644)
 
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Name:       "bq",
 		Type:       "bigquery",
 		Properties: map[string]string{"project": "p", "dataset": "d"},

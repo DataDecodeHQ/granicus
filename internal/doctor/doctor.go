@@ -44,7 +44,7 @@ func RunChecks(cfg *config.PipelineConfig, projectRoot string) []CheckResult {
 	results = append(results, checkGoVersion())
 
 	if cfg != nil {
-		for name, conn := range cfg.Connections {
+		for name, conn := range cfg.Resources {
 			switch conn.Type {
 			case "bigquery":
 				results = append(results, checkBQConnectivity(name, conn))
@@ -70,7 +70,7 @@ func checkGoVersion() CheckResult {
 	}
 }
 
-func checkBQConnectivity(connName string, conn *config.ConnectionConfig) CheckResult {
+func checkBQConnectivity(connName string, conn *config.ResourceConfig) CheckResult {
 	name := "bq:" + connName
 	project := conn.Properties["project"]
 	if project == "" {
@@ -119,7 +119,7 @@ func checkBQConnectivity(connName string, conn *config.ConnectionConfig) CheckRe
 	return CheckResult{Name: name, Status: StatusPass, Message: fmt.Sprintf("project=%s", project)}
 }
 
-func checkGCSConfig(connName string, conn *config.ConnectionConfig) CheckResult {
+func checkGCSConfig(connName string, conn *config.ResourceConfig) CheckResult {
 	name := "gcs:" + connName
 	bucket := conn.Properties["bucket"]
 	if bucket == "" {

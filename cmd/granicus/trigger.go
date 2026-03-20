@@ -15,7 +15,7 @@ func newTriggerCmd() *cobra.Command {
 		Use:   "trigger <pipeline>",
 		Short: "Trigger a pipeline run via the engine API",
 		Args:  cobra.ExactArgs(1),
-		RunE:  runTrigger,
+		RunE:  cloudGate(runTrigger),
 	}
 	cmd.Flags().StringSlice("assets", nil, "Run only these assets")
 	cmd.Flags().Bool("downstream-only", false, "Run downstream of specified assets only")

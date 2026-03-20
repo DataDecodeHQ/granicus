@@ -14,7 +14,7 @@ func TestGenerateCheckNodes_Basic(t *testing.T) {
 				Name:                  "transactions",
 				Type:                  "sql",
 				Source:                "sql/transactions.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Checks: []config.CheckConfig{
 					{Source: "tests/check_transactions_not_null.sql"},
 					{Source: "tests/check_transactions_fresh.py"},
@@ -56,8 +56,8 @@ func TestGenerateCheckNodes_Basic(t *testing.T) {
 	}
 
 	// Check connection inheritance
-	if nodes[0].DestinationConnection != "bq" {
-		t.Errorf("node 0 dest conn: %q", nodes[0].DestinationConnection)
+	if nodes[0].DestinationResource != "bq" {
+		t.Errorf("node 0 dest conn: %q", nodes[0].DestinationResource)
 	}
 }
 

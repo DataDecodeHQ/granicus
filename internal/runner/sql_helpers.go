@@ -21,7 +21,7 @@ import (
 // @start/@end interval placeholders are left intact so callers can pass them as
 // BigQuery named parameters (or fall back to substituteIntervalVarsForDDL for
 // multi-statement scripts where BQ parameters are not supported).
-func renderSQL(rawSQL []byte, conn *config.ConnectionConfig, asset *Asset, funcMap template.FuncMap) ([]byte, error) {
+func renderSQL(rawSQL []byte, conn *config.ResourceConfig, asset *Asset, funcMap template.FuncMap) ([]byte, error) {
 	tmpl := template.New("sql")
 	if funcMap != nil {
 		tmpl = tmpl.Funcs(funcMap)
@@ -52,7 +52,7 @@ func renderSQL(rawSQL []byte, conn *config.ConnectionConfig, asset *Asset, funcM
 }
 
 // newBQClient creates a BigQuery client for the project in conn.
-func newBQClient(ctx context.Context, conn *config.ConnectionConfig) (*bigquery.Client, error) {
+func newBQClient(ctx context.Context, conn *config.ResourceConfig) (*bigquery.Client, error) {
 	project := conn.Properties["project"]
 	var opts []option.ClientOption
 	credPath, err := config.ResolveConnectionCredentials(conn)

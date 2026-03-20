@@ -13,14 +13,14 @@ func TestLoadEnvironmentConfig(t *testing.T) {
 environments:
   dev:
     prefix: dev_
-    connections:
+    resources:
       bq:
         type: bigquery
         project: my-dev-project
         dataset: dev_dataset
   prod:
     prefix: ""
-    connections:
+    resources:
       bq:
         type: bigquery
         project: my-prod-project
@@ -38,8 +38,8 @@ environments:
 	if cfg.Environments["dev"].Prefix != "dev_" {
 		t.Errorf("dev prefix: %q", cfg.Environments["dev"].Prefix)
 	}
-	if cfg.Environments["prod"].Connections["bq"].Properties["project"] != "my-prod-project" {
-		t.Errorf("prod project: %q", cfg.Environments["prod"].Connections["bq"].Properties["project"])
+	if cfg.Environments["prod"].Resources["bq"].Properties["project"] != "my-prod-project" {
+		t.Errorf("prod project: %q", cfg.Environments["prod"].Resources["bq"].Properties["project"])
 	}
 }
 
@@ -47,7 +47,7 @@ func TestMergeEnvironment(t *testing.T) {
 	base := &PipelineConfig{
 		Pipeline:    "test",
 		MaxParallel: 5,
-		Connections: map[string]*ConnectionConfig{
+		Resources: map[string]*ResourceConfig{
 			"bq": {Name: "bq", Type: "bigquery", Properties: map[string]string{
 				"project": "base-project",
 				"dataset": "base_ds",
@@ -62,7 +62,7 @@ func TestMergeEnvironment(t *testing.T) {
 		Environments: map[string]*EnvironmentOverride{
 			"dev": {
 				Prefix: "dev_",
-				Connections: map[string]*ConnectionConfig{
+				Resources: map[string]*ResourceConfig{
 					"bq": {Type: "bigquery", Properties: map[string]string{
 						"project": "dev-project",
 					}},
@@ -77,19 +77,19 @@ func TestMergeEnvironment(t *testing.T) {
 	}
 
 	// project overridden
-	if merged.Connections["bq"].Properties["project"] != "dev-project" {
-		t.Errorf("project: %q", merged.Connections["bq"].Properties["project"])
+	if merged.Resources["bq"].Properties["project"] != "dev-project" {
+		t.Errorf("project: %q", merged.Resources["bq"].Properties["project"])
 	}
 	// dataset kept from base
-	if merged.Connections["bq"].Properties["dataset"] != "base_ds" {
-		t.Errorf("dataset: %q", merged.Connections["bq"].Properties["dataset"])
+	if merged.Resources["bq"].Properties["dataset"] != "base_ds" {
+		t.Errorf("dataset: %q", merged.Resources["bq"].Properties["dataset"])
 	}
 	// prefix set
 	if merged.Prefix != "dev_" {
 		t.Errorf("prefix: %q", merged.Prefix)
 	}
 	// base not mutated
-	if base.Connections["bq"].Properties["project"] != "base-project" {
+	if base.Resources["bq"].Properties["project"] != "base-project" {
 		t.Error("base was mutated")
 	}
 }

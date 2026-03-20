@@ -16,7 +16,7 @@ func TestGenerateStandardsCheckNodes_AllTypes(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "user_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Standards: &config.StandardsConfig{
 					Email:    []string{"email"},
 					Phone:    []string{"phone_number"},
@@ -55,8 +55,8 @@ func TestGenerateStandardsCheckNodes_AllTypes(t *testing.T) {
 		if n.InlineSQL == "" {
 			t.Errorf("expected InlineSQL for %s", n.Name)
 		}
-		if n.DestinationConnection != "bq" {
-			t.Errorf("expected DestinationConnection bq, got %q for %s", n.DestinationConnection, n.Name)
+		if n.DestinationResource != "bq" {
+			t.Errorf("expected DestinationResource bq, got %q for %s", n.DestinationResource, n.Name)
 		}
 		if n.SourceAsset != "stg_users" {
 			t.Errorf("expected SourceAsset stg_users, got %q for %s", n.SourceAsset, n.Name)
@@ -107,7 +107,7 @@ func TestGenerateStandardsCheckNodes_Blocking(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "user_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				StandardsBlocking:     true,
 				Standards: &config.StandardsConfig{
 					Email: []string{"email"},
@@ -135,7 +135,7 @@ func TestGenerateStandardsCheckNodes_NoStandards(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 			},
 		},
 	}
@@ -159,7 +159,7 @@ func TestGenerateStandardsCheckNodes_MultipleColumns(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "user_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Standards: &config.StandardsConfig{
 					Email: []string{"email", "secondary_email"},
 				},

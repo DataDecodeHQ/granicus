@@ -34,10 +34,10 @@ func GenerateSourceCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, m
 }
 
 func resolveSourceProject(cfg *config.PipelineConfig, src config.SourceConfig) string {
-	if src.Connection == "" {
+	if src.Resource == "" {
 		return ""
 	}
-	conn, ok := cfg.Connections[src.Connection]
+	conn, ok := cfg.Resources[src.Resource]
 	if !ok {
 		return ""
 	}
@@ -46,7 +46,7 @@ func resolveSourceProject(cfg *config.PipelineConfig, src config.SourceConfig) s
 
 func sourceChecksForTables(sourceName string, src config.SourceConfig, project string) []graph.AssetInput {
 	var checks []graph.AssetInput
-	destConn := src.Connection
+	destConn := src.Resource
 
 	for _, table := range src.Tables {
 		checks = append(checks, sourceCheckNodeForTable(sourceName, table, "exists_not_empty", destConn,
@@ -80,7 +80,7 @@ func sourceChecksForTables(sourceName string, src config.SourceConfig, project s
 
 func sourceChecksForLegacy(sourceName string, src config.SourceConfig, project string) []graph.AssetInput {
 	var checks []graph.AssetInput
-	destConn := src.Connection
+	destConn := src.Resource
 
 	checks = append(checks, sourceCheckNode(sourceName, "exists_not_empty", destConn,
 		legacyExistsNotEmptySQL(src.Identifier)))
@@ -114,7 +114,7 @@ func sourceCheckNodeForTable(sourceName, tableName, checkName, destConn, sql str
 	return graph.AssetInput{
 		Name:                  fmt.Sprintf("check:source:%s:%s:%s", sourceName, tableName, checkName),
 		Type:                  "sql_check",
-		DestinationConnection: destConn,
+		DestinationResource: destConn,
 		SourceAsset:           sourceName,
 		InlineSQL:             sql,
 	}
@@ -124,7 +124,7 @@ func sourceCheckNode(sourceName, checkName, destConn, sql string) graph.AssetInp
 	return graph.AssetInput{
 		Name:                  fmt.Sprintf("check:source:%s:default:%s", sourceName, checkName),
 		Type:                  "sql_check",
-		DestinationConnection: destConn,
+		DestinationResource: destConn,
 		SourceAsset:           sourceName,
 		InlineSQL:             sql,
 	}

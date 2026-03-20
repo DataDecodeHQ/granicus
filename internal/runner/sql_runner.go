@@ -20,16 +20,16 @@ import (
 
 type SQLRunner struct {
 	Timeout     time.Duration
-	Connection  *config.ConnectionConfig
+	Resource    *config.ResourceConfig
 	FuncMap     template.FuncMap
 	ValidateSQL bool
 }
 
 // NewSQLRunner creates a SQLRunner for the given BigQuery connection.
-func NewSQLRunner(conn *config.ConnectionConfig) *SQLRunner {
+func NewSQLRunner(conn *config.ResourceConfig) *SQLRunner {
 	return &SQLRunner{
 		Timeout:    DefaultTimeout,
-		Connection: conn,
+		Resource: conn,
 	}
 }
 
@@ -57,7 +57,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
-	rendered, err := renderSQL(rawSQL, r.Connection, asset, r.FuncMap)
+	rendered, err := renderSQL(rawSQL, r.Resource, asset, r.FuncMap)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -85,7 +85,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	client, err := newBQClient(ctx, r.Connection)
+	client, err := newBQClient(ctx, r.Resource)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -164,7 +164,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 	// Contract: Go owns this boundary. SQL queries execute directly against BigQuery via API.
-	LogSQLExecution(asset.Name, r.Connection.Properties["dataset"], r.ValidateSQL, estimatedBytes)
+	LogSQLExecution(asset.Name, r.Resource.Properties["dataset"], r.ValidateSQL, estimatedBytes)
 	job, err := q.Run(ctx)
 	if err != nil {
 		return NodeResult{
@@ -221,14 +221,14 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 // SQLCheckRunner runs a SQL query and checks if it returns any rows.
 // 0 rows = pass (success), 1+ rows = fail.
 type SQLCheckRunner struct {
-	Connection *config.ConnectionConfig
+	Resource *config.ResourceConfig
 	Timeout    time.Duration
 	FuncMap    template.FuncMap
 }
 
 // NewSQLCheckRunner creates a SQLCheckRunner for the given BigQuery connection.
-func NewSQLCheckRunner(conn *config.ConnectionConfig) *SQLCheckRunner {
-	return &SQLCheckRunner{Connection: conn, Timeout: DefaultTimeout}
+func NewSQLCheckRunner(conn *config.ResourceConfig) *SQLCheckRunner {
+	return &SQLCheckRunner{Resource: conn, Timeout: DefaultTimeout}
 }
 
 // Run executes a SQL check query and fails if any rows are returned.
@@ -251,7 +251,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
-	checkSQL, err := renderSQL(rawSQL, r.Connection, asset, r.FuncMap)
+	checkSQL, err := renderSQL(rawSQL, r.Resource, asset, r.FuncMap)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
@@ -264,7 +264,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	client, err := newBQClient(ctx, r.Connection)
+	client, err := newBQClient(ctx, r.Resource)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
@@ -275,7 +275,7 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	defer client.Close()
 
 	// Contract: Go owns this boundary. Check queries execute directly against BigQuery.
-	LogSQLExecution(asset.Name, r.Connection.Properties["dataset"], false, 0)
+	LogSQLExecution(asset.Name, r.Resource.Properties["dataset"], false, 0)
 
 	// Check queries are always single-statement SELECTs; pass @start/@end as
 	// BQ named parameters rather than substituting into the SQL string.

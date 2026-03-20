@@ -9,7 +9,7 @@ import (
 
 type EnvironmentOverride struct {
 	Prefix      string                       `yaml:"prefix"`
-	Connections map[string]*ConnectionConfig `yaml:"connections,omitempty"`
+	Resources   map[string]*ResourceConfig `yaml:"resources,omitempty"`
 }
 
 type EnvironmentConfig struct {
@@ -30,7 +30,7 @@ func LoadEnvironmentConfig(path string) (*EnvironmentConfig, error) {
 
 	// Populate connection names
 	for _, env := range cfg.Environments {
-		for name, conn := range env.Connections {
+		for name, conn := range env.Resources {
 			conn.Name = name
 		}
 	}
@@ -51,19 +51,19 @@ func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName s
 	copy(merged.Assets, base.Assets)
 
 	// Copy connections map
-	merged.Connections = make(map[string]*ConnectionConfig)
-	for k, v := range base.Connections {
+	merged.Resources = make(map[string]*ResourceConfig)
+	for k, v := range base.Resources {
 		cp := *v
 		cp.Properties = make(map[string]string)
 		for pk, pv := range v.Properties {
 			cp.Properties[pk] = pv
 		}
-		merged.Connections[k] = &cp
+		merged.Resources[k] = &cp
 	}
 
 	// Override connection properties from environment
-	for name, envConn := range env.Connections {
-		if existing, ok := merged.Connections[name]; ok {
+	for name, envConn := range env.Resources {
+		if existing, ok := merged.Resources[name]; ok {
 			for k, v := range envConn.Properties {
 				existing.Properties[k] = v
 			}
@@ -77,7 +77,7 @@ func MergeEnvironment(base *PipelineConfig, envCfg *EnvironmentConfig, envName s
 			for k, v := range envConn.Properties {
 				cp.Properties[k] = v
 			}
-			merged.Connections[name] = &cp
+			merged.Resources[name] = &cp
 		}
 	}
 

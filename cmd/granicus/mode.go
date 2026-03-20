@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
@@ -59,6 +61,18 @@ func CloudAPIKey() string {
 	}
 	cfg, _ := config.ResolveCLIConfig("", "", "")
 	return cfg.APIKey
+}
+
+// cloudGate wraps a cobra RunE function with requireCloud gating.
+func cloudGate(fn func(cmd *cobra.Command, args []string) error) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		cfg, _ := config.ResolveCLIConfig("", "", "")
+		mode := resolveMode(cfg, false)
+		if err := requireCloud(mode, cmd.Name()); err != nil {
+			return err
+		}
+		return fn(cmd, args)
+	}
 }
 
 // requireLocal returns an error if we need local mode but are in cloud mode.

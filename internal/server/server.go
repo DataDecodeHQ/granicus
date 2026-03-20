@@ -69,6 +69,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/trigger/", s.handleTrigger)
 	mux.HandleFunc("/api/v1/status/", s.handleStatus)
+	mux.HandleFunc("/api/v1/runs/", s.handleRuns)
+	mux.HandleFunc("/api/v1/pipelines/", s.handlePipelines)
+	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)
 	return mux
 }
 
@@ -200,6 +203,208 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// handleRuns dispatches run-related subroutes:
+//   GET /api/v1/runs/{id}/logs - SSE log stream
+func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
+	// Path: /api/v1/runs/{id}/logs or /api/v1/runs/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "run_id required"})
+		return
+	}
+	runID := parts[0]
+
+	if len(parts) == 2 && parts[1] == "logs" {
+		s.handleRunLogs(w, r, runID)
+		return
+	}
+
+	// Default: same as status
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+	summary, err := s.eventStore.GetRunSummary(runID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("run %q not found", runID)})
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// handleRunLogs streams run events as SSE.
+func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request, runID string) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	evts, err := s.eventStore.Query(events.QueryFilters{RunID: runID, Limit: 1000})
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("run %q not found", runID)})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusOK, evts)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	for _, evt := range evts {
+		data, _ := json.Marshal(evt)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+}
+
+// handlePipelines dispatches pipeline-related subroutes:
+//   GET  /api/v1/pipelines/{p}/runs     - run history
+//   POST /api/v1/pipelines/{p}/trigger  - alias for trigger
+//   POST /api/v1/pipelines/{p}/validate - validate config
+//   POST /api/v1/pipelines/{p}/schedule - update schedule
+func (s *Server) handlePipelines(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pipelines/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[0] == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "pipeline name and action required (e.g. /api/v1/pipelines/my_pipeline/runs)"})
+		return
+	}
+	pipeline := parts[0]
+	action := parts[1]
+
+	switch action {
+	case "runs":
+		s.handlePipelineRuns(w, r, pipeline)
+	case "trigger":
+		// Rewrite as standard trigger
+		r.URL.Path = "/api/v1/trigger/" + pipeline
+		s.handleTrigger(w, r)
+	case "validate":
+		s.handlePipelineValidate(w, r, pipeline)
+	case "schedule":
+		s.handlePipelineSchedule(w, r, pipeline)
+	default:
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("unknown action %q", action)})
+	}
+}
+
+// handlePipelineRuns returns run history for a pipeline.
+func (s *Server) handlePipelineRuns(w http.ResponseWriter, r *http.Request, pipeline string) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	runs, err := s.eventStore.ListRuns(50)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "failed to list runs"})
+		return
+	}
+
+	// Filter by pipeline
+	var filtered []events.RunSummary
+	for _, run := range runs {
+		if run.Pipeline == pipeline {
+			filtered = append(filtered, run)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, filtered)
+}
+
+// handlePipelineValidate validates a pipeline config.
+func (s *Server) handlePipelineValidate(w http.ResponseWriter, r *http.Request, pipeline string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	s.mu.RLock()
+	cfg, ok := s.configs[pipeline]
+	s.mu.RUnlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("pipeline %q not found", pipeline)})
+		return
+	}
+
+	var errs []string
+	if err := config.ValidateResources(cfg); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pipeline": pipeline,
+		"valid":    len(errs) == 0,
+		"errors":   errs,
+	})
+}
+
+type scheduleRequest struct {
+	Schedule string `json:"schedule"`
+}
+
+// handlePipelineSchedule updates a pipeline's schedule.
+func (s *Server) handlePipelineSchedule(w http.ResponseWriter, r *http.Request, pipeline string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	s.mu.RLock()
+	cfg, ok := s.configs[pipeline]
+	s.mu.RUnlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("pipeline %q not found", pipeline)})
+		return
+	}
+
+	var req scheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid JSON body"})
+		return
+	}
+
+	s.mu.Lock()
+	cfg.Schedule = req.Schedule
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pipeline": pipeline,
+		"schedule": req.Schedule,
+	})
+}
+
+// handleSchedules returns all pipeline schedules.
+func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	type scheduleEntry struct {
+		Pipeline string `json:"pipeline"`
+		Schedule string `json:"schedule"`
+	}
+
+	var schedules []scheduleEntry
+	for name, cfg := range s.configs {
+		if cfg.Schedule != "" {
+			schedules = append(schedules, scheduleEntry{Pipeline: name, Schedule: cfg.Schedule})
+		}
+	}
+	writeJSON(w, http.StatusOK, schedules)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

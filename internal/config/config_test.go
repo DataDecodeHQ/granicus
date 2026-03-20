@@ -20,7 +20,7 @@ func TestParseConfig_ValidYAML(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: revenue_daily
 max_parallel: 5
-connections:
+resources:
   bq_main:
     type: bigquery
     project: my-project
@@ -32,7 +32,7 @@ assets:
   - name: transform
     type: sql
     source: sql/transform.sql
-    destination_connection: bq_main
+    destination_resource: bq_main
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -52,10 +52,10 @@ assets:
 	if cfg.Assets[1].Name != "transform" || cfg.Assets[1].Type != "sql" {
 		t.Errorf("asset 1: %+v", cfg.Assets[1])
 	}
-	if cfg.Assets[1].DestinationConnection != "bq_main" {
-		t.Errorf("asset 1 dest conn: %q", cfg.Assets[1].DestinationConnection)
+	if cfg.Assets[1].DestinationResource != "bq_main" {
+		t.Errorf("asset 1 dest conn: %q", cfg.Assets[1].DestinationResource)
 	}
-	if conn, ok := cfg.Connections["bq_main"]; !ok {
+	if conn, ok := cfg.Resources["bq_main"]; !ok {
 		t.Error("missing bq_main connection")
 	} else if conn.Name != "bq_main" {
 		t.Errorf("connection name: %q", conn.Name)
@@ -156,7 +156,7 @@ assets:
 	if cfg.Pipeline != "simple" {
 		t.Errorf("got pipeline %q", cfg.Pipeline)
 	}
-	if len(cfg.Connections) > 0 {
+	if len(cfg.Resources) > 0 {
 		t.Error("expected no connections")
 	}
 }
@@ -168,7 +168,7 @@ assets:
   - name: x
     type: shell
     source: x.sh
-    destination_connection: missing
+    destination_resource: missing
 `))
 	if err == nil {
 		t.Error("expected error for non-existent connection")
@@ -184,14 +184,14 @@ assets:
     source: x.sql
 `))
 	if err == nil {
-		t.Error("expected error for sql without destination_connection")
+		t.Error("expected error for sql without destination_resource")
 	}
 }
 
-func TestValidateConnections_MissingProperty(t *testing.T) {
+func TestValidateResources_MissingProperty(t *testing.T) {
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: my-project
@@ -199,18 +199,18 @@ assets:
   - name: x
     type: sql
     source: x.sql
-    destination_connection: bq
+    destination_resource: bq
 `))
 	if err == nil {
 		t.Error("expected error for missing dataset")
 	}
 }
 
-func TestValidateConnections_UnknownType(t *testing.T) {
+func TestValidateResources_UnknownType(t *testing.T) {
 	// Unknown connection type should pass through without error
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   custom:
     type: custom_db
     host: localhost
@@ -218,20 +218,20 @@ assets:
   - name: x
     type: shell
     source: x.sh
-    destination_connection: custom
+    destination_resource: custom
 `))
 	if err != nil {
 		t.Fatalf("unknown type should not error: %v", err)
 	}
-	if cfg.Connections["custom"].Type != "custom_db" {
-		t.Errorf("type: %q", cfg.Connections["custom"].Type)
+	if cfg.Resources["custom"].Type != "custom_db" {
+		t.Errorf("type: %q", cfg.Resources["custom"].Type)
 	}
 }
 
 func TestParseConfig_ConnectionProperties(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: my-project
@@ -241,12 +241,12 @@ assets:
   - name: x
     type: sql
     source: x.sql
-    destination_connection: bq
+    destination_resource: bq
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn := cfg.Connections["bq"]
+	conn := cfg.Resources["bq"]
 	if conn.Type != "bigquery" {
 		t.Errorf("type: %q", conn.Type)
 	}
@@ -297,7 +297,7 @@ assets:
 func TestParseConfig_GrainAndDefaultChecks(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -306,14 +306,14 @@ assets:
   - name: stg
     type: sql
     source: stg.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: staging
     grain: order_id
     default_checks: true
   - name: ent
     type: sql
     source: ent.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: entity
 `))
 	if err != nil {
@@ -332,7 +332,7 @@ assets:
 
 func TestDatasetForAsset(t *testing.T) {
 	cfg := &PipelineConfig{
-		Connections: map[string]*ConnectionConfig{
+		Resources: map[string]*ResourceConfig{
 			"bq_main": {Name: "bq_main", Type: "bigquery", Properties: map[string]string{
 				"project": "p", "dataset": "default_ds",
 			}},
@@ -360,8 +360,8 @@ func TestDatasetForAsset(t *testing.T) {
 			expected: "legacy_analytics",
 		},
 		{
-			name:     "explicit destination_connection overrides layer",
-			asset:    AssetConfig{Name: "stg", Layer: "analytics", DestinationConnection: "bq_staging"},
+			name:     "explicit destination_resource overrides layer",
+			asset:    AssetConfig{Name: "stg", Layer: "analytics", DestinationResource: "bq_staging"},
 			defDS:    "fallback",
 			expected: "staging_ds",
 		},
@@ -389,7 +389,7 @@ func TestDatasetForAsset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := cfg
 			if tt.name == "empty datasets block uses default" {
-				c = &PipelineConfig{Connections: cfg.Connections}
+				c = &PipelineConfig{Resources: cfg.Resources}
 			}
 			got := c.DatasetForAsset(tt.asset, tt.defDS)
 			if got != tt.expected {
@@ -402,7 +402,7 @@ func TestDatasetForAsset(t *testing.T) {
 func TestParseConfig_DatasetsBlock(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -414,12 +414,12 @@ assets:
   - name: stg
     type: sql
     source: stg.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: staging
   - name: rpt
     type: sql
     source: rpt.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: analytics
 `))
 	if err != nil {
@@ -440,7 +440,7 @@ func TestParseConfig_PoolValidation(t *testing.T) {
 	// Valid pool config
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -454,7 +454,7 @@ assets:
   - name: x
     type: sql
     source: x.sql
-    destination_connection: bq
+    destination_resource: bq
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -535,7 +535,7 @@ assets:
 func TestParseConfig_SourceExtendedFields(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -554,7 +554,7 @@ assets:
   - name: x
     type: sql
     source: x.sql
-    destination_connection: bq
+    destination_resource: bq
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -574,7 +574,7 @@ assets:
 func TestParseConfig_SourceBadFreshness(t *testing.T) {
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -588,7 +588,7 @@ assets:
   - name: x
     type: sql
     source: x.sql
-    destination_connection: bq
+    destination_resource: bq
 `))
 	if err == nil {
 		t.Error("expected error for invalid expected_freshness")
@@ -598,7 +598,7 @@ assets:
 func TestParseConfig_ForeignKeys(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -607,7 +607,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     foreign_keys:
       - column: customer_id
         references: customers.customer_id
@@ -633,7 +633,7 @@ assets:
 func TestParseConfig_ForeignKeyBadReferences(t *testing.T) {
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -642,7 +642,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     foreign_keys:
       - column: customer_id
         references: customers
@@ -655,7 +655,7 @@ assets:
 func TestParseConfig_CompletenessConfig(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -664,7 +664,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     completeness:
       source_table: raw_orders
       source_pk: order_id
@@ -698,7 +698,7 @@ assets:
 func TestParseConfig_CompletenessDefaults(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -707,7 +707,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     completeness:
       source_table: raw_orders
       source_pk: order_id
@@ -728,7 +728,7 @@ func TestParseConfig_CompletenessValidation(t *testing.T) {
 	// Missing source_table
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -737,7 +737,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     completeness:
       source_pk: order_id
 `))
@@ -748,7 +748,7 @@ assets:
 	// Missing source_pk
 	_, err = LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -757,7 +757,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     completeness:
       source_table: raw_orders
 `))
@@ -769,7 +769,7 @@ assets:
 func TestParseConfig_AssetUpstream(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -778,11 +778,11 @@ assets:
   - name: stg_orders
     type: sql
     source: stg.sql
-    destination_connection: bq
+    destination_resource: bq
   - name: ent_orders
     type: sql
     source: ent.sql
-    destination_connection: bq
+    destination_resource: bq
     upstream:
       - stg_orders
       - stg_customers
@@ -803,7 +803,7 @@ assets:
 func TestParseConfig_FanOutCheck(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -812,17 +812,17 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     fan_out_check: true
   - name: lines
     type: sql
     source: lines.sql
-    destination_connection: bq
+    destination_resource: bq
     fan_out_check: false
   - name: plain
     type: sql
     source: plain.sql
-    destination_connection: bq
+    destination_resource: bq
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -843,7 +843,7 @@ func TestResolveAssetPool(t *testing.T) {
 		"bq_pool": {Slots: 4, DefaultFor: "bigquery"},
 		"pg_pool": {Slots: 2, DefaultFor: "postgres"},
 	}
-	conns := map[string]*ConnectionConfig{
+	conns := map[string]*ResourceConfig{
 		"bq":  {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "d"}},
 		"pg":  {Name: "pg", Type: "postgres", Properties: map[string]string{"host": "h", "database": "db"}},
 	}
@@ -855,10 +855,10 @@ func TestResolveAssetPool(t *testing.T) {
 	}{
 		{"explicit pool", AssetConfig{Pool: "bq_pool"}, "bq_pool"},
 		{"pool none", AssetConfig{Pool: "none"}, ""},
-		{"auto from bq connection", AssetConfig{DestinationConnection: "bq"}, "bq_pool"},
-		{"auto from pg connection", AssetConfig{DestinationConnection: "pg"}, "pg_pool"},
+		{"auto from bq connection", AssetConfig{DestinationResource: "bq"}, "bq_pool"},
+		{"auto from pg connection", AssetConfig{DestinationResource: "pg"}, "pg_pool"},
 		{"no connection no pool", AssetConfig{}, ""},
-		{"unknown connection", AssetConfig{DestinationConnection: "unknown"}, ""},
+		{"unknown connection", AssetConfig{DestinationResource: "unknown"}, ""},
 	}
 
 	for _, tt := range tests {
@@ -874,7 +874,7 @@ func TestResolveAssetPool(t *testing.T) {
 func TestOutputDatasets(t *testing.T) {
 	cfg := &PipelineConfig{
 		Pipeline: "test",
-		Connections: map[string]*ConnectionConfig{
+		Resources: map[string]*ResourceConfig{
 			"bq": {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "dev_default"}},
 			"bq2": {Name: "bq2", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "dev_other"}},
 			"bq_nods": {Name: "bq_nods", Type: "bigquery", Properties: map[string]string{"project": "p"}},
@@ -883,9 +883,9 @@ func TestOutputDatasets(t *testing.T) {
 			"intermediate": "dev_intermediate",
 		},
 		Assets: []AssetConfig{
-			{Name: "a1", Type: "sql", Source: "a.sql", DestinationConnection: "bq"},
-			{Name: "a2", Type: "sql", Source: "b.sql", DestinationConnection: "bq_nods", Layer: "intermediate"},
-			{Name: "a3", Type: "sql", Source: "c.sql", DestinationConnection: "bq2"},
+			{Name: "a1", Type: "sql", Source: "a.sql", DestinationResource: "bq"},
+			{Name: "a2", Type: "sql", Source: "b.sql", DestinationResource: "bq_nods", Layer: "intermediate"},
+			{Name: "a3", Type: "sql", Source: "c.sql", DestinationResource: "bq2"},
 			{Name: "a4", Type: "python", Source: "d.py"},
 		},
 	}
@@ -915,7 +915,7 @@ func TestOutputDatasets(t *testing.T) {
 func TestParseConfig_AssetTimeout(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -924,7 +924,7 @@ assets:
   - name: slow_model
     type: sql
     source: sql/slow.sql
-    destination_connection: bq
+    destination_resource: bq
     timeout: 30m
   - name: fast_model
     type: shell
@@ -1118,7 +1118,7 @@ assets:
 func TestParseConfig_CheckSeverityDefault(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1127,7 +1127,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     checks:
       - name: check_no_nulls
         type: sql
@@ -1145,7 +1145,7 @@ assets:
 func TestParseConfig_CheckSeverityExplicit(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1154,7 +1154,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     checks:
       - name: check_warn
         type: sql
@@ -1186,7 +1186,7 @@ assets:
 func TestParseConfig_CheckSeverityInvalid(t *testing.T) {
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1195,7 +1195,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     checks:
       - name: check_bad
         type: sql
@@ -1210,7 +1210,7 @@ assets:
 func TestParseConfig_ContractValid(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1219,7 +1219,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     contract:
       primary_key: order_id
       not_null:
@@ -1262,7 +1262,7 @@ func TestParseConfig_ContractMinimal(t *testing.T) {
 	// Contract with only primary_key, no not_null or accepted_values
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1271,7 +1271,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     contract:
       primary_key: order_id
 `))
@@ -1313,7 +1313,7 @@ func TestParseConfig_ContractAcceptedValuesEmpty(t *testing.T) {
 	// accepted_values entry with empty slice should fail
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1322,7 +1322,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     contract:
       accepted_values:
         status: []
@@ -1336,7 +1336,7 @@ func TestParseConfig_ContractNotNullEmptyString(t *testing.T) {
 	// not_null entry with empty string should fail
 	_, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1345,7 +1345,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     contract:
       not_null:
         - ""
@@ -1359,7 +1359,7 @@ func TestParseConfig_CheckBackwardsCompatible(t *testing.T) {
 	// Old config without severity field should still work
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
-connections:
+resources:
   bq:
     type: bigquery
     project: p
@@ -1368,7 +1368,7 @@ assets:
   - name: orders
     type: sql
     source: orders.sql
-    destination_connection: bq
+    destination_resource: bq
     checks:
       - name: old_check
         type: sql

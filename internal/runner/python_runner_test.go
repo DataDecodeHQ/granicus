@@ -15,13 +15,13 @@ import (
 func TestPythonRunner_EnvVarInjection(t *testing.T) {
 	dir := t.TempDir()
 	script := `import os
-print("DEST=" + os.environ.get("GRANICUS_DEST_CONNECTION", ""))
+print("DEST=" + os.environ.get("GRANICUS_DEST_RESOURCE", ""))
 print("META=" + os.environ.get("GRANICUS_METADATA_PATH", ""))
 print("NAME=" + os.environ.get("GRANICUS_ASSET_NAME", ""))
 `
 	os.WriteFile(filepath.Join(dir, "test.py"), []byte(script), 0644)
 
-	conn := &config.ConnectionConfig{Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p"}}
+	conn := &config.ResourceConfig{Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p"}}
 	r := NewPythonRunner(conn, nil, nil, "")
 	result := r.Run(&Asset{Name: "envtest", Type: "python", Source: "test.py"}, dir, "run1")
 

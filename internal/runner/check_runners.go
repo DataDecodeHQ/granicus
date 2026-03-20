@@ -12,7 +12,7 @@ type PythonCheckRunner struct {
 }
 
 // NewPythonCheckRunner creates a PythonCheckRunner that delegates to a PythonRunner.
-func NewPythonCheckRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *PythonCheckRunner {
+func NewPythonCheckRunner(destConn, srcConn *config.ResourceConfig, eventStore *events.Store, pipeline string) *PythonCheckRunner {
 	return &PythonCheckRunner{
 		inner: NewPythonRunner(destConn, srcConn, eventStore, pipeline),
 	}

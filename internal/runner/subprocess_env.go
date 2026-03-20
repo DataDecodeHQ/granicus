@@ -14,8 +14,8 @@ type SubprocessEnvConfig struct {
 	ProjectRoot  string
 	RunID        string
 	MetadataPath string
-	DestConn     *config.ConnectionConfig
-	SrcConn      *config.ConnectionConfig
+	DestConn     *config.ResourceConfig
+	SrcConn      *config.ResourceConfig
 	Refs         map[string]string
 }
 
@@ -36,13 +36,13 @@ func buildSubprocessEnv(cfg SubprocessEnvConfig) []string {
 	}
 
 	if cfg.DestConn != nil {
-		if connJSON, err := json.Marshal(flattenConnection(cfg.DestConn)); err == nil {
-			env = append(env, "GRANICUS_DEST_CONNECTION="+string(connJSON))
+		if connJSON, err := json.Marshal(flattenResource(cfg.DestConn)); err == nil {
+			env = append(env, "GRANICUS_DEST_RESOURCE="+string(connJSON))
 		}
 	}
 	if cfg.SrcConn != nil {
-		if connJSON, err := json.Marshal(flattenConnection(cfg.SrcConn)); err == nil {
-			env = append(env, "GRANICUS_SOURCE_CONNECTION="+string(connJSON))
+		if connJSON, err := json.Marshal(flattenResource(cfg.SrcConn)); err == nil {
+			env = append(env, "GRANICUS_SOURCE_RESOURCE="+string(connJSON))
 		}
 	}
 
@@ -79,9 +79,9 @@ func readMetadata(metadataPath string) (map[string]string, error) {
 	return meta, nil
 }
 
-// flattenConnection converts a ConnectionConfig into a flat string map suitable
+// flattenResource converts a ResourceConfig into a flat string map suitable
 // for JSON serialisation into a subprocess environment variable.
-func flattenConnection(conn *config.ConnectionConfig) map[string]string {
+func flattenResource(conn *config.ResourceConfig) map[string]string {
 	flat := make(map[string]string, len(conn.Properties)+2)
 	flat["name"] = conn.Name
 	flat["type"] = conn.Type

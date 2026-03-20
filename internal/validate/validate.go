@@ -160,9 +160,9 @@ func validateRefResolution(refs []CollectedRef, assetNames []string) ValidationR
 func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot string) []ValidationResult {
 	var results []ValidationResult
 
-	assetNames := make([]string, 0, len(cfg.Assets))
-	for _, a := range cfg.Assets {
-		assetNames = append(assetNames, a.Name)
+	assetNames := make([]string, 0, len(g.Assets))
+	for name := range g.Assets {
+		assetNames = append(assetNames, name)
 	}
 	// Add source phantom node names so ref() to source nodes doesn't fail
 	for name := range cfg.Sources {

@@ -8,14 +8,14 @@ import (
 
 type RunnerRegistry struct {
 	runners     map[string]Runner
-	connections map[string]*config.ConnectionConfig
+	resources map[string]*config.ResourceConfig
 }
 
-// NewRunnerRegistry creates a RunnerRegistry with the given connections.
-func NewRunnerRegistry(connections map[string]*config.ConnectionConfig) *RunnerRegistry {
+// NewRunnerRegistry creates a RunnerRegistry with the given resources.
+func NewRunnerRegistry(resources map[string]*config.ResourceConfig) *RunnerRegistry {
 	return &RunnerRegistry{
 		runners:     make(map[string]Runner),
-		connections: connections,
+		resources: resources,
 	}
 }
 
@@ -24,12 +24,12 @@ func (r *RunnerRegistry) Register(typeName string, runner Runner) {
 	r.runners[typeName] = runner
 }
 
-// Connection returns the connection config for the given name, or nil if not found.
-func (r *RunnerRegistry) Connection(name string) *config.ConnectionConfig {
-	if r.connections == nil {
+// Resource returns the resource config for the given name, or nil if not found.
+func (r *RunnerRegistry) Resource(name string) *config.ResourceConfig {
+	if r.resources == nil {
 		return nil
 	}
-	return r.connections[name]
+	return r.resources[name]
 }
 
 // Run dispatches the asset to the appropriate registered runner based on asset type.

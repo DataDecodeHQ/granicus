@@ -10,8 +10,9 @@ import (
 const (
 	Version02 = "0.2"
 	Version03 = "0.3"
+	Version04 = "0.4"
 
-	LatestVersion = Version03
+	LatestVersion = Version04
 )
 
 // Change describes a single modification made during migration.
@@ -63,6 +64,7 @@ func Migrate(content []byte, fromVersion string) (*Result, error) {
 		fn   func([]byte) ([]byte, []Change, error)
 	}{
 		{Version02, Version03, migrate02to03},
+		{Version03, Version04, migrate03to04},
 	}
 
 	current := content
@@ -99,6 +101,57 @@ func migrate02to03(content []byte) ([]byte, []Change, error) {
 	changes = append(changes, Change{Description: "added version: \"0.3\" header"})
 
 	return updated, changes, nil
+}
+
+// migrate03to04 renames connection terminology to resource terminology.
+func migrate03to04(content []byte) ([]byte, []Change, error) {
+	var changes []Change
+	text := string(content)
+
+	replacements := []struct {
+		old, new, desc string
+	}{
+		{"connections:", "resources:", "renamed connections: to resources:"},
+		{"destination_connection:", "destination_resource:", "renamed destination_connection: to destination_resource:"},
+		{"source_connection:", "source_resource:", "renamed source_connection: to source_resource:"},
+	}
+	for _, r := range replacements {
+		if strings.Contains(text, r.old) {
+			text = strings.ReplaceAll(text, r.old, r.new)
+			changes = append(changes, Change{Description: r.desc})
+		}
+	}
+
+	// Rename source-level connection: to resource: (indented under sources)
+	lines := strings.Split(text, "\n")
+	inSources := false
+	sourceIndent := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+
+		if trimmed == "sources:" {
+			inSources = true
+			sourceIndent = indent
+			continue
+		}
+		if inSources && indent <= sourceIndent && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			inSources = false
+		}
+		if inSources && strings.HasPrefix(trimmed, "connection:") {
+			lines[i] = strings.Replace(line, "connection:", "resource:", 1)
+			if len(changes) == 0 || changes[len(changes)-1].Description != "renamed source connection: to resource:" {
+				changes = append(changes, Change{Description: "renamed source connection: to resource:"})
+			}
+		}
+	}
+	text = strings.Join(lines, "\n")
+
+	// Bump version
+	text = strings.Replace(text, `version: "0.3"`, `version: "0.4"`, 1)
+	changes = append(changes, Change{Description: `updated version to "0.4"`})
+
+	return []byte(text), changes, nil
 }
 
 // addVersionHeader inserts a version field at the top of the YAML content.

@@ -2,7 +2,7 @@ pipeline: bigquery_example
 max_parallel: 2
 schedule: "0 6 * * *"
 
-connections:
+resources:
   bq:
     type: bigquery
     project: my-gcp-project
@@ -12,7 +12,7 @@ assets:
   - name: stg_orders
     type: sql
     source: sql/stg_orders.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: staging
     partition_by: ordered_at
     partition_type: DAY
@@ -20,13 +20,13 @@ assets:
   - name: int_order_summary
     type: sql
     source: sql/int_order_summary.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: intermediate
 
   - name: entity_customers
     type: sql
     source: sql/entity_customers.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: entity
     grain: customer_id
     cluster_by:

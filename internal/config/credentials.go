@@ -58,9 +58,9 @@ func ResolveCredentials(creds string) (string, error) {
 	return credPath, nil
 }
 
-// ResolveConnectionCredentials resolves the credentials for a ConnectionConfig,
+// ResolveConnectionCredentials resolves the credentials for a ResourceConfig,
 // checking the explicit Credentials field first, then falling back to Properties["credentials"].
-func ResolveConnectionCredentials(conn *ConnectionConfig) (string, error) {
+func ResolveConnectionCredentials(conn *ResourceConfig) (string, error) {
 	creds := conn.Credentials
 	if creds == "" {
 		creds = conn.Properties["credentials"]

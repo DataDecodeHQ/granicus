@@ -23,11 +23,11 @@ func (m *mockMetadataProvider) GetPartitionInfo(project, dataset, table string) 
 func TestValidatePartitions_Match(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq": {Type: "bigquery", Properties: map[string]string{"project": "proj", "dataset": "ds"}},
 		},
 		Assets: []config.AssetConfig{
-			{Name: "events", DestinationConnection: "bq", PartitionBy: "created_at", PartitionType: "DAY", ClusterBy: []string{"user_id"}},
+			{Name: "events", DestinationResource: "bq", PartitionBy: "created_at", PartitionType: "DAY", ClusterBy: []string{"user_id"}},
 		},
 	}
 
@@ -46,11 +46,11 @@ func TestValidatePartitions_Match(t *testing.T) {
 func TestValidatePartitions_Mismatch(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq": {Type: "bigquery", Properties: map[string]string{"project": "proj", "dataset": "ds"}},
 		},
 		Assets: []config.AssetConfig{
-			{Name: "events", DestinationConnection: "bq", PartitionBy: "created_at", PartitionType: "DAY", ClusterBy: []string{"user_id", "status"}},
+			{Name: "events", DestinationResource: "bq", PartitionBy: "created_at", PartitionType: "DAY", ClusterBy: []string{"user_id", "status"}},
 		},
 	}
 
@@ -79,11 +79,11 @@ func TestValidatePartitions_Mismatch(t *testing.T) {
 func TestValidatePartitions_SkipsNonPartitioned(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq": {Type: "bigquery", Properties: map[string]string{"project": "proj", "dataset": "ds"}},
 		},
 		Assets: []config.AssetConfig{
-			{Name: "small_table", DestinationConnection: "bq"},
+			{Name: "small_table", DestinationResource: "bq"},
 		},
 	}
 
@@ -97,11 +97,11 @@ func TestValidatePartitions_SkipsNonPartitioned(t *testing.T) {
 func TestValidatePartitions_TableNotFound(t *testing.T) {
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq": {Type: "bigquery", Properties: map[string]string{"project": "proj", "dataset": "ds"}},
 		},
 		Assets: []config.AssetConfig{
-			{Name: "missing", DestinationConnection: "bq", PartitionBy: "created_at"},
+			{Name: "missing", DestinationResource: "bq", PartitionBy: "created_at"},
 		},
 	}
 

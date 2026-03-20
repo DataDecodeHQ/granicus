@@ -10,15 +10,15 @@ import (
 )
 
 type GCSIngestRunner struct {
-	SourceConnection *config.ConnectionConfig
-	DestConnection   *config.ConnectionConfig
+	SourceResource *config.ResourceConfig
+	DestConnection   *config.ResourceConfig
 	Timeout          time.Duration
 }
 
 // NewGCSIngestRunner creates a GCSIngestRunner with the given source and destination connections.
-func NewGCSIngestRunner(srcConn, destConn *config.ConnectionConfig) *GCSIngestRunner {
+func NewGCSIngestRunner(srcConn, destConn *config.ResourceConfig) *GCSIngestRunner {
 	return &GCSIngestRunner{
-		SourceConnection: srcConn,
+		SourceResource: srcConn,
 		DestConnection:   destConn,
 		Timeout:          DefaultTimeout,
 	}
@@ -28,7 +28,7 @@ func NewGCSIngestRunner(srcConn, destConn *config.ConnectionConfig) *GCSIngestRu
 func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
-	srcConn := r.SourceConnection
+	srcConn := r.SourceResource
 	if srcConn == nil {
 		srcConn = asset.ResolvedSourceConn
 	}
@@ -41,7 +41,7 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
 			EndTime: time.Now(), Duration: time.Since(start),
-			Error: "gcs_ingest: source_connection not resolved", ExitCode: -1,
+			Error: "gcs_ingest: source_resource not resolved", ExitCode: -1,
 		}
 	}
 

@@ -23,14 +23,14 @@ func GenerateCompletenessCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetIn
 		if grain == "" {
 			grain = comp.SourcePK
 		}
-		destConn := asset.DestinationConnection
+		destConn := asset.DestinationResource
 
 		sql := completenessSQL(asset.Name, grain, comp)
 
 		node := graph.AssetInput{
 			Name:                  fmt.Sprintf("check:%s:default:completeness", asset.Name),
 			Type:                  "sql_check",
-			DestinationConnection: destConn,
+			DestinationResource: destConn,
 			SourceAsset:           asset.Name,
 			InlineSQL:             sql,
 			Blocking:              asset.DefaultChecksBlocking,

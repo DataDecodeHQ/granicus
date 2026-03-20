@@ -107,12 +107,12 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 	}
 	if asset.ResolvedDestConn != nil {
 		if data, err := json.Marshal(asset.ResolvedDestConn); err == nil {
-			env["GRANICUS_DEST_CONNECTION"] = string(data)
+			env["GRANICUS_DEST_RESOURCE"] = string(data)
 		}
 	}
 	if asset.ResolvedSourceConn != nil {
 		if data, err := json.Marshal(asset.ResolvedSourceConn); err == nil {
-			env["GRANICUS_SOURCE_CONNECTION"] = string(data)
+			env["GRANICUS_SOURCE_RESOURCE"] = string(data)
 		}
 	}
 

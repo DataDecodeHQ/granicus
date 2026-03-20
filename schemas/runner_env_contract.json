@@ -36,15 +36,15 @@
       "format": "date-time",
       "description": "ISO 8601 datetime marking the end of the execution interval. Present only for scheduled runs."
     },
-    "GRANICUS_DEST_CONNECTION": {
+    "GRANICUS_DEST_RESOURCE": {
       "type": "string",
-      "description": "JSON-encoded destination connection object. Must parse to a valid connection shape.",
+      "description": "JSON-encoded destination resource object. Must parse to a valid connection shape.",
       "contentMediaType": "application/json",
       "contentSchema": { "$ref": "#/$defs/connection" }
     },
-    "GRANICUS_SOURCE_CONNECTION": {
+    "GRANICUS_SOURCE_RESOURCE": {
       "type": "string",
-      "description": "JSON-encoded source connection object. Must parse to a valid connection shape.",
+      "description": "JSON-encoded source resource object. Must parse to a valid connection shape.",
       "contentMediaType": "application/json",
       "contentSchema": { "$ref": "#/$defs/connection" }
     },

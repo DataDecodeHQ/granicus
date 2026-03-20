@@ -39,7 +39,7 @@ func DuckDBAssemblyHook() PostRunHook {
 		}
 
 		scriptPath := filepath.Join(projectRoot, "python", "build_dashboard_duckdb.py")
-		conn := cfg.Connections["gcs_dashboard"]
+		conn := cfg.Resources["gcs_dashboard"]
 		if conn == nil {
 			return fmt.Errorf("DuckDB assembly: gcs_dashboard connection not found")
 		}

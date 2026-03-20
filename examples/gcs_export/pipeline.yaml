@@ -1,7 +1,7 @@
 pipeline: gcs_export_example
 max_parallel: 2
 
-connections:
+resources:
   bq:
     type: bigquery
     project: my-gcp-project
@@ -18,12 +18,12 @@ assets:
   - name: export_daily_orders
     type: gcs_export
     source: scripts/export_orders.sh
-    source_connection: gcs_output
+    source_resource: gcs_output
     depends_on:
       - stg_orders
 
   - name: stg_orders
     type: sql
     source: sql/stg_orders.sql
-    destination_connection: bq
+    destination_resource: bq
     layer: staging

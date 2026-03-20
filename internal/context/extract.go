@@ -82,8 +82,8 @@ func datasetForGraphAsset(asset *graph.Asset, cfg *config.PipelineConfig) string
 		return ""
 	}
 	defaultDS := ""
-	if ac.DestinationConnection != "" {
-		if conn, ok := cfg.Connections[ac.DestinationConnection]; ok {
+	if ac.DestinationResource != "" {
+		if conn, ok := cfg.Resources[ac.DestinationResource]; ok {
 			defaultDS = conn.Properties["dataset"]
 		}
 	}

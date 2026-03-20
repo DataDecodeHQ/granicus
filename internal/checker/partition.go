@@ -33,7 +33,7 @@ func (m PartitionMismatch) String() string {
 func ValidatePartitions(cfg *config.PipelineConfig, provider TableMetadataProvider) []PartitionMismatch {
 	var mismatches []PartitionMismatch
 
-	conn := cfg.Connections[cfg.Assets[0].DestinationConnection]
+	conn := cfg.Resources[cfg.Assets[0].DestinationResource]
 	if conn == nil {
 		return nil
 	}
@@ -48,11 +48,11 @@ func ValidatePartitions(cfg *config.PipelineConfig, provider TableMetadataProvid
 			continue
 		}
 
-		destConn := asset.DestinationConnection
+		destConn := asset.DestinationResource
 		if destConn == "" {
 			continue
 		}
-		c := cfg.Connections[destConn]
+		c := cfg.Resources[destConn]
 		if c == nil {
 			continue
 		}

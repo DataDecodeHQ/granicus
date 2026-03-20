@@ -31,7 +31,7 @@ func minimalPipelineConfig() *config.PipelineConfig {
 		Pipeline:    "test_pipeline",
 		MaxParallel: 2,
 		Prefix:      "dev",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq_main": {
 				Name: "bq_main",
 				Type: "bigquery",
@@ -59,14 +59,14 @@ func minimalPipelineConfig() *config.PipelineConfig {
 				Type:                  "sql",
 				Source:                "models/stg_orders.sql",
 				Layer:                 "staging",
-				DestinationConnection: "bq_main",
+				DestinationResource: "bq_main",
 			},
 			{
 				Name:                  "int_orders",
 				Type:                  "sql",
 				Source:                "models/int_orders.sql",
 				Layer:                 "intermediate",
-				DestinationConnection: "bq_raw",
+				DestinationResource: "bq_raw",
 			},
 			{
 				Name:   "rpt_orders",
@@ -124,7 +124,7 @@ func TestNodeRunner_FindAssetConfig_ReturnsCorrectElement(t *testing.T) {
 
 // ---- connectionForAsset tests ----
 
-func TestNodeRunner_ConnectionForAsset_WithDestinationConnection(t *testing.T) {
+func TestNodeRunner_ConnectionForAsset_WithDestinationResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	asset := findAssetConfig(cfg, "stg_orders")
 	if asset == nil {
@@ -139,7 +139,7 @@ func TestNodeRunner_ConnectionForAsset_WithDestinationConnection(t *testing.T) {
 	}
 }
 
-func TestNodeRunner_ConnectionForAsset_NoDestinationConnection(t *testing.T) {
+func TestNodeRunner_ConnectionForAsset_NoDestinationResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	asset := findAssetConfig(cfg, "no_connection_asset")
 	if asset == nil {
@@ -147,7 +147,7 @@ func TestNodeRunner_ConnectionForAsset_NoDestinationConnection(t *testing.T) {
 	}
 	conn := connectionForAsset(cfg, asset)
 	if conn != nil {
-		t.Errorf("expected nil for asset without destination_connection, got %+v", conn)
+		t.Errorf("expected nil for asset without destination_resource, got %+v", conn)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestNodeRunner_ConnectionForAsset_UnknownConnectionName(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	asset := &config.AssetConfig{
 		Name:                  "orphan",
-		DestinationConnection: "does_not_exist",
+		DestinationResource: "does_not_exist",
 	}
 	conn := connectionForAsset(cfg, asset)
 	if conn != nil {
@@ -165,7 +165,7 @@ func TestNodeRunner_ConnectionForAsset_UnknownConnectionName(t *testing.T) {
 
 // ---- resolveAssetRuntime tests ----
 
-func TestResolveAssetRuntime_DatasetFromDestinationConnection(t *testing.T) {
+func TestResolveAssetRuntime_DatasetFromDestinationResource(t *testing.T) {
 	cfg := minimalPipelineConfig()
 	dataset, _, _ := resolveAssetRuntime(cfg, "stg_orders")
 	// stg_orders: dest_conn=bq_main → dataset=main_dataset
@@ -210,9 +210,9 @@ func TestResolveAssetRuntime_UnknownAssetReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestResolveAssetRuntime_DestAndSourceConnections(t *testing.T) {
+func TestResolveAssetRuntime_DestAndSourceResources(t *testing.T) {
 	cfg := &config.PipelineConfig{
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq_dest": {
 				Name: "bq_dest",
 				Type: "bigquery",
@@ -228,8 +228,8 @@ func TestResolveAssetRuntime_DestAndSourceConnections(t *testing.T) {
 			{
 				Name:                  "my_asset",
 				Type:                  "python",
-				DestinationConnection: "bq_dest",
-				SourceConnection:      "bq_src",
+				DestinationResource: "bq_dest",
+				SourceResource:      "bq_src",
 			},
 		},
 	}
@@ -250,12 +250,12 @@ func TestResolveAssetRuntime_DestAndSourceConnections(t *testing.T) {
 
 func TestResolveAssetRuntime_MissingConnectionsResolveToNil(t *testing.T) {
 	cfg := &config.PipelineConfig{
-		Connections: map[string]*config.ConnectionConfig{},
+		Resources: map[string]*config.ResourceConfig{},
 		Assets: []config.AssetConfig{
 			{
 				Name:                  "asset_a",
-				DestinationConnection: "missing_conn",
-				SourceConnection:      "also_missing",
+				DestinationResource: "missing_conn",
+				SourceResource:      "also_missing",
 			},
 		},
 	}
@@ -297,15 +297,15 @@ func buildRunnerAsset(graphAsset *graph.Asset, cfg *config.PipelineConfig) *runn
 		resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
 	}
 
-	var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
+	var resolvedDestConn, resolvedSourceConn *config.ResourceConfig
 	if assetCfg != nil {
-		if assetCfg.DestinationConnection != "" {
-			if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
+		if assetCfg.DestinationResource != "" {
+			if conn, ok := cfg.Resources[assetCfg.DestinationResource]; ok {
 				resolvedDestConn = conn
 			}
 		}
-		if assetCfg.SourceConnection != "" {
-			if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
+		if assetCfg.SourceResource != "" {
+			if conn, ok := cfg.Resources[assetCfg.SourceResource]; ok {
 				resolvedSourceConn = conn
 			}
 		}
@@ -315,8 +315,8 @@ func buildRunnerAsset(graphAsset *graph.Asset, cfg *config.PipelineConfig) *runn
 		Name:                  graphAsset.Name,
 		Type:                  graphAsset.Type,
 		Source:                graphAsset.Source,
-		DestinationConnection: graphAsset.DestinationConnection,
-		SourceConnection:      graphAsset.SourceConnection,
+		DestinationResource: graphAsset.DestinationResource,
+		SourceResource:      graphAsset.SourceResource,
 		IntervalStart:         graphAsset.IntervalStart,
 		IntervalEnd:           graphAsset.IntervalEnd,
 		Prefix:                cfg.Prefix,
@@ -336,7 +336,7 @@ func TestNodeRunner_RunnerAsset_DatasetResolvedViaDestConnection(t *testing.T) {
 		Name:                  "stg_orders",
 		Type:                  "sql",
 		Source:                "models/stg_orders.sql",
-		DestinationConnection: "bq_main",
+		DestinationResource: "bq_main",
 		Layer:                 "staging",
 	}
 
@@ -352,7 +352,7 @@ func TestNodeRunner_RunnerAsset_DatasetResolvedViaDestConnection(t *testing.T) {
 		t.Error("expected non-nil ResolvedDestConn")
 	}
 	if ra.ResolvedSourceConn != nil {
-		t.Error("expected nil ResolvedSourceConn (no source_connection set)")
+		t.Error("expected nil ResolvedSourceConn (no source_resource set)")
 	}
 }
 

@@ -52,7 +52,7 @@ func GenerateStandardsCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput
 				nodes = append(nodes, graph.AssetInput{
 					Name:                  nodeName,
 					Type:                  "sql_check",
-					DestinationConnection: asset.DestinationConnection,
+					DestinationResource: asset.DestinationResource,
 					SourceAsset:           asset.Name,
 					InlineSQL:             sql,
 					Blocking:              blocking,

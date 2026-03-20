@@ -25,8 +25,8 @@ func GenerateCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[str
 				Name:                  name,
 				Type:                  checkType,
 				Source:                check.Source,
-				DestinationConnection: asset.DestinationConnection,
-				SourceConnection:      asset.SourceConnection,
+				DestinationResource: asset.DestinationResource,
+				SourceResource:      asset.SourceResource,
 				Blocking:              check.Blocking,
 				Severity:              check.Severity,
 			})

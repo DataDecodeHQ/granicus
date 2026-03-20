@@ -16,7 +16,7 @@ func TestGenerateFKCheckNodes_SingleFK(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				ForeignKeys: []config.ForeignKeyConfig{
 					{Column: "account_id", References: "stg_accounts.account_id"},
 				},
@@ -52,8 +52,8 @@ func TestGenerateFKCheckNodes_SingleFK(t *testing.T) {
 		if n.InlineSQL == "" {
 			t.Errorf("expected InlineSQL for %s", n.Name)
 		}
-		if n.DestinationConnection != "bq" {
-			t.Errorf("expected DestinationConnection bq, got %q for %s", n.DestinationConnection, n.Name)
+		if n.DestinationResource != "bq" {
+			t.Errorf("expected DestinationResource bq, got %q for %s", n.DestinationResource, n.Name)
 		}
 		if n.SourceAsset != "stg_orders" {
 			t.Errorf("expected SourceAsset stg_orders, got %q for %s", n.SourceAsset, n.Name)
@@ -100,7 +100,7 @@ func TestGenerateFKCheckNodes_MultipleFKs(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				ForeignKeys: []config.ForeignKeyConfig{
 					{Column: "account_id", References: "stg_accounts.account_id"},
 					{Column: "product_id", References: "stg_products.product_id"},
@@ -150,7 +150,7 @@ func TestGenerateFKCheckNodes_NullableFK(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				ForeignKeys: []config.ForeignKeyConfig{
 					{Column: "account_id", References: "stg_accounts.account_id", Nullable: true},
 				},
@@ -188,7 +188,7 @@ func TestGenerateFKCheckNodes_NoFKs(t *testing.T) {
 				Type:                  "sql",
 				Layer:                 "staging",
 				Grain:                 "order_id",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 			},
 			{
 				Name:  "raw_data",

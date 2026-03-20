@@ -181,12 +181,12 @@ func findAssetConfig(cfg *config.PipelineConfig, name string) *config.AssetConfi
 }
 
 // connectionForAsset returns the destination connection config for an asset, or nil.
-func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *config.ConnectionConfig {
-	connName := asset.DestinationConnection
+func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *config.ResourceConfig {
+	connName := asset.DestinationResource
 	if connName == "" {
 		return nil
 	}
-	if conn, ok := cfg.Connections[connName]; ok {
+	if conn, ok := cfg.Resources[connName]; ok {
 		return conn
 	}
 	return nil
@@ -194,7 +194,7 @@ func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *
 
 // resolveAssetRuntime resolves the dataset, destination connection, and source connection
 // for the named asset using layer routing and connection lookups from cfg.
-func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset string, destConn, sourceConn *config.ConnectionConfig) {
+func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset string, destConn, sourceConn *config.ResourceConfig) {
 	assetCfg := findAssetConfig(cfg, assetName)
 	if assetCfg == nil {
 		return "", nil, nil
@@ -204,13 +204,13 @@ func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset 
 		defaultDS = conn.Properties["dataset"]
 	}
 	dataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
-	if assetCfg.DestinationConnection != "" {
-		if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
+	if assetCfg.DestinationResource != "" {
+		if conn, ok := cfg.Resources[assetCfg.DestinationResource]; ok {
 			destConn = conn
 		}
 	}
-	if assetCfg.SourceConnection != "" {
-		if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
+	if assetCfg.SourceResource != "" {
+		if conn, ok := cfg.Resources[assetCfg.SourceResource]; ok {
 			sourceConn = conn
 		}
 	}

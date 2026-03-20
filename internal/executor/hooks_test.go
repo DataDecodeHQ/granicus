@@ -17,15 +17,15 @@ func testHookGraph(t *testing.T) (*graph.Graph, *config.PipelineConfig) {
 	t.Helper()
 	cfg := &config.PipelineConfig{
 		Pipeline: "test_pipe",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq": {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "dev_analytics"}},
 		},
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationConnection: "bq", Layer: "staging"},
+			{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationResource: "bq", Layer: "staging"},
 		},
 	}
 	inputs := []graph.AssetInput{
-		{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationConnection: "bq", Layer: "staging"},
+		{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationResource: "bq", Layer: "staging"},
 	}
 	g, err := graph.BuildGraph(inputs, nil)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestDuckDBAssemblyHook_ResolvesRelativeCredPath(t *testing.T) {
 	projectRoot := t.TempDir()
 	cfg := &config.PipelineConfig{
 		Pipeline: "test_pipe",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"gcs_dashboard": {
 				Name: "gcs_dashboard",
 				Type: "gcs",

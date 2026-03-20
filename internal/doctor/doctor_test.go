@@ -110,7 +110,7 @@ func TestCheckDiskSpace_Valid(t *testing.T) {
 }
 
 func TestCheckGCSConfig_MissingBucket(t *testing.T) {
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type:       "gcs",
 		Properties: map[string]string{},
 	}
@@ -129,7 +129,7 @@ func TestCheckGCSConfig_MissingBucket(t *testing.T) {
 }
 
 func TestCheckGCSConfig_MissingCredentials(t *testing.T) {
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type: "gcs",
 		Properties: map[string]string{
 			"bucket":      "my-bucket",
@@ -154,7 +154,7 @@ func TestCheckGCSConfig_ValidBucketADC(t *testing.T) {
 	// No credentials property — falls back to ADC. Should pass without hitting GCP.
 	t.Setenv("GCS_SERVICE_ACCOUNT", "")
 
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type: "gcs",
 		Properties: map[string]string{
 			"bucket": "my-bucket",
@@ -175,7 +175,7 @@ func TestCheckGCSConfig_ValidBucketADC(t *testing.T) {
 }
 
 func TestCheckBQConnectivity_MissingProject(t *testing.T) {
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type:       "bigquery",
 		Properties: map[string]string{},
 	}
@@ -189,7 +189,7 @@ func TestCheckBQConnectivity_MissingProject(t *testing.T) {
 }
 
 func TestCheckBQConnectivity_InvalidCredentialsFile(t *testing.T) {
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type: "bigquery",
 		Properties: map[string]string{
 			"project":     "test-project",
@@ -205,7 +205,7 @@ func TestCheckBQConnectivity_InvalidCredentialsFile(t *testing.T) {
 func TestCheckBQConnectivity_ErrorWithoutCredentials(t *testing.T) {
 	// With a real project but no valid credentials, the check should fail
 	// at credential resolution or BQ client creation.
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type: "bigquery",
 		Properties: map[string]string{
 			"project": "nonexistent-project-12345",
@@ -220,7 +220,7 @@ func TestCheckBQConnectivity_ErrorWithoutCredentials(t *testing.T) {
 
 func TestCheckGCSConfig_EnvServiceAccountMissing(t *testing.T) {
 	t.Setenv("GCS_SERVICE_ACCOUNT", "/nonexistent/service-account.json")
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type: "gcs",
 		Properties: map[string]string{
 			"bucket": "test-bucket",
@@ -240,7 +240,7 @@ func TestCheckGCSConfig_ValidCredentialsFile(t *testing.T) {
 	credPath := filepath.Join(dir, "creds.json")
 	os.WriteFile(credPath, []byte(`{"type":"service_account"}`), 0644)
 
-	conn := &config.ConnectionConfig{
+	conn := &config.ResourceConfig{
 		Type: "gcs",
 		Properties: map[string]string{
 			"bucket":      "test-bucket",
@@ -302,7 +302,7 @@ func TestRunChecks_WithConfig(t *testing.T) {
 
 	cfg := &config.PipelineConfig{
 		Pipeline: "test_pipeline",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq_conn": {
 				Type: "bigquery",
 				Properties: map[string]string{
@@ -344,7 +344,7 @@ func TestRunChecks_MultipleGCSConnections(t *testing.T) {
 
 	cfg := &config.PipelineConfig{
 		Pipeline: "test_pipeline",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"gcs_a": {
 				Type:       "gcs",
 				Properties: map[string]string{"bucket": "bucket-a"},
@@ -376,7 +376,7 @@ func TestRunChecks_EmptyConnections(t *testing.T) {
 
 	cfg := &config.PipelineConfig{
 		Pipeline:    "test_pipeline",
-		Connections: map[string]*config.ConnectionConfig{},
+		Resources: map[string]*config.ResourceConfig{},
 	}
 
 	results := RunChecks(cfg, dir)

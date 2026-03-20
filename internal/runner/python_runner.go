@@ -16,19 +16,19 @@ import (
 
 type PythonRunner struct {
 	Timeout               time.Duration
-	DestinationConnection *config.ConnectionConfig
-	SourceConnection      *config.ConnectionConfig
+	DestinationResource *config.ResourceConfig
+	SourceResource      *config.ResourceConfig
 	EventStore            *events.Store
 	Pipeline              string
 	RefFunc               func(string) (string, error)
 }
 
 // NewPythonRunner creates a PythonRunner with the given connections, event store, and pipeline name.
-func NewPythonRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *PythonRunner {
+func NewPythonRunner(destConn, srcConn *config.ResourceConfig, eventStore *events.Store, pipeline string) *PythonRunner {
 	return &PythonRunner{
 		Timeout:               DefaultTimeout,
-		DestinationConnection: destConn,
-		SourceConnection:      srcConn,
+		DestinationResource: destConn,
+		SourceResource:      srcConn,
 		EventStore:            eventStore,
 		Pipeline:              pipeline,
 	}
@@ -52,11 +52,11 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 	metadataFile.Close()
 	defer os.Remove(metadataPath)
 
-	destConn := r.DestinationConnection
+	destConn := r.DestinationResource
 	if destConn == nil {
 		destConn = asset.ResolvedDestConn
 	}
-	srcConn := r.SourceConnection
+	srcConn := r.SourceResource
 	if srcConn == nil {
 		srcConn = asset.ResolvedSourceConn
 	}
@@ -167,7 +167,8 @@ func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, do
 }
 
 // validateEnv checks the subprocess env slice against the runner contract.
-// Returns a combined error for any violations.
+// Returns a combined error for any violations. Fail-fast: any contract
+// violation prevents subprocess launch.
 func validateEnv(env []string, assetName, runID string) error {
 	vars := make(map[string]string, len(env))
 	for _, e := range env {
@@ -185,11 +186,28 @@ func validateEnv(env []string, assetName, runID string) error {
 		}
 	}
 
-	for _, key := range []string{"GRANICUS_DEST_CONNECTION", "GRANICUS_SOURCE_CONNECTION"} {
+	// Validate interval format: must be ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ)
+	for _, key := range []string{"GRANICUS_INTERVAL_START", "GRANICUS_INTERVAL_END"} {
+		if val, ok := vars[key]; ok && val != "" {
+			if _, err := time.Parse("2006-01-02T15:04:05Z", val); err != nil {
+				errs = append(errs, fmt.Errorf("%s must be ISO 8601 datetime (YYYY-MM-DDTHH:MM:SSZ), got %q", key, val))
+			}
+		}
+	}
+
+	// Validate resource JSON and required fields (name, type)
+	for _, key := range []string{"GRANICUS_DEST_RESOURCE", "GRANICUS_SOURCE_RESOURCE"} {
 		if val, ok := vars[key]; ok {
 			var parsed map[string]string
 			if err := json.Unmarshal([]byte(val), &parsed); err != nil {
 				errs = append(errs, fmt.Errorf("invalid JSON in %s: %w", key, err))
+				continue
+			}
+			if parsed["name"] == "" {
+				errs = append(errs, fmt.Errorf("%s missing required field 'name'", key))
+			}
+			if parsed["type"] == "" {
+				errs = append(errs, fmt.Errorf("%s missing required field 'type'", key))
 			}
 		}
 	}

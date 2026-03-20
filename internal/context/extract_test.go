@@ -11,7 +11,7 @@ func testGraph(t *testing.T) (*graph.Graph, *config.PipelineConfig) {
 	t.Helper()
 	cfg := &config.PipelineConfig{
 		Pipeline: "test",
-		Connections: map[string]*config.ConnectionConfig{
+		Resources: map[string]*config.ResourceConfig{
 			"bq": {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "dev_analytics"}},
 		},
 		Datasets: map[string]string{
@@ -19,14 +19,14 @@ func testGraph(t *testing.T) (*graph.Graph, *config.PipelineConfig) {
 			"intermediate": "dev_analytics",
 		},
 		Assets: []config.AssetConfig{
-			{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationConnection: "bq", Layer: "staging"},
-			{Name: "int_orders", Type: "sql", Source: "models/int_orders.sql", DestinationConnection: "bq", Layer: "intermediate"},
+			{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationResource: "bq", Layer: "staging"},
+			{Name: "int_orders", Type: "sql", Source: "models/int_orders.sql", DestinationResource: "bq", Layer: "intermediate"},
 		},
 	}
 
 	inputs := []graph.AssetInput{
-		{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationConnection: "bq", Layer: "staging"},
-		{Name: "int_orders", Type: "sql", Source: "models/int_orders.sql", DestinationConnection: "bq", Layer: "intermediate"},
+		{Name: "stg_orders", Type: "sql", Source: "models/stg_orders.sql", DestinationResource: "bq", Layer: "staging"},
+		{Name: "int_orders", Type: "sql", Source: "models/int_orders.sql", DestinationResource: "bq", Layer: "intermediate"},
 		{Name: "check:int_orders_pk", Type: "sql_check", InlineSQL: "SELECT 1", Blocking: true},
 	}
 	deps := map[string][]string{

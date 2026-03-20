@@ -30,8 +30,8 @@ func BuildGraph(assets []AssetInput, deps map[string][]string) (*Graph, error) {
 			Name:                  a.Name,
 			Type:                  a.Type,
 			Source:                a.Source,
-			DestinationConnection: a.DestinationConnection,
-			SourceConnection:      a.SourceConnection,
+			DestinationResource: a.DestinationResource,
+			SourceResource:      a.SourceResource,
 			TimeColumn:            a.TimeColumn,
 			IntervalUnit:          a.IntervalUnit,
 			Lookback:              a.Lookback,
@@ -85,8 +85,8 @@ type AssetInput struct {
 	MaxAttempts           int
 	BackoffBase           time.Duration
 	RetryableErrors       []string
-	DestinationConnection string
-	SourceConnection      string
+	DestinationResource string
+	SourceResource      string
 	TimeColumn            string
 	IntervalUnit          string
 	Lookback              int

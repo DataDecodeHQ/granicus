@@ -22,7 +22,7 @@ func newPushCmd() *cobra.Command {
 		Use:   "push <directory>",
 		Short: "Package and upload a pipeline version",
 		Args:  cobra.ExactArgs(1),
-		RunE:  runPush,
+		RunE:  cloudGate(runPush),
 	}
 	cmd.Flags().String("pipeline", "", "Pipeline name (default: inferred from pipeline.yaml)")
 	cmd.Flags().Bool("activate", false, "Activate this version after push")
@@ -79,7 +79,7 @@ func newActivateCmd() *cobra.Command {
 		Use:   "activate <pipeline> <version>",
 		Short: "Set the active version for a pipeline",
 		Args:  cobra.ExactArgs(2),
-		RunE:  runActivate,
+		RunE:  cloudGate(runActivate),
 	}
 	cmd.Flags().Bool("json", false, "JSON output")
 	return cmd
@@ -112,7 +112,7 @@ func newVersionsCmd() *cobra.Command {
 		Use:   "versions <pipeline>",
 		Short: "List all versions of a pipeline",
 		Args:  cobra.ExactArgs(1),
-		RunE:  runVersions,
+		RunE:  cloudGate(runVersions),
 	}
 	cmd.Flags().Bool("json", false, "JSON output")
 	return cmd
@@ -156,7 +156,7 @@ func newDiffCmd() *cobra.Command {
 		Use:   "diff <pipeline> <versionA> <versionB>",
 		Short: "Show file-level diff between two versions",
 		Args:  cobra.ExactArgs(3),
-		RunE:  runDiff,
+		RunE:  cloudGate(runDiff),
 	}
 	cmd.Flags().Bool("json", false, "JSON output")
 	return cmd
@@ -206,7 +206,7 @@ func newHistoryCmd2() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cloud-history",
 		Short: "Show pipeline run history from Firestore",
-		RunE:  runHistory2,
+		RunE:  cloudGate(runHistory2),
 	}
 	cmd.Flags().String("pipeline", "", "Filter by pipeline name (required)")
 	cmd.Flags().String("since", "7d", "Show runs since (e.g. 7d, 24h)")
@@ -261,7 +261,7 @@ func newEventsCmd2() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cloud-events",
 		Short: "Show run events from Firestore",
-		RunE:  runEvents2,
+		RunE:  cloudGate(runEvents2),
 	}
 	cmd.Flags().String("run-id", "", "Run ID (required)")
 	cmd.Flags().String("type", "", "Filter by event type (comma-separated)")
@@ -316,7 +316,7 @@ func newFailuresCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "failures",
 		Short: "Show recent failures across pipelines",
-		RunE:  runFailures,
+		RunE:  cloudGate(runFailures),
 	}
 	cmd.Flags().String("pipeline", "", "Filter by pipeline name")
 	cmd.Flags().String("since", "7d", "Show failures since")
@@ -391,7 +391,7 @@ func newStatsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Show node reliability statistics",
-		RunE:  runStats,
+		RunE:  cloudGate(runStats),
 	}
 	cmd.Flags().String("node", "", "Node name (required)")
 	cmd.Flags().String("pipeline", "", "Pipeline name (required)")
@@ -486,7 +486,7 @@ func newCloudStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cloud-status",
 		Short: "Show current running pipelines",
-		RunE:  runCloudStatus,
+		RunE:  cloudGate(runCloudStatus),
 	}
 	cmd.Flags().Bool("json", false, "JSON output")
 	return cmd
@@ -530,7 +530,7 @@ func newIntervalsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "intervals",
 		Short: "Show interval state for a pipeline asset",
-		RunE:  runIntervals,
+		RunE:  cloudGate(runIntervals),
 	}
 	cmd.Flags().String("pipeline", "", "Pipeline name (required)")
 	cmd.Flags().String("asset", "", "Asset name (required)")

@@ -297,7 +297,7 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 }
 
 func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.RunnerRegistry {
-	reg := runner.NewRunnerRegistry(cfg.Connections)
+	reg := runner.NewRunnerRegistry(cfg.Resources)
 
 	// Load template functions
 	funcMap := runner.BuiltinFuncMap()
@@ -316,8 +316,8 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 
 	// Build ref() function with pipeline context
 	defaultDS := ""
-	if cfg.Connections != nil {
-		for _, conn := range cfg.Connections {
+	if cfg.Resources != nil {
+		for _, conn := range cfg.Resources {
 			if conn.Type == "bigquery" {
 				defaultDS = conn.Properties["dataset"]
 				break
@@ -343,16 +343,16 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 		resolvedSources := make(map[string]runner.ResolvedSource, len(cfg.Sources))
 		for name, src := range cfg.Sources {
 			rs := runner.ResolvedSource{Identifier: src.Identifier}
-			if src.Connection != "" {
-				if conn, ok := cfg.Connections[src.Connection]; ok {
-					rs.ConnectionType = conn.Type
+			if src.Resource != "" {
+				if conn, ok := cfg.Resources[src.Resource]; ok {
+					rs.ResourceType = conn.Type
 					rs.Project = conn.Properties["project"]
 				}
 			} else {
 				// Default to first bigquery connection
-				for _, conn := range cfg.Connections {
+				for _, conn := range cfg.Resources {
 					if conn.Type == "bigquery" {
-						rs.ConnectionType = "bigquery"
+						rs.ResourceType = "bigquery"
 						rs.Project = conn.Properties["project"]
 						break
 					}
@@ -365,8 +365,8 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 	}
 
 	// Register runners per connection type
-	if cfg.Connections != nil {
-		for _, conn := range cfg.Connections {
+	if cfg.Resources != nil {
+		for _, conn := range cfg.Resources {
 			switch conn.Type {
 			case "bigquery":
 				sqlR := runner.NewSQLRunner(conn)
@@ -528,6 +528,27 @@ func runDryRun(g *graph.Graph, cfg *config.PipelineConfig, assetFilter []string,
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
+	if isCloudMode() {
+		// In cloud mode, delegate to trigger API
+		pipeline := args[0]
+		body := map[string]any{}
+		if assets, _ := cmd.Flags().GetString("assets"); assets != "" {
+			body["assets"] = strings.Split(assets, ",")
+		}
+		if fromDate, _ := cmd.Flags().GetString("from-date"); fromDate != "" {
+			body["from_date"] = fromDate
+		}
+		if toDate, _ := cmd.Flags().GetString("to-date"); toDate != "" {
+			body["to_date"] = toDate
+		}
+		data, err := cloudPost("/api/v1/trigger/"+pipeline, body)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
 	assetsFlag, _ := cmd.Flags().GetString("assets")
@@ -646,7 +667,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	// Test mode: create temporary dataset and override connection properties
 	if testMode {
-		for _, conn := range cfg.Connections {
+		for _, conn := range cfg.Resources {
 			if conn.Type == "bigquery" {
 				baseDataset := conn.Properties["dataset"]
 				testDatasetName := testmode.TestDatasetName(baseDataset, runID)
@@ -848,6 +869,16 @@ func buildRunJSON(runID, pipeline, status string, durationSeconds float64, succe
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
+	if isCloudMode() {
+		pipeline := args[0]
+		data, err := cloudPost("/api/v1/pipelines/"+pipeline+"/validate", nil)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	strict, _ := cmd.Flags().GetBool("strict")
 	asJSON, _ := cmd.Flags().GetBool("json")
@@ -1092,6 +1123,18 @@ func outputValidateJSON(cfg *config.PipelineConfig, results []validate.Validatio
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	if isCloudMode() {
+		if len(args) == 0 {
+			return fmt.Errorf("run_id is required in cloud mode")
+		}
+		data, err := cloudGet("/api/v1/status/" + args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	outputFormat, _ := cmd.Flags().GetString("output")
 	outputJSON := outputFormat == "json"
@@ -1198,6 +1241,15 @@ type jsonHistoryCostOutput struct {
 }
 
 func runHistory(cmd *cobra.Command, args []string) error {
+	if isCloudMode() {
+		data, err := cloudGet("/api/v1/pipelines/_all/runs")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	limit, _ := cmd.Flags().GetInt("limit")
 	outputFormat, _ := cmd.Flags().GetString("output")
@@ -1643,7 +1695,7 @@ func buildPoolManager(cfg *config.PipelineConfig) (*pool.PoolManager, map[string
 
 	assetPools := make(map[string]string, len(cfg.Assets))
 	for _, a := range cfg.Assets {
-		if p := config.ResolveAssetPool(a, cfg.Pools, cfg.Connections); p != "" {
+		if p := config.ResolveAssetPool(a, cfg.Pools, cfg.Resources); p != "" {
 			assetPools[a.Name] = p
 		}
 	}
@@ -1732,7 +1784,7 @@ func monitorHook(bqClient *bigquery.Client) executor.PostRunHook {
 }
 
 func primaryBQProjectDataset(cfg *config.PipelineConfig) (string, string) {
-	for _, conn := range cfg.Connections {
+	for _, conn := range cfg.Resources {
 		if conn.Type == "bigquery" {
 			return conn.Properties["project"], conn.Properties["dataset"]
 		}
@@ -1741,7 +1793,7 @@ func primaryBQProjectDataset(cfg *config.PipelineConfig) (string, string) {
 }
 
 func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
-	for _, conn := range cfg.Connections {
+	for _, conn := range cfg.Resources {
 		if conn.Type != "bigquery" {
 			continue
 		}
@@ -1780,7 +1832,7 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 	type dsKey struct{ project, dataset, creds string }
 	seen := map[dsKey]bool{}
 
-	for _, conn := range cfg.Connections {
+	for _, conn := range cfg.Resources {
 		if conn.Type != "bigquery" {
 			continue
 		}

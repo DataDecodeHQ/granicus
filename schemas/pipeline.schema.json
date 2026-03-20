@@ -25,11 +25,11 @@
       "type": "string",
       "description": "Directory containing shared SQL functions/macros available to all SQL assets."
     },
-    "connections": {
+    "resources": {
       "type": "object",
-      "description": "Named connections to external systems. Each key is the connection name.",
+      "description": "Named resources (external system connections). Each key is the resource name.",
       "additionalProperties": {
-        "$ref": "#/definitions/connection"
+        "$ref": "#/definitions/resource"
       }
     },
     "datasets": {
@@ -69,14 +69,14 @@
       "description": "Go duration string (e.g. '30s', '5m', '2h', '24h').",
       "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
     },
-    "connection": {
+    "resource": {
       "type": "object",
-      "description": "Connection to an external data system.",
+      "description": "Resource definition for an external data system.",
       "required": ["type"],
       "properties": {
         "type": {
           "type": "string",
-          "description": "Connection backend type.",
+          "description": "Resource backend type.",
           "enum": ["bigquery", "postgres", "mysql", "snowflake", "gcs"]
         }
       },
@@ -173,19 +173,19 @@
       ],
       "additionalProperties": {
         "type": "string",
-        "description": "Additional connection properties passed through to the driver."
+        "description": "Additional resource properties passed through to the driver."
       }
     },
     "source": {
       "type": "object",
       "description": "An external source table with optional data contract.",
-      "required": ["connection", "identifier"],
+      "required": ["resource", "identifier"],
       "additionalProperties": false,
       "properties": {
-        "connection": {
+        "resource": {
           "type": "string",
           "minLength": 1,
-          "description": "Name of a connection defined in the connections block."
+          "description": "Name of a resource defined in the resources block."
         },
         "identifier": {
           "type": "string",
@@ -407,13 +407,13 @@
           "minLength": 1,
           "description": "Path to the SQL file, Python file, or shell script relative to the pipeline root."
         },
-        "destination_connection": {
+        "destination_resource": {
           "type": "string",
-          "description": "Connection name where this asset writes its output. Required for sql assets."
+          "description": "Resource name where this asset writes its output. Required for sql assets."
         },
-        "source_connection": {
+        "source_resource": {
           "type": "string",
-          "description": "Connection name for reading source data (used by dlt and some python assets)."
+          "description": "Resource name for reading source data (used by dlt and some python assets)."
         },
         "layer": {
           "type": "string",

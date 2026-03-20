@@ -31,7 +31,7 @@ type CompletenessConfig struct {
 	KnownExclusions []string                `yaml:"known_exclusions,omitempty"`
 }
 
-type ConnectionConfig struct {
+type ResourceConfig struct {
 	Name        string            `yaml:"-"`
 	Type        string            `yaml:"type"`
 	Credentials string            `yaml:"credentials"`
@@ -63,8 +63,8 @@ type AssetConfig struct {
 	Name                  string              `yaml:"name"`
 	Type                  string              `yaml:"type"`
 	Source                string              `yaml:"source"`
-	DestinationConnection string              `yaml:"destination_connection,omitempty"`
-	SourceConnection      string              `yaml:"source_connection,omitempty"`
+	DestinationResource string              `yaml:"destination_resource,omitempty"`
+	SourceResource      string              `yaml:"source_resource,omitempty"`
 	Checks                []CheckConfig       `yaml:"checks,omitempty"`
 	Pool                  string              `yaml:"pool,omitempty"`
 	Layer                 string              `yaml:"layer,omitempty"`
@@ -173,7 +173,7 @@ func (r *AlertRoutingConfig) Resolve(severity string) *AlertSeverityConfig {
 }
 
 type SourceConfig struct {
-	Connection      string   `yaml:"connection"`
+	Resource        string   `yaml:"resource"`
 	Identifier      string   `yaml:"identifier"`
 	Tables          []string `yaml:"tables,omitempty"`
 	PrimaryKey      string   `yaml:"primary_key,omitempty"`
@@ -191,7 +191,7 @@ type PipelineConfig struct {
 	Pipeline     string                       `yaml:"pipeline"`
 	Schedule     string                       `yaml:"schedule,omitempty"`
 	MaxParallel  int                          `yaml:"max_parallel"`
-	Connections  map[string]*ConnectionConfig `yaml:"connections,omitempty"`
+	Resources    map[string]*ResourceConfig `yaml:"resources,omitempty"`
 	Datasets     map[string]string            `yaml:"datasets,omitempty"`
 	Sources      map[string]SourceConfig      `yaml:"sources,omitempty"`
 	Pools        map[string]PoolConfig        `yaml:"pools,omitempty"`
@@ -204,8 +204,8 @@ type PipelineConfig struct {
 
 // DatasetForAsset returns the output dataset for an asset, resolving from connection, layer mapping, or the provided default.
 func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset string) string {
-	if asset.DestinationConnection != "" {
-		if conn, ok := cfg.Connections[asset.DestinationConnection]; ok {
+	if asset.DestinationResource != "" {
+		if conn, ok := cfg.Resources[asset.DestinationResource]; ok {
 			if ds := conn.Properties["dataset"]; ds != "" {
 				return ds
 			}
@@ -223,11 +223,11 @@ func (cfg *PipelineConfig) DatasetForAsset(asset AssetConfig, defaultDataset str
 func (cfg *PipelineConfig) OutputDatasets() []string {
 	seen := make(map[string]bool)
 	for _, asset := range cfg.Assets {
-		connName := asset.DestinationConnection
+		connName := asset.DestinationResource
 		if connName == "" {
 			continue
 		}
-		conn, ok := cfg.Connections[connName]
+		conn, ok := cfg.Resources[connName]
 		if !ok {
 			continue
 		}
@@ -388,32 +388,32 @@ func validateAssetFields(cfg *PipelineConfig) error {
 
 func validateConnectionRefs(cfg *PipelineConfig) error {
 	for _, a := range cfg.Assets {
-		if a.DestinationConnection != "" {
-			if _, ok := cfg.Connections[a.DestinationConnection]; !ok {
-				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.DestinationConnection)
+		if a.DestinationResource != "" {
+			if _, ok := cfg.Resources[a.DestinationResource]; !ok {
+				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.DestinationResource)
 			}
 		}
-		if a.SourceConnection != "" {
-			if _, ok := cfg.Connections[a.SourceConnection]; !ok {
-				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.SourceConnection)
+		if a.SourceResource != "" {
+			if _, ok := cfg.Resources[a.SourceResource]; !ok {
+				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.SourceResource)
 			}
 		}
-		if a.Type == "sql" && a.DestinationConnection == "" {
-			return fmt.Errorf("sql asset %q must have destination_connection", a.Name)
+		if a.Type == "sql" && a.DestinationResource == "" {
+			return fmt.Errorf("sql asset %q must have destination_resource", a.Name)
 		}
-		if (a.Type == "gcs_export" || a.Type == "gcs_ingest") && a.SourceConnection == "" {
-			return fmt.Errorf("%s asset %q must have source_connection", a.Type, a.Name)
+		if (a.Type == "gcs_export" || a.Type == "gcs_ingest") && a.SourceResource == "" {
+			return fmt.Errorf("%s asset %q must have source_resource", a.Type, a.Name)
 		}
 		if a.PollInterval != "" && a.Type != "gcs_ingest" {
 			return fmt.Errorf("asset %q: poll_interval is only valid for gcs_ingest assets", a.Name)
 		}
 		if a.Type == "gcs_ingest" {
-			if srcConn, ok := cfg.Connections[a.SourceConnection]; ok && srcConn.Type != "gcs" {
-				return fmt.Errorf("gcs_ingest asset %q: source_connection must be type gcs, got %q", a.Name, srcConn.Type)
+			if srcConn, ok := cfg.Resources[a.SourceResource]; ok && srcConn.Type != "gcs" {
+				return fmt.Errorf("gcs_ingest asset %q: source_resource must be type gcs, got %q", a.Name, srcConn.Type)
 			}
-			if a.DestinationConnection != "" {
-				if destConn, ok := cfg.Connections[a.DestinationConnection]; ok && destConn.Type != "bigquery" {
-					return fmt.Errorf("gcs_ingest asset %q: destination_connection must be type bigquery, got %q", a.Name, destConn.Type)
+			if a.DestinationResource != "" {
+				if destConn, ok := cfg.Resources[a.DestinationResource]; ok && destConn.Type != "bigquery" {
+					return fmt.Errorf("gcs_ingest asset %q: destination_resource must be type bigquery, got %q", a.Name, destConn.Type)
 				}
 			}
 		}
@@ -426,9 +426,9 @@ func validateSourceDefs(cfg *PipelineConfig) error {
 		if src.Identifier == "" {
 			return fmt.Errorf("source %q: identifier is required", name)
 		}
-		if src.Connection != "" {
-			if _, ok := cfg.Connections[src.Connection]; !ok {
-				return fmt.Errorf("source %q: references non-existent connection %q", name, src.Connection)
+		if src.Resource != "" {
+			if _, ok := cfg.Resources[src.Resource]; !ok {
+				return fmt.Errorf("source %q: references non-existent connection %q", name, src.Resource)
 			}
 		}
 		if src.ExpectedFresh != "" {
@@ -545,12 +545,12 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	}
 
 	// Populate connection names from map keys
-	for name, conn := range cfg.Connections {
+	for name, conn := range cfg.Resources {
 		conn.Name = name
 	}
 
 	// Validate connection properties
-	if err := ValidateConnections(&cfg); err != nil {
+	if err := ValidateResources(&cfg); err != nil {
 		return nil, err
 	}
 
@@ -581,7 +581,7 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 }
 
 // ResolveAssetPool returns the pool name for an asset, auto-assigning based on connection type if not explicitly set.
-func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connections map[string]*ConnectionConfig) string {
+func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connections map[string]*ResourceConfig) string {
 	if asset.Pool == "none" {
 		return ""
 	}
@@ -589,7 +589,7 @@ func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connection
 		return asset.Pool
 	}
 	// Auto-assign based on default_for matching connection type
-	connName := asset.DestinationConnection
+	connName := asset.DestinationResource
 	if connName == "" {
 		return ""
 	}
@@ -605,9 +605,9 @@ func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connection
 	return ""
 }
 
-// ValidateConnections checks that all connections have the required properties for their type.
-func ValidateConnections(cfg *PipelineConfig) error {
-	for name, conn := range cfg.Connections {
+// ValidateResources checks that all connections have the required properties for their type.
+func ValidateResources(cfg *PipelineConfig) error {
+	for name, conn := range cfg.Resources {
 		required, known := connectionRequirements[conn.Type]
 		if !known {
 			continue

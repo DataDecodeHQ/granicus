@@ -84,7 +84,7 @@ func DiscoverAssets(pipelineDir string, discoveryPaths []DiscoveryPath) ([]Asset
 				Type:                  assetType,
 				Source:                relPath,
 				Layer:                 layer,
-				DestinationConnection: dp.DefaultConnection,
+				DestinationResource: dp.DefaultConnection,
 			}
 
 			discovered = append(discovered, asset)

@@ -62,7 +62,7 @@ func BuildRefFunc(ctx RefContext) func(string) (string, error) {
 }
 
 type ResolvedSource struct {
-	ConnectionType string
+	ResourceType string
 	Project        string
 	Identifier     string
 }
@@ -83,7 +83,7 @@ func BuildSourceFunc(ctx SourceContext) func(string, string) (string, error) {
 }
 
 func formatSourceRef(src ResolvedSource, tableName string) string {
-	switch src.ConnectionType {
+	switch src.ResourceType {
 	case "bigquery":
 		return fmt.Sprintf("`%s.%s.%s`", src.Project, src.Identifier, tableName)
 	case "gcs":

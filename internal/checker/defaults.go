@@ -67,7 +67,7 @@ func defaultChecksForLayer(asset config.AssetConfig, d graph.Directives) []graph
 	layer := asset.Layer
 	assetName := asset.Name
 	grain := asset.Grain
-	destConn := asset.DestinationConnection
+	destConn := asset.DestinationResource
 
 	switch layer {
 	case "staging":
@@ -120,7 +120,7 @@ func defaultCheckNode(assetName, checkName, grain, destConn, sql string, blockin
 	return graph.AssetInput{
 		Name:                  fmt.Sprintf("check:%s:default:%s", assetName, checkName),
 		Type:                  "sql_check",
-		DestinationConnection: destConn,
+		DestinationResource: destConn,
 		SourceAsset:           assetName,
 		Blocking:              blocking,
 		InlineSQL:             sql,

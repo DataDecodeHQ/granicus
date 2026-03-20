@@ -33,7 +33,7 @@ func TestGenerateContractCheckNodes_PrimaryKey(t *testing.T) {
 				Name:                  "stg_orders",
 				Type:                  "sql",
 				Source:                "orders.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					PrimaryKey: "order_id",
 				},
@@ -61,8 +61,8 @@ func TestGenerateContractCheckNodes_PrimaryKey(t *testing.T) {
 	if !n.Blocking {
 		t.Error("expected Blocking=true")
 	}
-	if n.DestinationConnection != "bq" {
-		t.Errorf("expected DestinationConnection bq, got %q", n.DestinationConnection)
+	if n.DestinationResource != "bq" {
+		t.Errorf("expected DestinationResource bq, got %q", n.DestinationResource)
 	}
 	if n.SourceAsset != "stg_orders" {
 		t.Errorf("expected SourceAsset stg_orders, got %q", n.SourceAsset)
@@ -96,7 +96,7 @@ func TestGenerateContractCheckNodes_NotNull(t *testing.T) {
 				Name:                  "stg_orders",
 				Type:                  "sql",
 				Source:                "orders.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					NotNull: []string{"order_id", "created_at"},
 				},
@@ -147,7 +147,7 @@ func TestGenerateContractCheckNodes_AcceptedValues(t *testing.T) {
 				Name:                  "stg_orders",
 				Type:                  "sql",
 				Source:                "orders.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					AcceptedValues: map[string][]string{
 						"status": {"pending", "complete", "refunded"},
@@ -204,7 +204,7 @@ func TestGenerateContractCheckNodes_AllContracts(t *testing.T) {
 				Name:                  "stg_orders",
 				Type:                  "sql",
 				Source:                "orders.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					PrimaryKey: "order_id",
 					NotNull:    []string{"created_at", "status"},
@@ -254,7 +254,7 @@ func TestGenerateContractCheckNodes_MultipleAssets(t *testing.T) {
 				Name:                  "with_contract",
 				Type:                  "sql",
 				Source:                "y.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					PrimaryKey: "id",
 				},
@@ -283,7 +283,7 @@ func TestGenerateContractCheckNodes_AcceptedValues_QuoteEscaping(t *testing.T) {
 				Name:                  "stg_orders",
 				Type:                  "sql",
 				Source:                "orders.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					AcceptedValues: map[string][]string{
 						"note": {"it's done", "complete"},
@@ -313,7 +313,7 @@ func TestGenerateContractCheckNodes_PrimaryKey_SQLContainsGroupBy(t *testing.T) 
 				Name:                  "payments",
 				Type:                  "sql",
 				Source:                "payments.sql",
-				DestinationConnection: "bq",
+				DestinationResource: "bq",
 				Contract: &config.ContractConfig{
 					PrimaryKey: "payment_id",
 				},

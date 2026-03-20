@@ -8,10 +8,10 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
-func makeSourceCfg(sources map[string]config.SourceConfig, connections map[string]*config.ConnectionConfig) *config.PipelineConfig {
+func makeSourceCfg(sources map[string]config.SourceConfig, connections map[string]*config.ResourceConfig) *config.PipelineConfig {
 	return &config.PipelineConfig{
 		Pipeline:    "test",
-		Connections: connections,
+		Resources: connections,
 		Sources:     sources,
 		Assets: []config.AssetConfig{
 			{Name: "placeholder", Type: "shell", Source: "placeholder.sh"},
@@ -19,8 +19,8 @@ func makeSourceCfg(sources map[string]config.SourceConfig, connections map[strin
 	}
 }
 
-func bqConn(project string) map[string]*config.ConnectionConfig {
-	return map[string]*config.ConnectionConfig{
+func bqConn(project string) map[string]*config.ResourceConfig {
+	return map[string]*config.ResourceConfig{
 		"bq": {
 			Type:       "bigquery",
 			Properties: map[string]string{"project": project, "dataset": "raw"},
@@ -31,7 +31,7 @@ func bqConn(project string) map[string]*config.ConnectionConfig {
 func TestGenerateSourceCheckNodes_ExistsNotEmpty(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "raw",
 			Tables:     []string{"orders"},
 		},
@@ -50,8 +50,8 @@ func TestGenerateSourceCheckNodes_ExistsNotEmpty(t *testing.T) {
 	if n.Type != "sql_check" {
 		t.Errorf("expected sql_check, got %s", n.Type)
 	}
-	if n.DestinationConnection != "bq" {
-		t.Errorf("expected connection bq, got %s", n.DestinationConnection)
+	if n.DestinationResource != "bq" {
+		t.Errorf("expected connection bq, got %s", n.DestinationResource)
 	}
 	if n.SourceAsset != "orders" {
 		t.Errorf("expected SourceAsset orders, got %s", n.SourceAsset)
@@ -76,7 +76,7 @@ func TestGenerateSourceCheckNodes_ExistsNotEmpty(t *testing.T) {
 func TestGenerateSourceCheckNodes_Freshness(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection:    "bq",
+			Resource:    "bq",
 			Identifier:    "raw",
 			Tables:        []string{"orders"},
 			ExpectedFresh: "2h",
@@ -115,7 +115,7 @@ func TestGenerateSourceCheckNodes_Freshness(t *testing.T) {
 func TestGenerateSourceCheckNodes_PrimaryKey(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "raw",
 			Tables:     []string{"orders"},
 			PrimaryKey: "order_id",
@@ -166,7 +166,7 @@ func TestGenerateSourceCheckNodes_PrimaryKey(t *testing.T) {
 func TestGenerateSourceCheckNodes_PrimaryKeyMultiTableSkipped(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"mydb": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "raw",
 			Tables:     []string{"orders", "customers"},
 			PrimaryKey: "id",
@@ -187,7 +187,7 @@ func TestGenerateSourceCheckNodes_PrimaryKeyMultiTableSkipped(t *testing.T) {
 func TestGenerateSourceCheckNodes_ExpectedColumns(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection:      "bq",
+			Resource:      "bq",
 			Identifier:      "raw",
 			Tables:          []string{"orders"},
 			ExpectedColumns: []string{"order_id", "status", "created_at"},
@@ -230,7 +230,7 @@ func TestGenerateSourceCheckNodes_ExpectedColumns(t *testing.T) {
 func TestGenerateSourceCheckNodes_AllChecks(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection:      "bq",
+			Resource:      "bq",
 			Identifier:      "raw",
 			Tables:          []string{"orders"},
 			PrimaryKey:      "order_id",
@@ -285,12 +285,12 @@ func TestGenerateSourceCheckNodes_NoSources(t *testing.T) {
 func TestGenerateSourceCheckNodes_MultipleSources(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "raw",
 			Tables:     []string{"orders"},
 		},
 		"customers": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "raw",
 			Tables:     []string{"customers"},
 			PrimaryKey: "customer_id",
@@ -315,7 +315,7 @@ func TestGenerateSourceCheckNodes_MultipleSources(t *testing.T) {
 func TestGenerateSourceCheckNodes_MultiTable(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"mydb": {
-			Connection:    "bq",
+			Resource:    "bq",
 			Identifier:    "raw",
 			Tables:        []string{"orders", "customers", "products"},
 			ExpectedFresh: "1h",
@@ -356,7 +356,7 @@ func TestGenerateSourceCheckNodes_MultiTable(t *testing.T) {
 func TestGenerateSourceCheckNodes_BareDatasetWithTablesGeneratesChecks(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"stdlocal": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "stdlocal",
 			Tables:     []string{"orders"},
 		},
@@ -376,11 +376,11 @@ func TestGenerateSourceCheckNodes_BareDatasetWithTablesGeneratesChecks(t *testin
 func TestGenerateSourceCheckNodes_BareDatasetWithoutTablesSkipped(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"stdlocal": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "stdlocal",
 		},
 		"orders": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "myproject.raw.orders",
 		},
 	}, bqConn("myproject"))
@@ -402,7 +402,7 @@ func TestGenerateSourceCheckNodes_BareDatasetWithoutTablesSkipped(t *testing.T) 
 func TestGenerateSourceCheckNodes_DepsPointToSource(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"events": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "raw",
 			Tables:     []string{"events"},
 			PrimaryKey: "event_id",
@@ -421,7 +421,7 @@ func TestGenerateSourceCheckNodes_DepsPointToSource(t *testing.T) {
 func TestGenerateSourceCheckNodes_LegacyIdentifier(t *testing.T) {
 	cfg := makeSourceCfg(map[string]config.SourceConfig{
 		"orders": {
-			Connection: "bq",
+			Resource: "bq",
 			Identifier: "myproject.raw.orders",
 		},
 	}, bqConn("myproject"))
