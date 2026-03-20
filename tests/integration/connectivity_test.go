@@ -141,7 +141,7 @@ SELECT * FROM {{ ref "int_summary" }}
 
 	// Write pipeline.yaml
 	yaml := `pipeline: dag_test
-connections:
+resources:
   bq:
     type: bigquery
     project: test
@@ -150,15 +150,15 @@ assets:
   - name: stg_data
     type: sql
     source: sql/stg_data.sql
-    destination_connection: bq
+    destination_resource: bq
   - name: int_summary
     type: sql
     source: sql/int_summary.sql
-    destination_connection: bq
+    destination_resource: bq
   - name: rpt_final
     type: sql
     source: sql/rpt_final.sql
-    destination_connection: bq
+    destination_resource: bq
 `
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)

@@ -26,7 +26,7 @@ func TestPipelineDiscoveryFromRoot(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		yaml := "pipeline: " + p.name + "\nschedule: \"" + p.schedule + "\"\nconnections:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_connection: bq\n"
+		yaml := "pipeline: " + p.name + "\nschedule: \"" + p.schedule + "\"\nresources:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_resource: bq\n"
 		if err := os.WriteFile(filepath.Join(dir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +83,7 @@ func TestPipelineDiscoveryIgnoresNonPipelineDirs(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "pipeline: valid\nconnections:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_connection: bq\n"
+	yaml := "pipeline: valid\nresources:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_resource: bq\n"
 	if err := os.WriteFile(filepath.Join(dir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestCredentialPathResolution(t *testing.T) {
 	}
 
 	relCredsPath := "../../../.credentials/bigquery/service.json"
-	yaml := "pipeline: test_pipeline\nconnections:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\n    credentials: " + relCredsPath + "\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_connection: bq\n"
+	yaml := "pipeline: test_pipeline\nresources:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\n    credentials: " + relCredsPath + "\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_resource: bq\n"
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestCredentialPathResolution(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	conn := cfg.Connections["bq"]
+	conn := cfg.Resources["bq"]
 	if conn == nil {
 		t.Fatal("bq connection not found")
 	}
@@ -205,7 +205,7 @@ func TestAbsoluteCredentialPathPassedThrough(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	yaml := "pipeline: abs_test\nconnections:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\n    credentials: " + credsFile + "\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_connection: bq\n"
+	yaml := "pipeline: abs_test\nresources:\n  bq:\n    type: bigquery\n    project: test\n    dataset: test\n    credentials: " + credsFile + "\nassets:\n  - name: x\n    type: sql\n    source: x.sql\n    destination_resource: bq\n"
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestAbsoluteCredentialPathPassedThrough(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	creds := cfg.Connections["bq"].Credentials
+	creds := cfg.Resources["bq"].Credentials
 	if !filepath.IsAbs(creds) {
 		t.Errorf("absolute credential path not preserved: %s", creds)
 	}

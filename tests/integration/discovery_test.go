@@ -34,7 +34,7 @@ func TestCheckFileDiscovery(t *testing.T) {
 	}
 
 	yaml := `pipeline: test_pipeline
-connections:
+resources:
   bq:
     type: bigquery
     project: test
@@ -43,7 +43,7 @@ assets:
   - name: stg_orders
     type: sql
     source: stg_orders.sql
-    destination_connection: bq
+    destination_resource: bq
 `
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestCheckFileReferencesResolve(t *testing.T) {
 	}
 
 	yaml := `pipeline: test_pipeline
-connections:
+resources:
   bq:
     type: bigquery
     project: test
@@ -110,7 +110,7 @@ assets:
   - name: stg_data
     type: sql
     source: stg_data.sql
-    destination_connection: bq
+    destination_resource: bq
 `
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestContractFileDiscovery(t *testing.T) {
 	}
 
 	yaml := `pipeline: test_pipeline
-connections:
+resources:
   bq:
     type: bigquery
     project: test
@@ -169,7 +169,7 @@ assets:
   - name: stg_orders
     type: sql
     source: stg_orders.sql
-    destination_connection: bq
+    destination_resource: bq
 `
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestInlineContractOnAsset(t *testing.T) {
 	}
 
 	yaml := `pipeline: test_pipeline
-connections:
+resources:
   bq:
     type: bigquery
     project: test
@@ -210,7 +210,7 @@ assets:
   - name: stg_orders
     type: sql
     source: stg_orders.sql
-    destination_connection: bq
+    destination_resource: bq
     contract:
       primary_key: order_id
       not_null:
@@ -271,7 +271,7 @@ func TestSourceFileReferencesResolve(t *testing.T) {
 	}
 
 	yaml := `pipeline: test_pipeline
-connections:
+resources:
   bq:
     type: bigquery
     project: test
@@ -280,15 +280,15 @@ assets:
   - name: stg_orders
     type: sql
     source: sql/stg_orders.sql
-    destination_connection: bq
+    destination_resource: bq
   - name: stg_accounts
     type: sql
     source: sql/stg_accounts.sql
-    destination_connection: bq
+    destination_resource: bq
   - name: int_summary
     type: sql
     source: sql/int_summary.sql
-    destination_connection: bq
+    destination_resource: bq
 `
 	if err := os.WriteFile(filepath.Join(pipelineDir, "pipeline.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
