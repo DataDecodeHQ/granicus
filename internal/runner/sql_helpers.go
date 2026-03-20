@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"text/template"
 
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/oauth2adapt"
 	"cloud.google.com/go/bigquery"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
@@ -56,15 +56,17 @@ func newBQClient(ctx context.Context, conn *config.ConnectionConfig) (*bigquery.
 	project := conn.Properties["project"]
 	var opts []option.ClientOption
 	if creds := conn.Properties["credentials"]; creds != "" {
-		data, err := os.ReadFile(creds)
+		gcreds, err := credentials.NewCredentialsFromFile(
+			credentials.ServiceAccount,
+			creds,
+			&credentials.DetectOptions{
+				Scopes: []string{bigquery.Scope},
+			},
+		)
 		if err != nil {
-			return nil, fmt.Errorf("reading credentials file %s: %w", creds, err)
+			return nil, fmt.Errorf("loading credentials file %s: %w", creds, err)
 		}
-		gcreds, err := google.CredentialsFromJSON(ctx, data, bigquery.Scope)
-		if err != nil {
-			return nil, fmt.Errorf("parsing credentials file %s: %w", creds, err)
-		}
-		opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
+		opts = append(opts, option.WithTokenSource(oauth2adapt.TokenSourceFromTokenProvider(gcreds)))
 	}
 	return bigquery.NewClient(ctx, project, opts...)
 }

@@ -12,10 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/oauth2adapt"
 	"cloud.google.com/go/bigquery"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 
 	"github.com/DataDecodeHQ/granicus/internal/backup"
@@ -1747,17 +1748,18 @@ func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
 		var opts []option.ClientOption
 		credMethod := "default"
 		if creds := conn.Properties["credentials"]; creds != "" {
-			data, err := os.ReadFile(creds)
+			gcreds, err := credentials.NewCredentialsFromFile(
+				credentials.ServiceAccount,
+				creds,
+				&credentials.DetectOptions{
+					Scopes: []string{bigquery.Scope},
+				},
+			)
 			if err != nil {
-				slog.Warn("could not read credentials file", "error", err)
+				slog.Warn("could not load credentials file", "error", err)
 				return nil
 			}
-			gcreds, err := google.CredentialsFromJSON(context.Background(), data, bigquery.Scope)
-			if err != nil {
-				slog.Warn("could not parse credentials file", "error", err)
-				return nil
-			}
-			opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
+			opts = append(opts, option.WithTokenSource(oauth2adapt.TokenSourceFromTokenProvider(gcreds)))
 			credMethod = "file"
 		}
 		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
@@ -1794,15 +1796,17 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 
 		var opts []option.ClientOption
 		if key.creds != "" {
-			data, err := os.ReadFile(key.creds)
+			gcreds, err := credentials.NewCredentialsFromFile(
+				credentials.ServiceAccount,
+				key.creds,
+				&credentials.DetectOptions{
+					Scopes: []string{bigquery.Scope},
+				},
+			)
 			if err != nil {
-				return fmt.Errorf("reading credentials file %s: %w", key.creds, err)
+				return fmt.Errorf("loading credentials file %s: %w", key.creds, err)
 			}
-			gcreds, err := google.CredentialsFromJSON(ctx, data, bigquery.Scope)
-			if err != nil {
-				return fmt.Errorf("parsing credentials file %s: %w", key.creds, err)
-			}
-			opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
+			opts = append(opts, option.WithTokenSource(oauth2adapt.TokenSourceFromTokenProvider(gcreds)))
 		}
 		client, err := bigquery.NewClient(ctx, key.project, opts...)
 		if err != nil {

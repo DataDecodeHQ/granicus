@@ -10,8 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/oauth2adapt"
 	"cloud.google.com/go/bigquery"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
@@ -81,15 +82,17 @@ func checkBQConnectivity(connName string, conn *config.ConnectionConfig) CheckRe
 
 	var opts []option.ClientOption
 	if creds := conn.Properties["credentials"]; creds != "" {
-		data, err := os.ReadFile(creds)
+		gcreds, err := credentials.NewCredentialsFromFile(
+			credentials.ServiceAccount,
+			creds,
+			&credentials.DetectOptions{
+				Scopes: []string{bigquery.Scope},
+			},
+		)
 		if err != nil {
-			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("reading credentials: %v", err)}
+			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("loading credentials: %v", err)}
 		}
-		gcreds, err := google.CredentialsFromJSON(ctx, data, bigquery.Scope)
-		if err != nil {
-			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("parsing credentials: %v", err)}
-		}
-		opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
+		opts = append(opts, option.WithTokenSource(oauth2adapt.TokenSourceFromTokenProvider(gcreds)))
 	}
 
 	client, err := bigquery.NewClient(ctx, project, opts...)
