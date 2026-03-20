@@ -150,7 +150,8 @@ jobs:
               GRANICUS_FIRESTORE_PROJECT=${{ env.GCP_PROJECT_ID }},\
               GRANICUS_PIPELINES_BUCKET=granicus-analytehealth,\
               GRANICUS_PIPELINE_SOURCE=gcs,\
-              GRANICUS_STATE_BACKEND=firestore" \
+              GRANICUS_STATE_BACKEND=firestore,\
+              GRANICUS_REQUIRE_AUTH=false" \
             --revision-suffix ${{ github.sha }}
 
       - name: Get service URL
