@@ -138,6 +138,7 @@ jobs:
             --memory 1Gi \
             --cpu 1 \
             --concurrency 1 \
+            --ingress all \
             --no-allow-unauthenticated \
             --no-cpu-throttling \
             --cpu-boost \
