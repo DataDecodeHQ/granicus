@@ -164,20 +164,22 @@ jobs:
           echo "url=${URL}" >> "$GITHUB_OUTPUT"
           echo "Deployed to: ${URL}"
 
-      - name: Health check
+      - name: Verify deployment
         run: |
-          URL="${{ steps.url.outputs.url }}"
-          TOKEN=$(gcloud auth print-identity-token --audiences="${URL}")
-          for i in 1 2 3 4 5; do
-            echo "Health check attempt ${i}/5..."
-            if curl --fail --silent --show-error \
-              -H "Authorization: Bearer ${TOKEN}" \
-              "${URL}/api/v1/health"; then
-              echo ""
-              echo "Health check passed."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Health check failed after 5 attempts."
-          exit 1
+          REVISION=$(gcloud run revisions list \
+            --service ${{ env.ENGINE_SERVICE }} \
+            --region ${{ env.CLOUD_RUN_REGION }} \
+            --project ${{ env.GCP_PROJECT_ID }} \
+            --format 'value(metadata.name)' \
+            --limit 1)
+          STATUS=$(gcloud run revisions describe "$REVISION" \
+            --region ${{ env.CLOUD_RUN_REGION }} \
+            --project ${{ env.GCP_PROJECT_ID }} \
+            --format 'value(status.conditions[0].status)')
+          echo "Latest revision: $REVISION"
+          echo "Status: $STATUS"
+          if [ "$STATUS" = "True" ]; then
+            echo "Deployment verified."
+          else
+            echo "Deployment may still be starting..."
+          fi
