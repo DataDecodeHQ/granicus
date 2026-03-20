@@ -9,9 +9,11 @@ import (
 	"text/template"
 
 	"cloud.google.com/go/bigquery"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/option"
+
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/result"
-	"google.golang.org/api/option"
 )
 
 // renderSQL parses rawSQL as a Go template, executes it with project/dataset/prefix
@@ -58,7 +60,11 @@ func newBQClient(ctx context.Context, conn *config.ConnectionConfig) (*bigquery.
 		if err != nil {
 			return nil, fmt.Errorf("reading credentials file %s: %w", creds, err)
 		}
-		opts = append(opts, option.WithCredentialsJSON(data))
+		gcreds, err := google.CredentialsFromJSON(ctx, data, bigquery.Scope)
+		if err != nil {
+			return nil, fmt.Errorf("parsing credentials file %s: %w", creds, err)
+		}
+		opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
 	}
 	return bigquery.NewClient(ctx, project, opts...)
 }

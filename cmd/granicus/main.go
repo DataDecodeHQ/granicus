@@ -15,6 +15,7 @@ import (
 	"cloud.google.com/go/bigquery"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 
 	"github.com/DataDecodeHQ/granicus/internal/backup"
@@ -1751,7 +1752,12 @@ func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
 				slog.Warn("could not read credentials file", "error", err)
 				return nil
 			}
-			opts = append(opts, option.WithCredentialsJSON(data))
+			gcreds, err := google.CredentialsFromJSON(context.Background(), data, bigquery.Scope)
+			if err != nil {
+				slog.Warn("could not parse credentials file", "error", err)
+				return nil
+			}
+			opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
 			credMethod = "file"
 		}
 		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
@@ -1792,7 +1798,11 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 			if err != nil {
 				return fmt.Errorf("reading credentials file %s: %w", key.creds, err)
 			}
-			opts = append(opts, option.WithCredentialsJSON(data))
+			gcreds, err := google.CredentialsFromJSON(ctx, data, bigquery.Scope)
+			if err != nil {
+				return fmt.Errorf("parsing credentials file %s: %w", key.creds, err)
+			}
+			opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
 		}
 		client, err := bigquery.NewClient(ctx, key.project, opts...)
 		if err != nil {

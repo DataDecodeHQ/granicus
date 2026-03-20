@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
@@ -84,7 +85,11 @@ func checkBQConnectivity(connName string, conn *config.ConnectionConfig) CheckRe
 		if err != nil {
 			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("reading credentials: %v", err)}
 		}
-		opts = append(opts, option.WithCredentialsJSON(data))
+		gcreds, err := google.CredentialsFromJSON(ctx, data, bigquery.Scope)
+		if err != nil {
+			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("parsing credentials: %v", err)}
+		}
+		opts = append(opts, option.WithTokenSource(gcreds.TokenSource))
 	}
 
 	client, err := bigquery.NewClient(ctx, project, opts...)
