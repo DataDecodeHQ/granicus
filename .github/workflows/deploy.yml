@@ -151,7 +151,6 @@ jobs:
               GRANICUS_PIPELINES_BUCKET=granicus-analytehealth,\
               GRANICUS_PIPELINE_SOURCE=gcs,\
               GRANICUS_STATE_BACKEND=firestore" \
-            --startup-cpu-boost \
             --revision-suffix ${{ github.sha }}
 
       - name: Get service URL
