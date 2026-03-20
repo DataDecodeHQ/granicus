@@ -17,15 +17,14 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/option"
 
-	"github.com/DataDecodeHQ/granicus/internal/logging"
 	"github.com/DataDecodeHQ/granicus/internal/backup"
-	"github.com/DataDecodeHQ/granicus/internal/checker"
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/doctor"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/executor"
 	"github.com/DataDecodeHQ/granicus/internal/gc"
 	"github.com/DataDecodeHQ/granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/logging"
 	"github.com/DataDecodeHQ/granicus/internal/migrate"
 	"github.com/DataDecodeHQ/granicus/internal/monitor"
 	"github.com/DataDecodeHQ/granicus/internal/pool"
@@ -44,6 +43,20 @@ var (
 	yellowCirc  = color.New(color.FgYellow).Sprint("\u25CB")
 	whiteBullet = color.New(color.FgWhite).Sprint("\u25CF")
 )
+
+func statusIcon(status interface{}) string {
+	s := fmt.Sprintf("%v", status)
+	switch s {
+	case "pass", "ok":
+		return greenCheck
+	case "fail", "error":
+		return redCross
+	case "warn", "warning":
+		return yellowCirc
+	default:
+		return whiteBullet
+	}
+}
 
 type jsonRunOutput struct {
 	RunID           string        `json:"run_id"`
@@ -67,16 +80,16 @@ type jsonRunNode struct {
 }
 
 type jsonStatusOutput struct {
-	RunID           string            `json:"run_id"`
-	Pipeline        string            `json:"pipeline"`
-	Status          string            `json:"status"`
-	StartTime       time.Time         `json:"start_time"`
-	EndTime         time.Time         `json:"end_time"`
-	DurationSeconds float64           `json:"duration_seconds"`
-	Succeeded       int               `json:"succeeded"`
-	Failed          int               `json:"failed"`
-	Skipped         int               `json:"skipped"`
-	TotalNodes      int               `json:"total_nodes"`
+	RunID           string              `json:"run_id"`
+	Pipeline        string              `json:"pipeline"`
+	Status          string              `json:"status"`
+	StartTime       time.Time           `json:"start_time"`
+	EndTime         time.Time           `json:"end_time"`
+	DurationSeconds float64             `json:"duration_seconds"`
+	Succeeded       int                 `json:"succeeded"`
+	Failed          int                 `json:"failed"`
+	Skipped         int                 `json:"skipped"`
+	TotalNodes      int                 `json:"total_nodes"`
 	Nodes           []events.NodeResult `json:"nodes,omitempty"`
 }
 
@@ -265,78 +278,9 @@ func loadAndBuild(configPath, projectRoot string) (*config.PipelineConfig, *grap
 		return nil, nil, nil, fmt.Errorf("config: %w", err)
 	}
 
-	deps, directives, err := graph.ParseAllDirectives(cfg, projectRoot)
+	g, _, err := buildPipelineGraph(cfg, projectRoot)
 	if err != nil {
-		return cfg, nil, nil, fmt.Errorf("dependencies: %w", err)
-	}
-
-	inputs := graph.ConfigToAssetInputs(cfg)
-
-	// Apply directives (time_column, interval_unit, etc.) to asset inputs
-	for i := range inputs {
-		if d, ok := directives[inputs[i].Name]; ok {
-			inputs[i].TimeColumn = d.TimeColumn
-			inputs[i].IntervalUnit = d.IntervalUnit
-			inputs[i].Lookback = d.Lookback
-			inputs[i].StartDate = d.StartDate
-			inputs[i].BatchSize = d.BatchSize
-			if d.Layer != "" {
-				inputs[i].Layer = d.Layer
-			}
-			if d.Grain != "" {
-				inputs[i].Grain = d.Grain
-			}
-			if d.DefaultChecks != nil {
-				inputs[i].DefaultChecks = d.DefaultChecks
-			}
-		}
-	}
-
-	// Add source phantom nodes
-	sourceNodes := graph.SourcePhantomNodes(cfg)
-	inputs = append(inputs, sourceNodes...)
-
-	// Generate check nodes and merge into graph
-	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
-	inputs = append(inputs, checkNodes...)
-	for k, v := range checkDeps {
-		deps[k] = v
-	}
-
-	// Generate default checks based on layer/grain
-	defaultNodes, defaultDeps := checker.GenerateDefaultCheckNodes(cfg)
-	inputs = append(inputs, defaultNodes...)
-	for k, v := range defaultDeps {
-		deps[k] = v
-	}
-
-	// Generate source check nodes
-	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(cfg)
-	inputs = append(inputs, sourceCheckNodes...)
-	for k, v := range sourceCheckDeps {
-		deps[k] = v
-	}
-
-	// Wire source checks to gate staging assets
-	if len(sourceCheckNodes) > 0 {
-		var sourceCheckNames []string
-		for _, sc := range sourceCheckNodes {
-			sourceCheckNames = append(sourceCheckNames, sc.Name)
-		}
-		for i := range inputs {
-			if inputs[i].Layer == "staging" {
-				if deps[inputs[i].Name] == nil {
-					deps[inputs[i].Name] = sourceCheckNames
-				} else {
-					deps[inputs[i].Name] = append(deps[inputs[i].Name], sourceCheckNames...)
-				}
-			}
-		}
-	}
-
-	g, err := graph.BuildGraph(inputs, deps)
-	if err != nil {
-		return cfg, nil, nil, fmt.Errorf("graph: %w", err)
+		return cfg, nil, nil, err
 	}
 
 	var missingFiles []string
@@ -502,10 +446,10 @@ func runDryRun(g *graph.Graph, cfg *config.PipelineConfig, assetFilter []string,
 	fmt.Printf("Assets to run: %d\n\n", len(sorted))
 
 	const (
-		numW       = 4
-		nameW      = 32
-		typeW      = 10
-		intervalW  = 22
+		numW      = 4
+		nameW     = 32
+		typeW     = 10
+		intervalW = 22
 	)
 	sep := strings.Repeat("-", numW+2+nameW+2+typeW+2+intervalW+2+40)
 	fmt.Printf("%-*s  %-*s  %-*s  %-*s  %s\n", numW, "#", nameW, "Asset", typeW, "Type", intervalW, "Intervals", "Checks")
@@ -705,8 +649,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 				baseDataset := conn.Properties["dataset"]
 				testDatasetName := testmode.TestDatasetName(baseDataset, runID)
 				if !outputJSON {
-				fmt.Printf("Test mode: using dataset %s\n", testDatasetName)
-			}
+					fmt.Printf("Test mode: using dataset %s\n", testDatasetName)
+				}
 				conn.Properties["dataset"] = testDatasetName
 				break
 			}
@@ -1067,15 +1011,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		var icon string
-		switch r.Status {
-		case validate.StatusPass:
-			icon = greenCheck
-		case validate.StatusWarn:
-			icon = yellowCirc
-		case validate.StatusError:
-			icon = redCross
-		}
+		icon := statusIcon(string(r.Status))
 
 		detail := ""
 		if r.Details != nil {
@@ -1110,12 +1046,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 }
 
 type jsonValidateOutput struct {
-	Pipeline      string               `json:"pipeline"`
-	AssetCount    int                  `json:"asset_count"`
-	SourceCount   int                  `json:"source_count,omitempty"`
-	DepCount      int                  `json:"dependency_count"`
-	Valid         bool                 `json:"valid"`
-	Checks        []jsonValidateCheck  `json:"checks"`
+	Pipeline    string              `json:"pipeline"`
+	AssetCount  int                 `json:"asset_count"`
+	SourceCount int                 `json:"source_count,omitempty"`
+	DepCount    int                 `json:"dependency_count"`
+	Valid       bool                `json:"valid"`
+	Checks      []jsonValidateCheck `json:"checks"`
 }
 
 type jsonValidateCheck struct {
@@ -1946,8 +1882,8 @@ func runCompletion(rootCmd *cobra.Command, shell string) error {
 }
 
 type jsonDoctorOutput struct {
-	Healthy bool                  `json:"healthy"`
-	Checks  []doctor.CheckResult  `json:"checks"`
+	Healthy bool                 `json:"healthy"`
+	Checks  []doctor.CheckResult `json:"checks"`
 }
 
 func runDoctor(cmd *cobra.Command, args []string) error {
@@ -1995,17 +1931,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %-*s  %s\n", nameW, strings.Repeat("-", nameW), strings.Repeat("-", 40))
 
 	for _, r := range results {
-		var icon string
-		switch r.Status {
-		case doctor.StatusPass:
-			icon = greenCheck
-		case doctor.StatusFail:
-			icon = redCross
-		case doctor.StatusWarn:
-			icon = yellowCirc
-		default:
-			icon = whiteBullet
-		}
+		icon := statusIcon(r.Status)
 		fmt.Printf("  %s %-*s  %s\n", icon, nameW, r.Name, r.Message)
 	}
 

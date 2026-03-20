@@ -53,6 +53,28 @@ type Runner interface {
 	Run(asset *Asset, projectRoot string, runID string) NodeResult
 }
 
+func NodeResultFromSubprocess(assetName string, start time.Time, sub SubprocessResult) NodeResult {
+	end := time.Now()
+	result := NodeResult{
+		AssetName: assetName,
+		StartTime: start,
+		EndTime:   end,
+		Duration:  sub.Duration,
+		Stdout:    sub.Stdout,
+		Stderr:    sub.Stderr,
+		ExitCode:  sub.ExitCode,
+	}
+
+	if sub.Error != "" {
+		result.Status = "failed"
+		result.Error = sub.Error
+	} else {
+		result.Status = "success"
+	}
+
+	return result
+}
+
 func effectiveTimeout(assetTimeout, runnerTimeout time.Duration) time.Duration {
 	if assetTimeout > 0 {
 		return assetTimeout
@@ -109,26 +131,8 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		WorkDir: projectRoot,
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
-	end := time.Now()
 
-	result := NodeResult{
-		AssetName: asset.Name,
-		StartTime: start,
-		EndTime:   end,
-		Duration:  sub.Duration,
-		Stdout:    sub.Stdout,
-		Stderr:    sub.Stderr,
-		ExitCode:  sub.ExitCode,
-	}
-
-	if sub.Error != "" {
-		result.Status = "failed"
-		result.Error = sub.Error
-	} else {
-		result.Status = "success"
-	}
-
-	return result
+	return NodeResultFromSubprocess(asset.Name, start, sub)
 }
 
 func makeExecutable(source, projectRoot string) error {

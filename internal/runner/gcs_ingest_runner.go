@@ -93,24 +93,8 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 		WorkDir: projectRoot,
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
-	end := time.Now()
 
-	result := NodeResult{
-		AssetName: asset.Name,
-		StartTime: start,
-		EndTime:   end,
-		Duration:  sub.Duration,
-		Stdout:    sub.Stdout,
-		Stderr:    sub.Stderr,
-		ExitCode:  sub.ExitCode,
-	}
-
-	if sub.Error != "" {
-		result.Status = "failed"
-		result.Error = sub.Error
-	} else {
-		result.Status = "success"
-	}
+	result := NodeResultFromSubprocess(asset.Name, start, sub)
 
 	// Parse metadata from stdout lines like "GRANICUS_META:key=value"
 	result.Metadata = parseMetaLines(sub.Stdout)

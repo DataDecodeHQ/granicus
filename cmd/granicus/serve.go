@@ -17,11 +17,9 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/DataDecodeHQ/granicus/internal/logging"
-	"github.com/DataDecodeHQ/granicus/internal/checker"
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/executor"
-	"github.com/DataDecodeHQ/granicus/internal/graph"
 	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/scheduler"
@@ -353,73 +351,7 @@ func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, to
 	if pec.cfg.ConfigDir != "" {
 		parseRoot = pec.cfg.ConfigDir
 	}
-	deps, directives, err := graph.ParseAllDirectives(pec.cfg, parseRoot)
-	if err != nil {
-		slog.Error("dependency parse error", "run_id", pec.runID, "error", err)
-		return
-	}
-
-	inputs := graph.ConfigToAssetInputs(pec.cfg)
-	for i := range inputs {
-		if d, ok := directives[inputs[i].Name]; ok {
-			inputs[i].TimeColumn = d.TimeColumn
-			inputs[i].IntervalUnit = d.IntervalUnit
-			inputs[i].Lookback = d.Lookback
-			inputs[i].StartDate = d.StartDate
-			inputs[i].BatchSize = d.BatchSize
-			if d.Layer != "" {
-				inputs[i].Layer = d.Layer
-			}
-			if d.Grain != "" {
-				inputs[i].Grain = d.Grain
-			}
-			if d.DefaultChecks != nil {
-				inputs[i].DefaultChecks = d.DefaultChecks
-			}
-		}
-	}
-
-	checkNodes, checkDeps := checker.GenerateCheckNodes(pec.cfg)
-	inputs = append(inputs, checkNodes...)
-	for k, v := range checkDeps {
-		deps[k] = v
-	}
-
-	defaultNodes, defaultDeps := checker.GenerateDefaultCheckNodes(pec.cfg)
-	inputs = append(inputs, defaultNodes...)
-	for k, v := range defaultDeps {
-		deps[k] = v
-	}
-
-	// Add source phantom nodes
-	sourceNodes := graph.SourcePhantomNodes(pec.cfg)
-	inputs = append(inputs, sourceNodes...)
-
-	// Generate source check nodes
-	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(pec.cfg)
-	inputs = append(inputs, sourceCheckNodes...)
-	for k, v := range sourceCheckDeps {
-		deps[k] = v
-	}
-
-	// Wire source checks to gate staging assets
-	if len(sourceCheckNodes) > 0 {
-		var sourceCheckNames []string
-		for _, sc := range sourceCheckNodes {
-			sourceCheckNames = append(sourceCheckNames, sc.Name)
-		}
-		for i := range inputs {
-			if inputs[i].Layer == "staging" {
-				if deps[inputs[i].Name] == nil {
-					deps[inputs[i].Name] = sourceCheckNames
-				} else {
-					deps[inputs[i].Name] = append(deps[inputs[i].Name], sourceCheckNames...)
-				}
-			}
-		}
-	}
-
-	g, err := graph.BuildGraph(inputs, deps)
+	g, _, err := buildPipelineGraph(pec.cfg, parseRoot)
 	if err != nil {
 		slog.Error("graph build error", "run_id", pec.runID, "error", err)
 		return

@@ -114,24 +114,8 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 	close(done)
-	end := time.Now()
 
-	result := NodeResult{
-		AssetName: asset.Name,
-		StartTime: start,
-		EndTime:   end,
-		Duration:  sub.Duration,
-		Stdout:    sub.Stdout,
-		Stderr:    sub.Stderr,
-		ExitCode:  sub.ExitCode,
-	}
-
-	if sub.Error != "" {
-		result.Status = "failed"
-		result.Error = sub.Error
-	} else {
-		result.Status = "success"
-	}
+	result := NodeResultFromSubprocess(asset.Name, start, sub)
 
 	// Read metadata file if it exists and has content
 	if data, err := os.ReadFile(metadataPath); err == nil && len(data) > 0 {

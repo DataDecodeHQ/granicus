@@ -74,26 +74,8 @@ func (r *GCSRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		WorkDir: projectRoot,
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
-	end := time.Now()
 
-	result := NodeResult{
-		AssetName: asset.Name,
-		StartTime: start,
-		EndTime:   end,
-		Duration:  sub.Duration,
-		Stdout:    sub.Stdout,
-		Stderr:    sub.Stderr,
-		ExitCode:  sub.ExitCode,
-	}
-
-	if sub.Error != "" {
-		result.Status = "failed"
-		result.Error = sub.Error
-	} else {
-		result.Status = "success"
-	}
-
-	return result
+	return NodeResultFromSubprocess(asset.Name, start, sub)
 }
 
 type S3Runner struct {
@@ -145,26 +127,8 @@ func (r *S3Runner) Run(asset *Asset, projectRoot string, runID string) NodeResul
 		WorkDir: projectRoot,
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
-	end := time.Now()
 
-	result := NodeResult{
-		AssetName: asset.Name,
-		StartTime: start,
-		EndTime:   end,
-		Duration:  sub.Duration,
-		Stdout:    sub.Stdout,
-		Stderr:    sub.Stderr,
-		ExitCode:  sub.ExitCode,
-	}
-
-	if sub.Error != "" {
-		result.Status = "failed"
-		result.Error = sub.Error
-	} else {
-		result.Status = "success"
-	}
-
-	return result
+	return NodeResultFromSubprocess(asset.Name, start, sub)
 }
 
 func inferCommand(source, projectRoot string) []string {

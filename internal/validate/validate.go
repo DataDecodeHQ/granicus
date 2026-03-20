@@ -71,6 +71,91 @@ func CollectingSourceFunc(sources map[string]config.SourceConfig) (func(string, 
 	return fn, &collected
 }
 
+// validateTemplateParse parses and executes all SQL templates in cfg, returning a template_parse ValidationResult.
+func validateTemplateParse(cfg *config.PipelineConfig, projectRoot string, funcMap template.FuncMap, data interface{}) ValidationResult {
+	var parseErrors []string
+	var parsePass []string
+
+	for _, asset := range cfg.Assets {
+		if asset.Type != "sql" {
+			continue
+		}
+		sourcePath := filepath.Join(projectRoot, asset.Source)
+		rawSQL, err := os.ReadFile(sourcePath)
+		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
+			continue
+		}
+
+		tmpl := template.New(asset.Name).Funcs(funcMap)
+		tmpl, err = tmpl.Parse(string(rawSQL))
+		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
+			continue
+		}
+
+		var buf strings.Builder
+		if err := tmpl.Execute(&buf, data); err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
+			continue
+		}
+
+		parsePass = append(parsePass, asset.Name)
+	}
+
+	if len(parseErrors) > 0 {
+		return ValidationResult{
+			Name:   "template_parse",
+			Status: StatusError,
+			Items:  parseErrors,
+			Details: map[string]string{
+				"passed": fmt.Sprintf("%d", len(parsePass)),
+				"failed": fmt.Sprintf("%d", len(parseErrors)),
+			},
+		}
+	}
+	return ValidationResult{
+		Name:   "template_parse",
+		Status: StatusPass,
+		Details: map[string]string{
+			"checked": fmt.Sprintf("%d", len(parsePass)),
+		},
+	}
+}
+
+// validateRefResolution checks that all collected refs resolve to known asset names, returning a ref_resolution ValidationResult.
+func validateRefResolution(refs []CollectedRef, assetNames []string) ValidationResult {
+	lookup := make(map[string]bool, len(assetNames))
+	for _, a := range assetNames {
+		lookup[a] = true
+	}
+
+	var unresolvedRefs []string
+	for _, r := range refs {
+		if !lookup[r.RefName] {
+			unresolvedRefs = append(unresolvedRefs, fmt.Sprintf("ref(%q): not found", r.RefName))
+		}
+	}
+
+	if len(unresolvedRefs) > 0 {
+		return ValidationResult{
+			Name:   "ref_resolution",
+			Status: StatusError,
+			Items:  unresolvedRefs,
+			Details: map[string]string{
+				"refs_checked": fmt.Sprintf("%d", len(refs)),
+			},
+		}
+	}
+	return ValidationResult{
+		Name:   "ref_resolution",
+		Status: StatusPass,
+		Details: map[string]string{
+			"refs_checked": fmt.Sprintf("%d", len(refs)),
+		},
+	}
+}
+
 // ValidateTemplates parses and executes all SQL templates, checking for parse errors and unresolved ref/source calls.
 func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot string) []ValidationResult {
 	var results []ValidationResult
@@ -136,89 +221,8 @@ func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot s
 		Prefix:  cfg.Prefix,
 	}
 
-	var parseErrors []string
-	var parsePass []string
-
-	for _, asset := range cfg.Assets {
-		if asset.Type != "sql" {
-			continue
-		}
-		sourcePath := filepath.Join(projectRoot, asset.Source)
-		rawSQL, err := os.ReadFile(sourcePath)
-		if err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
-			continue
-		}
-
-		tmpl := template.New(asset.Name).Funcs(funcMap)
-		tmpl, err = tmpl.Parse(string(rawSQL))
-		if err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
-			continue
-		}
-
-		var buf strings.Builder
-		if err := tmpl.Execute(&buf, data); err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
-			continue
-		}
-
-		parsePass = append(parsePass, asset.Name)
-	}
-
-	if len(parseErrors) > 0 {
-		results = append(results, ValidationResult{
-			Name:   "template_parse",
-			Status: StatusError,
-			Items:  parseErrors,
-			Details: map[string]string{
-				"passed": fmt.Sprintf("%d", len(parsePass)),
-				"failed": fmt.Sprintf("%d", len(parseErrors)),
-			},
-		})
-	} else {
-		results = append(results, ValidationResult{
-			Name:   "template_parse",
-			Status: StatusPass,
-			Details: map[string]string{
-				"checked": fmt.Sprintf("%d", len(parsePass)),
-			},
-		})
-	}
-
-	// ref() resolution
-	var unresolvedRefs []string
-	for _, r := range *refs {
-		found := false
-		for _, a := range assetNames {
-			if a == r.RefName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			unresolvedRefs = append(unresolvedRefs, fmt.Sprintf("ref(%q): not found", r.RefName))
-		}
-	}
-
-	if len(unresolvedRefs) > 0 {
-		results = append(results, ValidationResult{
-			Name:   "ref_resolution",
-			Status: StatusError,
-			Items:  unresolvedRefs,
-			Details: map[string]string{
-				"refs_checked": fmt.Sprintf("%d", len(*refs)),
-			},
-		})
-	} else {
-		results = append(results, ValidationResult{
-			Name:   "ref_resolution",
-			Status: StatusPass,
-			Details: map[string]string{
-				"refs_checked": fmt.Sprintf("%d", len(*refs)),
-			},
-		})
-	}
+	results = append(results, validateTemplateParse(cfg, projectRoot, funcMap, data))
+	results = append(results, validateRefResolution(*refs, assetNames))
 
 	// source() resolution
 	if len(cfg.Sources) > 0 || len(*sources) > 0 {

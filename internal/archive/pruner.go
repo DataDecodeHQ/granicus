@@ -11,6 +11,8 @@ import (
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
+
+	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
 // Pruner deletes old run data from Firestore after verifying GCS archives exist.
@@ -96,31 +98,15 @@ func (p *Pruner) PruneRuns(ctx context.Context) (int, error) {
 
 		// Delete events subcollection first
 		eventsIter := doc.Ref.Collection("events").Documents(ctx)
-		batch := p.fs.Batch()
-		eventCount := 0
-		for {
-			eventDoc, err := eventsIter.Next()
-			if err == iterator.Done {
-				break
-			}
-			if err != nil {
-				eventsIter.Stop()
-				break
-			}
-			batch.Delete(eventDoc.Ref)
-			eventCount++
-			if eventCount >= 500 {
-				batch.Commit(ctx)
-				batch = p.fs.Batch()
-				eventCount = 0
-			}
+		eventCount, err := state.DeleteDocs(ctx, p.fs, eventsIter)
+		if err != nil {
+			slog.Error("prune failed: deleting events", "run_id", runID, "error", err)
+			continue
 		}
-		eventsIter.Stop()
 
 		// Delete run document
-		batch.Delete(doc.Ref)
-		if _, err := batch.Commit(ctx); err != nil {
-			slog.Error("prune commit failed", "run_id", runID, "error", err)
+		if _, err := doc.Ref.Delete(ctx); err != nil {
+			slog.Error("prune failed: deleting run", "run_id", runID, "error", err)
 			continue
 		}
 

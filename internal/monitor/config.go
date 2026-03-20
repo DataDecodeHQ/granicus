@@ -211,31 +211,36 @@ func LoadMonitorConfig(path string) (*MonitorConfig, error) {
 	return &cfg, nil
 }
 
-func validateConfig(cfg *MonitorConfig) error {
-	m := &cfg.Monitoring
-
-	for _, w := range m.Defaults.Windows {
+func validateDefaults(defaults DefaultsConfig) error {
+	for _, w := range defaults.Windows {
 		if !validWindows[w] {
 			return fmt.Errorf("defaults: invalid window %q (must be day, week, month, or year)", w)
 		}
 	}
 
-	if m.Defaults.WarningThreshold != nil && *m.Defaults.WarningThreshold < 0 {
+	if defaults.WarningThreshold != nil && *defaults.WarningThreshold < 0 {
 		return fmt.Errorf("defaults: warning_threshold must be >= 0")
 	}
-	if m.Defaults.ErrorThreshold != nil && *m.Defaults.ErrorThreshold < 0 {
+	if defaults.ErrorThreshold != nil && *defaults.ErrorThreshold < 0 {
 		return fmt.Errorf("defaults: error_threshold must be >= 0")
 	}
 
-	if m.Structural != nil {
-		for _, nr := range m.Structural.NullRates {
+	return nil
+}
+
+func validateStructural(structural *StructuralConfig) error {
+	if structural != nil {
+		for _, nr := range structural.NullRates {
 			if !strings.Contains(nr, ".") {
 				return fmt.Errorf("structural.null_rates: %q must be in table.column format", nr)
 			}
 		}
 	}
+	return nil
+}
 
-	for i, mc := range m.Metrics {
+func validateMetrics(metrics []MetricConfig) error {
+	for i, mc := range metrics {
 		if mc.Table == "" {
 			return fmt.Errorf("metrics[%d]: table is required", i)
 		}
@@ -259,8 +264,11 @@ func validateConfig(cfg *MonitorConfig) error {
 			}
 		}
 	}
+	return nil
+}
 
-	for i, rc := range m.Rates {
+func validateRates(rates []RateConfig) error {
+	for i, rc := range rates {
 		if rc.Name == "" {
 			return fmt.Errorf("rates[%d]: name is required", i)
 		}
@@ -288,8 +296,11 @@ func validateConfig(cfg *MonitorConfig) error {
 			}
 		}
 	}
+	return nil
+}
 
-	for i, sc := range m.Segments {
+func validateSegments(segments []SegmentConfig) error {
+	for i, sc := range segments {
 		if sc.Table == "" {
 			return fmt.Errorf("segments[%d]: table is required", i)
 		}
@@ -307,6 +318,31 @@ func validateConfig(cfg *MonitorConfig) error {
 				return fmt.Errorf("segments[%d] (%s): invalid window %q", i, sc.Table, w)
 			}
 		}
+	}
+	return nil
+}
+
+func validateConfig(cfg *MonitorConfig) error {
+	m := &cfg.Monitoring
+
+	if err := validateDefaults(m.Defaults); err != nil {
+		return err
+	}
+
+	if err := validateStructural(m.Structural); err != nil {
+		return err
+	}
+
+	if err := validateMetrics(m.Metrics); err != nil {
+		return err
+	}
+
+	if err := validateRates(m.Rates); err != nil {
+		return err
+	}
+
+	if err := validateSegments(m.Segments); err != nil {
+		return err
 	}
 
 	return nil
