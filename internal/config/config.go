@@ -66,7 +66,6 @@ type AssetConfig struct {
 	DestinationResource string              `yaml:"destination_resource,omitempty"`
 	SourceResource      string              `yaml:"source_resource,omitempty"`
 	Checks                []CheckConfig       `yaml:"checks,omitempty"`
-	Pool                  string              `yaml:"pool,omitempty"`
 	Layer                 string              `yaml:"layer,omitempty"`
 	Grain                 string              `yaml:"grain,omitempty"`
 	DefaultChecks         *bool               `yaml:"default_checks,omitempty"`
@@ -181,20 +180,12 @@ type SourceConfig struct {
 	ExpectedColumns []string `yaml:"expected_columns,omitempty"`
 }
 
-type PoolConfig struct {
-	Slots      int    `yaml:"slots"`
-	Timeout    string `yaml:"timeout,omitempty"`
-	DefaultFor string `yaml:"default_for,omitempty"`
-}
-
 type PipelineConfig struct {
 	Pipeline     string                       `yaml:"pipeline"`
 	Schedule     string                       `yaml:"schedule,omitempty"`
-	MaxParallel  int                          `yaml:"max_parallel"`
 	Resources    map[string]*ResourceConfig `yaml:"resources,omitempty"`
 	Datasets     map[string]string            `yaml:"datasets,omitempty"`
 	Sources      map[string]SourceConfig      `yaml:"sources,omitempty"`
-	Pools        map[string]PoolConfig        `yaml:"pools,omitempty"`
 	Assets       []AssetConfig                `yaml:"assets"`
 	FunctionsDir string                       `yaml:"functions_dir,omitempty"`
 	Alerts       *AlertRoutingConfig          `yaml:"alerts,omitempty"`
@@ -244,7 +235,7 @@ func (cfg *PipelineConfig) OutputDatasets() []string {
 	return result
 }
 
-var connectionRequirements = map[string][]string{
+var resourceRequirements = map[string][]string{
 	"bigquery":   {"project", "dataset"},
 	"gcs":        {"bucket"},
 	"postgres":   {"host", "database"},
@@ -386,16 +377,16 @@ func validateAssetFields(cfg *PipelineConfig) error {
 	return nil
 }
 
-func validateConnectionRefs(cfg *PipelineConfig) error {
+func validateResourceRefs(cfg *PipelineConfig) error {
 	for _, a := range cfg.Assets {
 		if a.DestinationResource != "" {
 			if _, ok := cfg.Resources[a.DestinationResource]; !ok {
-				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.DestinationResource)
+				return fmt.Errorf("asset %q references non-existent resource %q", a.Name, a.DestinationResource)
 			}
 		}
 		if a.SourceResource != "" {
 			if _, ok := cfg.Resources[a.SourceResource]; !ok {
-				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.SourceResource)
+				return fmt.Errorf("asset %q references non-existent resource %q", a.Name, a.SourceResource)
 			}
 		}
 		if a.Type == "sql" && a.DestinationResource == "" {
@@ -428,7 +419,7 @@ func validateSourceDefs(cfg *PipelineConfig) error {
 		}
 		if src.Resource != "" {
 			if _, ok := cfg.Resources[src.Resource]; !ok {
-				return fmt.Errorf("source %q: references non-existent connection %q", name, src.Resource)
+				return fmt.Errorf("source %q: references non-existent resource %q", name, src.Resource)
 			}
 		}
 		if src.ExpectedFresh != "" {
@@ -493,26 +484,6 @@ func validateCheckFields(cfg *PipelineConfig) error {
 	return nil
 }
 
-func validatePoolDefs(cfg *PipelineConfig) error {
-	for name, pc := range cfg.Pools {
-		if pc.Slots <= 0 {
-			return fmt.Errorf("pool %q: slots must be > 0", name)
-		}
-		if pc.Timeout != "" {
-			if _, err := time.ParseDuration(pc.Timeout); err != nil {
-				return fmt.Errorf("pool %q: invalid timeout %q: %w", name, pc.Timeout, err)
-			}
-		}
-	}
-	for _, a := range cfg.Assets {
-		if a.Pool != "" && a.Pool != "none" {
-			if _, ok := cfg.Pools[a.Pool]; !ok {
-				return fmt.Errorf("asset %q references non-existent pool %q", a.Name, a.Pool)
-			}
-		}
-	}
-	return nil
-}
 
 // LoadConfig reads a pipeline YAML file, validates all fields, and returns the parsed configuration.
 func LoadConfig(path string) (*PipelineConfig, error) {
@@ -536,10 +507,6 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		return nil, fmt.Errorf("at least one asset is required")
 	}
 
-	if cfg.MaxParallel <= 0 {
-		cfg.MaxParallel = 10
-	}
-
 	if err := validateAssetFields(&cfg); err != nil {
 		return nil, err
 	}
@@ -554,7 +521,7 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		return nil, err
 	}
 
-	if err := validateConnectionRefs(&cfg); err != nil {
+	if err := validateResourceRefs(&cfg); err != nil {
 		return nil, err
 	}
 
@@ -563,10 +530,6 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	}
 
 	if err := validateCheckFields(&cfg); err != nil {
-		return nil, err
-	}
-
-	if err := validatePoolDefs(&cfg); err != nil {
 		return nil, err
 	}
 
@@ -580,35 +543,11 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 	return &cfg, nil
 }
 
-// ResolveAssetPool returns the pool name for an asset, auto-assigning based on connection type if not explicitly set.
-func ResolveAssetPool(asset AssetConfig, pools map[string]PoolConfig, connections map[string]*ResourceConfig) string {
-	if asset.Pool == "none" {
-		return ""
-	}
-	if asset.Pool != "" {
-		return asset.Pool
-	}
-	// Auto-assign based on default_for matching connection type
-	connName := asset.DestinationResource
-	if connName == "" {
-		return ""
-	}
-	conn, ok := connections[connName]
-	if !ok {
-		return ""
-	}
-	for poolName, pc := range pools {
-		if pc.DefaultFor == conn.Type {
-			return poolName
-		}
-	}
-	return ""
-}
 
 // ValidateResources checks that all connections have the required properties for their type.
 func ValidateResources(cfg *PipelineConfig) error {
 	for name, conn := range cfg.Resources {
-		required, known := connectionRequirements[conn.Type]
+		required, known := resourceRequirements[conn.Type]
 		if !known {
 			continue
 		}

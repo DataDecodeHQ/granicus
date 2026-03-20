@@ -45,8 +45,7 @@ environments:
 
 func TestMergeEnvironment(t *testing.T) {
 	base := &PipelineConfig{
-		Pipeline:    "test",
-		MaxParallel: 5,
+		Pipeline: "test",
 		Resources: map[string]*ResourceConfig{
 			"bq": {Name: "bq", Type: "bigquery", Properties: map[string]string{
 				"project": "base-project",

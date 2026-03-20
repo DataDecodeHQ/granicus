@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
 func TestIntegration_ScheduledRunsAndLocking(t *testing.T) {
@@ -29,7 +29,7 @@ assets:
 `)
 
 	var runCount int32
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 		time.Sleep(100 * time.Millisecond)
 	}, nil)
@@ -64,7 +64,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 	s.Start()
 	defer s.Stop()
@@ -175,7 +175,7 @@ assets:
     source: a.sh
 `)
 
-	s, err := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, err := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

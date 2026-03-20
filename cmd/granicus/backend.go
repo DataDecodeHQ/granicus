@@ -8,14 +8,14 @@ import (
 	"path/filepath"
 
 	"github.com/DataDecodeHQ/granicus/internal/runner"
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
 // Backends holds all initialized backend components.
 type Backends struct {
 	State    state.StateBackend
-	Source   source.PipelineSource
+	Source   pipe_registry.PipelineRegistry
 	Dispatch runner.RunnerDispatch
 }
 
@@ -98,7 +98,7 @@ func initRunnerDispatch() (runner.RunnerDispatch, error) {
 
 // initPipelineSource creates the appropriate PipelineSource based on env vars.
 // GRANICUS_PIPELINE_SOURCE=local (default) or gcs.
-func initPipelineSource(configDir string) (source.PipelineSource, error) {
+func initPipelineSource(configDir string) (pipe_registry.PipelineRegistry, error) {
 	mode := os.Getenv("GRANICUS_PIPELINE_SOURCE")
 
 	switch mode {
@@ -106,14 +106,14 @@ func initPipelineSource(configDir string) (source.PipelineSource, error) {
 		if configDir == "" {
 			return nil, fmt.Errorf("--config-dir is required when GRANICUS_PIPELINE_SOURCE is local or unset")
 		}
-		return source.NewLocalSource(configDir), nil
+		return pipe_registry.NewLocalRegistry(configDir), nil
 
 	case "gcs":
 		bucket := os.Getenv("GRANICUS_PIPELINES_BUCKET")
 		if bucket == "" {
 			return nil, fmt.Errorf("GRANICUS_PIPELINES_BUCKET is required when GRANICUS_PIPELINE_SOURCE=gcs")
 		}
-		return source.NewGCSVersionedSource(context.Background(), "", bucket)
+		return pipe_registry.NewGCSVersionedRegistry(context.Background(), "", bucket)
 
 	default:
 		return nil, fmt.Errorf("unknown pipeline source: %s (use local or gcs)", mode)

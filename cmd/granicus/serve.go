@@ -21,11 +21,10 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/executor"
-	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/scheduler"
 	"github.com/DataDecodeHQ/granicus/internal/server"
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
 func newServeCmd() *cobra.Command {
@@ -51,8 +50,6 @@ type PipelineExecContext struct {
 	eventStore  *events.Store
 	dispatch    runner.RunnerDispatch
 	ctx         context.Context
-	poolMgr     *pool.PoolManager
-	assetPools  map[string]string
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -210,7 +207,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.RegisterAssetPolls()
 
 	// Start file watcher (only for local sources)
-	if _, isLocal := pipeSrc.(*source.LocalSource); isLocal {
+	if _, isLocal := pipeSrc.(*pipe_registry.LocalRegistry); isLocal {
 		watcher, err := scheduler.NewWatcher(sched)
 		if err != nil {
 			slog.Warn("file watcher not started", "error", err)
@@ -314,7 +311,6 @@ func runPipelineForScheduler(pec PipelineExecContext, envName string, envCfg *co
 
 	pec.runID = events.GenerateRunID()
 	slog.Info("scheduled run", "pipeline", pec.cfg.Pipeline, "run_id", pec.runID)
-	pec.poolMgr, pec.assetPools = buildPoolManager(pec.cfg)
 	executePipeline(pec, nil, "", "", "scheduled")
 }
 
@@ -337,7 +333,6 @@ func runPipelineForTrigger(pec PipelineExecContext, envName string, envCfg *conf
 		slog.Warn("event emission failed", "event_type", "pipeline_triggered", "error", err)
 	}
 
-	pec.poolMgr, pec.assetPools = buildPoolManager(pec.cfg)
 	executePipeline(pec, req.Assets, req.FromDate, req.ToDate, "webhook")
 }
 
@@ -349,7 +344,7 @@ func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, to
 		Summary: fmt.Sprintf("Pipeline %s started", pec.cfg.Pipeline),
 		Details: map[string]any{
 			"asset_count":  len(pec.cfg.Assets),
-			"max_parallel": pec.cfg.MaxParallel,
+			"asset_count_total": len(pec.cfg.Assets),
 			"asset_filter": assetFilter,
 			"trigger":      trigger,
 		},
@@ -400,15 +395,12 @@ func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, to
 	})
 
 	runCfg := executor.RunConfig{
-		MaxParallel: pec.cfg.MaxParallel,
 		Assets:      assetFilter,
 		ProjectRoot: pec.projectRoot,
 		RunID:       pec.runID,
 		FromDate:    fromDate,
 		ToDate:      toDate,
 		StateStore:  stateStore,
-		PoolManager: pec.poolMgr,
-		AssetPools:  pec.assetPools,
 		Ctx:         pec.ctx,
 	}
 

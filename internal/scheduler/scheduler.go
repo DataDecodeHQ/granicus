@@ -14,7 +14,7 @@ import (
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
@@ -23,7 +23,7 @@ type Scheduler struct {
 	mu          sync.Mutex
 	cron        *cron.Cron
 	configDir   string // kept for watcher compatibility
-	source      source.PipelineSource
+	source      pipe_registry.PipelineRegistry
 	projectRoot string
 	runFunc     RunFunc
 	lockStore   *LockStore
@@ -34,7 +34,7 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a scheduler that loads pipeline configs from the given source and registers cron jobs.
-func NewScheduler(src source.PipelineSource, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
+func NewScheduler(src pipe_registry.PipelineRegistry, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
 	lockStore, err := NewLockStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("lock store: %w", err)
@@ -70,7 +70,7 @@ func (s *Scheduler) ConfigDir() string {
 }
 
 // Source returns the pipeline source backing this scheduler.
-func (s *Scheduler) Source() source.PipelineSource {
+func (s *Scheduler) Source() pipe_registry.PipelineRegistry {
 	return s.source
 }
 

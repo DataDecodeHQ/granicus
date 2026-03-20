@@ -1,4 +1,4 @@
-package source
+package pipe_registry
 
 import (
 	"context"
@@ -15,17 +15,17 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-// GCSVersionedSource implements PipelineSource using GCS for storage and
+// GCSVersionedRegistry implements PipelineRegistry using GCS for storage and
 // Firestore for the version registry. Pipeline versions are stored as
 // tar.gz archives at gs://<bucket>/<pipeline>/versions/v<N>_<hash>.tar.gz
-type GCSVersionedSource struct {
+type GCSVersionedRegistry struct {
 	gcs       *storage.Client
 	firestore *firestore.Client
 	bucket    string
 }
 
-// NewGCSVersionedSource creates a GCS-backed pipeline source.
-func NewGCSVersionedSource(ctx context.Context, firestoreProject, bucket string) (*GCSVersionedSource, error) {
+// NewGCSVersionedRegistry creates a GCS-backed pipeline source.
+func NewGCSVersionedRegistry(ctx context.Context, firestoreProject, bucket string) (*GCSVersionedRegistry, error) {
 	if firestoreProject == "" {
 		firestoreProject = os.Getenv("GRANICUS_FIRESTORE_PROJECT")
 	}
@@ -47,7 +47,7 @@ func NewGCSVersionedSource(ctx context.Context, firestoreProject, bucket string)
 		return nil, fmt.Errorf("creating Firestore client: %w", err)
 	}
 
-	return &GCSVersionedSource{
+	return &GCSVersionedRegistry{
 		gcs:       gcsClient,
 		firestore: fsClient,
 		bucket:    bucket,
@@ -55,14 +55,14 @@ func NewGCSVersionedSource(ctx context.Context, firestoreProject, bucket string)
 }
 
 // dag:boundary
-func (s *GCSVersionedSource) versionsCol(pipeline string) *firestore.CollectionRef {
+func (s *GCSVersionedRegistry) versionsCol(pipeline string) *firestore.CollectionRef {
 	return s.firestore.Collection("pipelines").Doc(pipeline).Collection("versions")
 }
 
 // Fetch downloads a pipeline version from GCS, extracts to a temp dir.
 // If pipeline is empty, fetches all pipelines with an active version
 // into subdirectories of a combined temp dir.
-func (s *GCSVersionedSource) Fetch(ctx context.Context, pipeline string, version string) (string, func(), error) {
+func (s *GCSVersionedRegistry) Fetch(ctx context.Context, pipeline string, version string) (string, func(), error) {
 	if pipeline == "" {
 		return s.fetchAll(ctx)
 	}
@@ -71,7 +71,7 @@ func (s *GCSVersionedSource) Fetch(ctx context.Context, pipeline string, version
 
 // fetchAll discovers all pipelines in Firestore and fetches each active one
 // into a subdirectory of a combined temp dir.
-func (s *GCSVersionedSource) fetchAll(ctx context.Context) (string, func(), error) {
+func (s *GCSVersionedRegistry) fetchAll(ctx context.Context) (string, func(), error) {
 	// List all pipeline docs
 	iter := s.firestore.Collection("pipelines").Documents(ctx)
 	defer iter.Stop()
@@ -113,7 +113,7 @@ func (s *GCSVersionedSource) fetchAll(ctx context.Context) (string, func(), erro
 	return combinedDir, cleanup, nil
 }
 
-func (s *GCSVersionedSource) fetchOne(ctx context.Context, pipeline string, version string) (string, func(), error) {
+func (s *GCSVersionedRegistry) fetchOne(ctx context.Context, pipeline string, version string) (string, func(), error) {
 	var ver Version
 	var err error
 
@@ -169,7 +169,7 @@ func (s *GCSVersionedSource) fetchOne(ctx context.Context, pipeline string, vers
 
 // List returns all versions of a pipeline from Firestore, newest first.
 // dag:boundary
-func (s *GCSVersionedSource) List(ctx context.Context, pipeline string) ([]Version, error) {
+func (s *GCSVersionedRegistry) List(ctx context.Context, pipeline string) ([]Version, error) {
 	iter := s.versionsCol(pipeline).OrderBy("number", firestore.Desc).Documents(ctx)
 	defer iter.Stop()
 
@@ -192,7 +192,7 @@ func (s *GCSVersionedSource) List(ctx context.Context, pipeline string) ([]Versi
 }
 
 // Active returns the currently active version for a pipeline.
-func (s *GCSVersionedSource) Active(ctx context.Context, pipeline string) (Version, error) {
+func (s *GCSVersionedRegistry) Active(ctx context.Context, pipeline string) (Version, error) {
 	iter := s.versionsCol(pipeline).Where("active", "==", true).Limit(1).Documents(ctx)
 	defer iter.Stop()
 
@@ -214,7 +214,7 @@ func (s *GCSVersionedSource) Active(ctx context.Context, pipeline string) (Versi
 // Register packages a pipeline directory as a new version, uploads to GCS,
 // and registers in Firestore.
 // dag:boundary
-func (s *GCSVersionedSource) Register(ctx context.Context, pipeline string, sourceDir string) (Version, error) {
+func (s *GCSVersionedRegistry) Register(ctx context.Context, pipeline string, sourceDir string) (Version, error) {
 	// Compute content hash and create archive
 	hash, fileCount, sizeBytes, archivePath, err := createArchive(sourceDir)
 	if err != nil {
@@ -287,7 +287,7 @@ func (s *GCSVersionedSource) Register(ctx context.Context, pipeline string, sour
 
 // Activate sets the active version for a pipeline via Firestore transaction.
 // dag:boundary
-func (s *GCSVersionedSource) Activate(ctx context.Context, pipeline string, version int) error {
+func (s *GCSVersionedRegistry) Activate(ctx context.Context, pipeline string, version int) error {
 	return s.firestore.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		// Find and deactivate current active version
 		iter := s.versionsCol(pipeline).Where("active", "==", true).Documents(ctx)
@@ -329,7 +329,7 @@ func currentUser() string {
 }
 
 // Diff returns files that differ between two versions.
-func (s *GCSVersionedSource) Diff(ctx context.Context, pipeline string, versionA, versionB int) (added, removed, modified []string, err error) {
+func (s *GCSVersionedRegistry) Diff(ctx context.Context, pipeline string, versionA, versionB int) (added, removed, modified []string, err error) {
 	dirA, cleanupA, err := s.Fetch(ctx, pipeline, fmt.Sprintf("%d", versionA))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("fetching version %d: %w", versionA, err)
@@ -395,5 +395,5 @@ func listFiles(dir string) []string {
 	return files
 }
 
-// Verify GCSVersionedSource implements PipelineSource at compile time.
-var _ PipelineSource = (*GCSVersionedSource)(nil)
+// Verify GCSVersionedRegistry implements PipelineRegistry at compile time.
+var _ PipelineRegistry = (*GCSVersionedRegistry)(nil)

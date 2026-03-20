@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/graph"
-	"github.com/DataDecodeHQ/granicus/internal/pool"
 )
 
 func successRunner(delay time.Duration) RunnerFunc {
@@ -297,53 +296,6 @@ func TestExecute_LargeGraph(t *testing.T) {
 	}
 }
 
-func TestExecute_PoolConcurrencyLimit(t *testing.T) {
-	// 5 independent nodes, max_parallel=10 but pool limits to 2 slots
-	var assets []graph.AssetInput
-	assetPools := make(map[string]string)
-	for i := 0; i < 5; i++ {
-		name := fmt.Sprintf("n%d", i)
-		assets = append(assets, graph.AssetInput{Name: name, Type: "shell", Source: name + ".sh"})
-		assetPools[name] = "bq"
-	}
-
-	g := buildTestGraph(t, assets, nil)
-
-	pm := pool.NewPoolManager(map[string]pool.PoolConfig{
-		"bq": {Slots: 2, ParsedTimeout: 30 * time.Second},
-	})
-
-	var maxConcurrent int32
-	var current int32
-	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
-		cur := atomic.AddInt32(&current, 1)
-		for {
-			old := atomic.LoadInt32(&maxConcurrent)
-			if cur <= old || atomic.CompareAndSwapInt32(&maxConcurrent, old, cur) {
-				break
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-		atomic.AddInt32(&current, -1)
-		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
-	}
-
-	rr := Execute(g, RunConfig{
-		MaxParallel: 10,
-		PoolManager: pm,
-		AssetPools:  assetPools,
-	}, runner)
-
-	if len(rr.Results) != 5 {
-		t.Errorf("expected 5 results, got %d", len(rr.Results))
-	}
-
-	mc := atomic.LoadInt32(&maxConcurrent)
-	if mc > 2 {
-		t.Errorf("pool should limit to 2 concurrent, got %d", mc)
-	}
-}
-
 func TestExecute_NoPoolBackwardsCompat(t *testing.T) {
 	// No PoolManager — should work exactly as before
 	g := buildTestGraph(t,
@@ -355,32 +307,6 @@ func TestExecute_NoPoolBackwardsCompat(t *testing.T) {
 	)
 
 	rr := Execute(g, RunConfig{MaxParallel: 10}, successRunner(0))
-	rm := resultMap(rr)
-	if rm["A"] != "success" || rm["B"] != "success" {
-		t.Errorf("expected all success: %v", rm)
-	}
-}
-
-func TestExecute_MixedPoolAndNoPool(t *testing.T) {
-	// A has pool, B does not — both should succeed
-	g := buildTestGraph(t,
-		[]graph.AssetInput{
-			{Name: "A", Type: "shell", Source: "a.sh"},
-			{Name: "B", Type: "shell", Source: "b.sh"},
-		},
-		nil,
-	)
-
-	pm := pool.NewPoolManager(map[string]pool.PoolConfig{
-		"bq": {Slots: 1, ParsedTimeout: 5 * time.Second},
-	})
-
-	rr := Execute(g, RunConfig{
-		MaxParallel: 10,
-		PoolManager: pm,
-		AssetPools:  map[string]string{"A": "bq"},
-	}, successRunner(0))
-
 	rm := resultMap(rr)
 	if rm["A"] != "success" || rm["B"] != "success" {
 		t.Errorf("expected all success: %v", rm)

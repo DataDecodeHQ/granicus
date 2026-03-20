@@ -11,6 +11,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/scheduler"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
 type TriggerRequest struct {
@@ -39,7 +40,10 @@ type Server struct {
 	lockStore   *scheduler.LockStore
 	eventStore  *events.Store
 	runFunc     RunFunc
-	httpServer  *http.Server
+	pruneFunc    PruneFunc
+	registry     pipe_registry.PipelineRegistry
+	stateFactory StateBackendFactory
+	httpServer   *http.Server
 	wg          sync.WaitGroup
 	shutdownCtx context.Context
 }
@@ -63,6 +67,17 @@ func (s *Server) SetConfigs(configs map[string]*config.PipelineConfig) {
 	s.configs = configs
 }
 
+// PruneFunc runs archive+prune for a given retention_days and dry_run flag.
+// Returns a result map suitable for JSON response.
+type PruneFunc func(ctx context.Context, retentionDays int, dryRun bool) (map[string]any, error)
+
+// SetPruneFunc registers the function used by the admin prune endpoint.
+func (s *Server) SetPruneFunc(fn PruneFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneFunc = fn
+}
+
 // Handler returns the HTTP handler with all API routes registered.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -72,6 +87,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/runs/", s.handleRuns)
 	mux.HandleFunc("/api/v1/pipelines/", s.handlePipelines)
 	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)
+	mux.HandleFunc("/api/v1/admin/prune", s.handleAdminPrune)
+	mux.HandleFunc("/api/v1/registry/", s.handleRegistry)
+	mux.HandleFunc("/api/v1/state/", s.handlePipelineState)
 	return mux
 }
 
@@ -405,6 +423,47 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, schedules)
+}
+
+type pruneRequest struct {
+	RetentionDays int  `json:"retention_days"`
+	DryRun        bool `json:"dry_run"`
+}
+
+func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	s.mu.RLock()
+	fn := s.pruneFunc
+	s.mu.RUnlock()
+
+	if fn == nil {
+		writeJSON(w, http.StatusNotImplemented, ErrorResponse{Error: "prune not configured"})
+		return
+	}
+
+	var req pruneRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid JSON body"})
+			return
+		}
+	}
+
+	if req.RetentionDays <= 0 {
+		req.RetentionDays = 90
+	}
+
+	result, err := fn(r.Context(), req.RetentionDays, req.DryRun)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

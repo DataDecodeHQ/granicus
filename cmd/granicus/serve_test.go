@@ -65,16 +65,6 @@ func TestPipelineExecContext_RunIDAssignment(t *testing.T) {
 	}
 }
 
-func TestPipelineExecContext_PoolFieldsDefaultNil(t *testing.T) {
-	pec := newTestPEC(t, minimalPipelineConfig())
-	if pec.poolMgr != nil {
-		t.Error("expected nil poolMgr before assignment")
-	}
-	if pec.assetPools != nil {
-		t.Error("expected nil assetPools before assignment")
-	}
-}
-
 func TestPipelineExecContext_DispatchDefaultsNil(t *testing.T) {
 	pec := newTestPEC(t, minimalPipelineConfig())
 	if pec.dispatch != nil {
@@ -116,7 +106,7 @@ func TestPipelineExecContext_ContextCancellation(t *testing.T) {
 // ---- runPipelineForScheduler ----
 
 func TestRunPipelineForScheduler_NilEnvCfg_DoesNotPanic(t *testing.T) {
-	cfg := &config.PipelineConfig{Pipeline: "noop", MaxParallel: 1}
+	cfg := &config.PipelineConfig{Pipeline: "noop"}
 	pec := newTestPEC(t, cfg)
 
 	defer func() {
@@ -128,7 +118,7 @@ func TestRunPipelineForScheduler_NilEnvCfg_DoesNotPanic(t *testing.T) {
 }
 
 func TestRunPipelineForScheduler_WithEnvMerge_DoesNotPanic(t *testing.T) {
-	cfg := &config.PipelineConfig{Pipeline: "merge_test", MaxParallel: 1, Prefix: "original"}
+	cfg := &config.PipelineConfig{Pipeline: "merge_test", Prefix: "original"}
 	envCfg := &config.EnvironmentConfig{
 		Environments: map[string]*config.EnvironmentOverride{
 			"dev": {Prefix: "dev_prefix"},
@@ -147,7 +137,7 @@ func TestRunPipelineForScheduler_WithEnvMerge_DoesNotPanic(t *testing.T) {
 // ---- runPipelineForTrigger ----
 
 func TestRunPipelineForTrigger_NilEnvCfg_DoesNotPanic(t *testing.T) {
-	cfg := &config.PipelineConfig{Pipeline: "noop", MaxParallel: 1}
+	cfg := &config.PipelineConfig{Pipeline: "noop"}
 	pec := newTestPEC(t, cfg)
 	pec.runID = events.GenerateRunID()
 

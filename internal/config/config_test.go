@@ -19,7 +19,6 @@ func writeTestConfig(t *testing.T, content string) string {
 func TestParseConfig_ValidYAML(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: revenue_daily
-max_parallel: 5
 resources:
   bq_main:
     type: bigquery
@@ -39,9 +38,6 @@ assets:
 	}
 	if cfg.Pipeline != "revenue_daily" {
 		t.Errorf("got pipeline %q", cfg.Pipeline)
-	}
-	if cfg.MaxParallel != 5 {
-		t.Errorf("got max_parallel %d", cfg.MaxParallel)
 	}
 	if len(cfg.Assets) != 2 {
 		t.Fatalf("got %d assets", len(cfg.Assets))
@@ -116,9 +112,6 @@ assets:
 `))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.MaxParallel != 10 {
-		t.Errorf("expected default max_parallel=10, got %d", cfg.MaxParallel)
 	}
 	if cfg.Assets[0].Name != "my_script" {
 		t.Errorf("expected inferred name 'my_script', got %q", cfg.Assets[0].Name)
@@ -436,102 +429,6 @@ assets:
 	}
 }
 
-func TestParseConfig_PoolValidation(t *testing.T) {
-	// Valid pool config
-	cfg, err := LoadConfig(writeTestConfig(t, `
-pipeline: test
-resources:
-  bq:
-    type: bigquery
-    project: p
-    dataset: d
-pools:
-  bq_pool:
-    slots: 4
-    timeout: 5m
-    default_for: bigquery
-assets:
-  - name: x
-    type: sql
-    source: x.sql
-    destination_resource: bq
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Pools["bq_pool"].Slots != 4 {
-		t.Errorf("slots: %d", cfg.Pools["bq_pool"].Slots)
-	}
-	if cfg.Pools["bq_pool"].Timeout != "5m" {
-		t.Errorf("timeout: %q", cfg.Pools["bq_pool"].Timeout)
-	}
-	if cfg.Pools["bq_pool"].DefaultFor != "bigquery" {
-		t.Errorf("default_for: %q", cfg.Pools["bq_pool"].DefaultFor)
-	}
-}
-
-func TestParseConfig_PoolSlotsZero(t *testing.T) {
-	_, err := LoadConfig(writeTestConfig(t, `
-pipeline: test
-pools:
-  bad:
-    slots: 0
-assets:
-  - name: x
-    type: shell
-    source: x.sh
-`))
-	if err == nil {
-		t.Error("expected error for pool slots=0")
-	}
-}
-
-func TestParseConfig_PoolBadTimeout(t *testing.T) {
-	_, err := LoadConfig(writeTestConfig(t, `
-pipeline: test
-pools:
-  bad:
-    slots: 1
-    timeout: not-a-duration
-assets:
-  - name: x
-    type: shell
-    source: x.sh
-`))
-	if err == nil {
-		t.Error("expected error for invalid pool timeout")
-	}
-}
-
-func TestParseConfig_PoolReference(t *testing.T) {
-	_, err := LoadConfig(writeTestConfig(t, `
-pipeline: test
-assets:
-  - name: x
-    type: shell
-    source: x.sh
-    pool: nonexistent
-`))
-	if err == nil {
-		t.Error("expected error for non-existent pool reference")
-	}
-}
-
-func TestParseConfig_PoolNone(t *testing.T) {
-	// pool: none should not require the pool to exist
-	_, err := LoadConfig(writeTestConfig(t, `
-pipeline: test
-assets:
-  - name: x
-    type: shell
-    source: x.sh
-    pool: none
-`))
-	if err != nil {
-		t.Fatalf("pool=none should be valid: %v", err)
-	}
-}
-
 func TestParseConfig_SourceExtendedFields(t *testing.T) {
 	cfg, err := LoadConfig(writeTestConfig(t, `
 pipeline: test
@@ -835,39 +732,6 @@ assets:
 	}
 	if cfg.Assets[2].FanOutCheck != nil {
 		t.Errorf("expected nil fan_out_check[2], got %v", cfg.Assets[2].FanOutCheck)
-	}
-}
-
-func TestResolveAssetPool(t *testing.T) {
-	pools := map[string]PoolConfig{
-		"bq_pool": {Slots: 4, DefaultFor: "bigquery"},
-		"pg_pool": {Slots: 2, DefaultFor: "postgres"},
-	}
-	conns := map[string]*ResourceConfig{
-		"bq":  {Name: "bq", Type: "bigquery", Properties: map[string]string{"project": "p", "dataset": "d"}},
-		"pg":  {Name: "pg", Type: "postgres", Properties: map[string]string{"host": "h", "database": "db"}},
-	}
-
-	tests := []struct {
-		name     string
-		asset    AssetConfig
-		expected string
-	}{
-		{"explicit pool", AssetConfig{Pool: "bq_pool"}, "bq_pool"},
-		{"pool none", AssetConfig{Pool: "none"}, ""},
-		{"auto from bq connection", AssetConfig{DestinationResource: "bq"}, "bq_pool"},
-		{"auto from pg connection", AssetConfig{DestinationResource: "pg"}, "pg_pool"},
-		{"no connection no pool", AssetConfig{}, ""},
-		{"unknown connection", AssetConfig{DestinationResource: "unknown"}, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ResolveAssetPool(tt.asset, pools, conns)
-			if got != tt.expected {
-				t.Errorf("ResolveAssetPool() = %q, want %q", got, tt.expected)
-			}
-		})
 	}
 }
 

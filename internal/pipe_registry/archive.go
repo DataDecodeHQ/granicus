@@ -1,4 +1,4 @@
-package source
+package pipe_registry
 
 import (
 	"archive/tar"

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/graph"
-	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/state"
 	"github.com/DataDecodeHQ/granicus/internal/types"
 )
@@ -36,8 +35,6 @@ type RunConfig struct {
 	TestDataset     string // set by test mode setup (the created dataset name)
 	DownstreamOnly  bool
 	Only            bool
-	PoolManager     *pool.PoolManager
-	AssetPools      map[string]string // asset name -> pool name
 	Ctx             context.Context   // cancelled on SIGTERM/SIGINT for graceful shutdown
 	ShutdownTimeout time.Duration     // max wait for in-progress nodes; 0 = DefaultShutdownTimeout
 }
@@ -182,25 +179,6 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 					EndTime:   now,
 				}
 				return
-			}
-
-			// Acquire pool slot if configured
-			if cfg.PoolManager != nil && cfg.AssetPools != nil {
-				if poolName, ok := cfg.AssetPools[name]; ok && poolName != "" {
-					if err := cfg.PoolManager.Acquire(context.Background(), poolName); err != nil {
-						slog.Error("pool acquire failed", "asset", name, "error", err)
-						done <- NodeResult{
-							AssetName: name,
-							Status:    "failed",
-							StartTime: time.Now(),
-							EndTime:   time.Now(),
-							Error:     fmt.Sprintf("pool slot acquisition failed: %v", err),
-							ExitCode:  -1,
-						}
-						return
-					}
-					defer cfg.PoolManager.Release(poolName)
-				}
 			}
 
 			if asset.TimeColumn != "" && cfg.StateStore != nil {

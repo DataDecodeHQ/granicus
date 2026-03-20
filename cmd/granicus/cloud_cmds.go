@@ -12,7 +12,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
@@ -41,7 +41,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	src, err := source.NewGCSVersionedSource(ctx, "", "")
+	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
 	if err != nil {
 		return fmt.Errorf("connecting to version store: %w", err)
 	}
@@ -93,7 +93,7 @@ func runActivate(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	src, err := source.NewGCSVersionedSource(ctx, "", "")
+	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
 	if err != nil {
 		return fmt.Errorf("connecting to version store: %w", err)
 	}
@@ -123,7 +123,7 @@ func runVersions(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
 	ctx := context.Background()
-	src, err := source.NewGCSVersionedSource(ctx, "", "")
+	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
 	if err != nil {
 		return fmt.Errorf("connecting to version store: %w", err)
 	}
@@ -169,7 +169,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
 	ctx := context.Background()
-	src, err := source.NewGCSVersionedSource(ctx, "", "")
+	src, err := pipe_registry.NewGCSVersionedRegistry(ctx, "", "")
 	if err != nil {
 		return fmt.Errorf("connecting to version store: %w", err)
 	}

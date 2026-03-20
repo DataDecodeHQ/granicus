@@ -1,14 +1,14 @@
-package source
+package pipe_registry
 
 import (
 	"context"
 	"time"
 )
 
-// PipelineSource abstracts how pipeline files are obtained. LocalSource reads
-// from a directory on disk (current behavior). GCSVersionedSource fetches
+// PipelineRegistry abstracts how pipeline files are obtained. LocalRegistry reads
+// from a directory on disk (current behavior). GCSVersionedRegistry fetches
 // versioned archives from GCS (cloud deployment).
-type PipelineSource interface {
+type PipelineRegistry interface {
 	// Fetch retrieves pipeline files to a local directory. An empty version
 	// string means "active version". The returned cleanup function removes
 	// any temporary files; callers must call it when done.

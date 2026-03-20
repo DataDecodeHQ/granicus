@@ -10,7 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
 func newCronWithSeconds() *cron.Cron {
@@ -43,7 +43,7 @@ assets:
 `)
 
 	var runCount int32
-	s, err := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, err := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 	}, nil)
 	if err != nil {
@@ -79,7 +79,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	pipelines := s.Pipelines()
@@ -101,7 +101,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	// Add a new pipeline
@@ -148,7 +148,7 @@ assets:
 `)
 
 	var runCount int32
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 	}, nil)
 
@@ -184,7 +184,7 @@ assets:
 `)
 
 	var lastAssetName atomic.Value
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		if len(cfg.Assets) > 0 {
 			lastAssetName.Store(cfg.Assets[0].Name)
 		}
@@ -236,7 +236,7 @@ assets:
 `)
 
 	var runCount int32
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {
 		atomic.AddInt32(&runCount, 1)
 		time.Sleep(2 * time.Second) // Hold lock for 2 seconds
 	}, nil)

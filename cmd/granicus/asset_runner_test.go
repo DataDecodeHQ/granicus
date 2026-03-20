@@ -29,7 +29,6 @@ func newTestEventStore(t *testing.T) *events.Store {
 func minimalPipelineConfig() *config.PipelineConfig {
 	return &config.PipelineConfig{
 		Pipeline:    "test_pipeline",
-		MaxParallel: 2,
 		Prefix:      "dev",
 		Resources: map[string]*config.ResourceConfig{
 			"bq_main": {

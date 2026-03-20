@@ -16,11 +16,6 @@
       "type": "string",
       "description": "Cron expression for scheduled execution (e.g. '0 6 * * *')."
     },
-    "max_parallel": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Maximum number of assets to run concurrently. Defaults to 10."
-    },
     "functions_dir": {
       "type": "string",
       "description": "Directory containing shared SQL functions/macros available to all SQL assets."
@@ -45,13 +40,6 @@
       "description": "Named external source tables with optional contracts. Each key is the source name.",
       "additionalProperties": {
         "$ref": "#/definitions/source"
-      }
-    },
-    "pools": {
-      "type": "object",
-      "description": "Named concurrency pools. Assets can be assigned to a pool to limit parallel execution.",
-      "additionalProperties": {
-        "$ref": "#/definitions/pool"
       }
     },
     "assets": {
@@ -209,27 +197,6 @@
           "type": "array",
           "description": "Columns that must exist in the source table (contract check).",
           "items": { "type": "string", "minLength": 1 }
-        }
-      }
-    },
-    "pool": {
-      "type": "object",
-      "description": "Concurrency pool that limits how many assets run simultaneously.",
-      "required": ["slots"],
-      "additionalProperties": false,
-      "properties": {
-        "slots": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Maximum number of assets from this pool that can run at once."
-        },
-        "timeout": {
-          "$ref": "#/definitions/duration",
-          "description": "Maximum time an asset may hold a pool slot before being forcibly released."
-        },
-        "default_for": {
-          "type": "string",
-          "description": "Connection type that automatically uses this pool when no explicit pool is set (e.g. 'bigquery')."
         }
       }
     },
@@ -423,10 +390,6 @@
         "grain": {
           "type": "string",
           "description": "Comma-separated column name(s) that uniquely identify a row (e.g. 'order_id' or 'date,campaign_id')."
-        },
-        "pool": {
-          "type": "string",
-          "description": "Pool name to throttle concurrency. Use 'none' to opt out of auto-assignment."
         },
         "default_checks": {
           "type": "boolean",

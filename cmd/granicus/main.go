@@ -29,7 +29,6 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/logging"
 	"github.com/DataDecodeHQ/granicus/internal/migrate"
 	"github.com/DataDecodeHQ/granicus/internal/monitor"
-	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/rerun"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/state"
@@ -140,7 +139,6 @@ func main() {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runRun,
 	}
-	runCmd.Flags().Int("max-parallel", 0, "Override max_parallel from config")
 	runCmd.Flags().String("assets", "", "Run only these assets and their dependencies (comma-separated)")
 	runCmd.Flags().String("project-root", ".", "Project root directory")
 	runCmd.Flags().String("from-failure", "", "Re-run from a failed run ID")
@@ -201,6 +199,7 @@ func main() {
 	}
 	gcCmd.Flags().Int("retention-days", 30, "Delete runs older than this many days")
 	gcCmd.Flags().String("project-root", ".", "Project root directory")
+	gcCmd.Flags().Bool("dry-run", false, "Show what would be cleaned without deleting")
 
 	backupCmd := &cobra.Command{
 		Use:   "backup",
@@ -550,7 +549,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	projectRoot, _ := cmd.Flags().GetString("project-root")
-	maxParallel, _ := cmd.Flags().GetInt("max-parallel")
 	assetsFlag, _ := cmd.Flags().GetString("assets")
 	downstreamOnly, _ := cmd.Flags().GetBool("downstream-only")
 	only, _ := cmd.Flags().GetBool("only")
@@ -593,10 +591,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 			printJSONError("CONFIG_ERROR", err.Error(), "Check your pipeline configuration file", nil)
 		}
 		return err
-	}
-
-	if maxParallel > 0 {
-		cfg.MaxParallel = maxParallel
 	}
 
 	if downstreamOnly && assetsFlag == "" {
@@ -646,8 +640,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	if !outputJSON {
 		fmt.Printf("Pipeline: %s\n", cfg.Pipeline)
-		fmt.Printf("Assets: %d (%d root nodes)\n", len(g.Assets), len(g.RootNodes))
-		fmt.Printf("Max parallel: %d\n\n", cfg.MaxParallel)
+		fmt.Printf("Assets: %d (%d root nodes)\n\n", len(g.Assets), len(g.RootNodes))
 	}
 
 	runID := events.GenerateRunID()
@@ -708,7 +701,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
 		Details: map[string]any{
 			"asset_count":  len(g.Assets),
-			"max_parallel": cfg.MaxParallel,
 			"asset_filter": assetFilter,
 			"test_mode":    testMode,
 			"full_refresh": fullRefresh,
@@ -719,11 +711,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		OutputJSON: outputJSON,
 	})
 
-	// Build pool manager and asset-pool mappings
-	poolMgr, assetPools := buildPoolManager(cfg)
-
 	runCfg := executor.RunConfig{
-		MaxParallel:    cfg.MaxParallel,
 		Assets:         assetFilter,
 		ProjectRoot:    projectRoot,
 		RunID:          runID,
@@ -737,8 +725,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 		KeepTestData:   keepTestData,
 		DownstreamOnly: downstreamOnly,
 		Only:           only,
-		PoolManager:    poolMgr,
-		AssetPools:     assetPools,
 		Ctx:            shutdownCtx,
 	}
 
@@ -1345,6 +1331,22 @@ func runHistory(cmd *cobra.Command, args []string) error {
 func runGC(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	retentionDays, _ := cmd.Flags().GetInt("retention-days")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	if isCloudMode() {
+		body := map[string]any{
+			"retention_days": retentionDays,
+			"dry_run":        dryRun,
+		}
+		data, err := cloudPost("/api/v1/admin/prune", body)
+		if err != nil {
+			return fmt.Errorf("cloud gc: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	_ = dryRun // local gc does not support dry-run yet
 
 	// Clean old JSONL runs (legacy)
 	result, err := gc.Collect(projectRoot, retentionDays)
@@ -1675,33 +1677,6 @@ func runModels(cmd *cobra.Command, args []string) error {
 	return showModelHistory(eventStore, assetName, outputJSON)
 }
 
-func buildPoolManager(cfg *config.PipelineConfig) (*pool.PoolManager, map[string]string) {
-	if len(cfg.Pools) == 0 {
-		return nil, nil
-	}
-
-	poolConfigs := make(map[string]pool.PoolConfig, len(cfg.Pools))
-	for name, pc := range cfg.Pools {
-		var timeout time.Duration
-		if pc.Timeout != "" {
-			timeout, _ = time.ParseDuration(pc.Timeout) // dag:intentional -- timeout format already validated during config load
-		}
-		poolConfigs[name] = pool.PoolConfig{
-			Slots:         pc.Slots,
-			ParsedTimeout: timeout,
-			DefaultFor:    pc.DefaultFor,
-		}
-	}
-
-	assetPools := make(map[string]string, len(cfg.Assets))
-	for _, a := range cfg.Assets {
-		if p := config.ResolveAssetPool(a, cfg.Pools, cfg.Resources); p != "" {
-			assetPools[a.Name] = p
-		}
-	}
-
-	return pool.NewPoolManager(poolConfigs), assetPools
-}
 
 func parseDuration(s string) (time.Duration, error) {
 	// Try standard Go duration first (24h, 1h30m, etc.)

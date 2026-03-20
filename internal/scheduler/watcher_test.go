@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
-	"github.com/DataDecodeHQ/granicus/internal/source"
+	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
 func TestWatcher_DetectsNewConfig(t *testing.T) {
@@ -23,7 +23,7 @@ assets:
     source: a.sh
 `)
 
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	w, err := NewWatcher(s)
@@ -73,7 +73,7 @@ assets:
     source: b.sh
 `)
 
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	w, err := NewWatcher(s)
@@ -97,7 +97,7 @@ func TestWatcher_DebounceCoalesces(t *testing.T) {
 	db := newTestDB(t)
 	configDir := t.TempDir()
 
-	s, _ := NewScheduler(source.NewLocalSource(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
+	s, _ := NewScheduler(pipe_registry.NewLocalRegistry(configDir), "/tmp", db, func(cfg *config.PipelineConfig, pr string) {}, nil)
 	s.LoadAndRegister()
 
 	w, err := NewWatcher(s)

@@ -49,9 +49,8 @@ func setupServer(t *testing.T) (*Server, *events.Store) {
 
 	srv.SetConfigs(map[string]*config.PipelineConfig{
 		"test_pipeline": {
-			Pipeline:    "test_pipeline",
-			MaxParallel: 5,
-			Assets:      []config.AssetConfig{{Name: "a", Type: "shell", Source: "a.sh"}},
+			Pipeline: "test_pipeline",
+			Assets:   []config.AssetConfig{{Name: "a", Type: "shell", Source: "a.sh"}},
 		},
 	})
 
