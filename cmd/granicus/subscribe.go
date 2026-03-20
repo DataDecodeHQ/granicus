@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/DataDecodeHQ/granicus/internal/logging"
@@ -59,7 +59,7 @@ func runSubscribe(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	sub := client.Subscription(subscription)
+	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = 100
 
 	slog.Info("subscribing to events", "subscription", subscription, "project", project)

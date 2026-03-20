@@ -378,7 +378,7 @@ func prependDropForReplace(sql []byte) []byte {
 		return sql
 	}
 	sub := createOrReplaceRe.FindSubmatch(sql)
-	if sub == nil || len(sub) < 2 {
+	if len(sub) < 2 {
 		return sql
 	}
 	tableRef := string(sub[1])

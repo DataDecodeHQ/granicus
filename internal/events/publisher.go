@@ -7,15 +7,15 @@ import (
 	"os"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 )
 
 // DualWritePublisher writes events to both the local event store and Pub/Sub.
 // Pub/Sub failures are logged but do not block the Firestore write.
 type DualWritePublisher struct {
-	store  *Store
-	topic  *pubsub.Topic
-	client *pubsub.Client
+	store     *Store
+	publisher *pubsub.Publisher
+	client    *pubsub.Client
 }
 
 // NewDualWritePublisher creates a publisher that writes to local events and Pub/Sub.
@@ -45,10 +45,10 @@ func NewDualWritePublisher(store *Store) *DualWritePublisher {
 		return p
 	}
 
-	topic := client.Topic(topicName)
-	topic.EnableMessageOrdering = true
+	publisher := client.Publisher(topicName)
+	publisher.EnableMessageOrdering = true
 	p.client = client
-	p.topic = topic
+	p.publisher = publisher
 	return p
 }
 
@@ -60,7 +60,7 @@ func (p *DualWritePublisher) Emit(event Event) error {
 	}
 
 	// Publish to Pub/Sub (non-blocking on failure)
-	if p.topic != nil {
+	if p.publisher != nil {
 		go p.publishAsync(event)
 	}
 
@@ -78,7 +78,7 @@ func (p *DualWritePublisher) publishAsync(event Event) {
 	}
 
 	orderingKey := event.Pipeline + ":" + event.RunID
-	result := p.topic.Publish(ctx, &pubsub.Message{
+	result := p.publisher.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: orderingKey,
 		Attributes: map[string]string{
@@ -96,8 +96,8 @@ func (p *DualWritePublisher) publishAsync(event Event) {
 
 // Close releases Pub/Sub resources.
 func (p *DualWritePublisher) Close() {
-	if p.topic != nil {
-		p.topic.Stop()
+	if p.publisher != nil {
+		p.publisher.Stop()
 	}
 	if p.client != nil {
 		p.client.Close()

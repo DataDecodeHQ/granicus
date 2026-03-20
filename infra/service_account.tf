@@ -78,6 +78,13 @@ resource "google_project_iam_member" "deploy_firestore" {
 # deploy_pubsub removed — Pub/Sub resources not yet provisioned (pubsub.tf is commented out).
 # Re-add when Pub/Sub topics are uncommented and applied.
 
+resource "google_storage_bucket_iam_member" "deploy_tf_state" {
+  # description: deploy SA access to Terraform state bucket for CI/CD
+  bucket = "granicus-terraform-state"
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.deploy.email}"
+}
+
 resource "google_project_iam_member" "deploy_scheduler" {
   # description: deploy SA Cloud Scheduler admin for provisioning jobs
   project = var.project_id

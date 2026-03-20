@@ -80,7 +80,11 @@ func checkBQConnectivity(connName string, conn *config.ConnectionConfig) CheckRe
 
 	var opts []option.ClientOption
 	if creds := conn.Properties["credentials"]; creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
+		data, err := os.ReadFile(creds)
+		if err != nil {
+			return CheckResult{Name: name, Status: StatusFail, Message: fmt.Sprintf("reading credentials: %v", err)}
+		}
+		opts = append(opts, option.WithCredentialsJSON(data))
 	}
 
 	client, err := bigquery.NewClient(ctx, project, opts...)

@@ -39,27 +39,21 @@ func GenerateDefaultCheckNodesWithDirectives(cfg *config.PipelineConfig, directi
 
 	// Wire FK checks
 	fkNodes, fkDeps := GenerateFKCheckNodes(cfg)
-	for _, n := range fkNodes {
-		nodes = append(nodes, n)
-	}
+	nodes = append(nodes, fkNodes...)
 	for k, v := range fkDeps {
 		deps[k] = v
 	}
 
 	// Wire completeness checks
 	compNodes, compDeps := GenerateCompletenessCheckNodes(cfg)
-	for _, n := range compNodes {
-		nodes = append(nodes, n)
-	}
+	nodes = append(nodes, compNodes...)
 	for k, v := range compDeps {
 		deps[k] = v
 	}
 
 	// Wire standards checks
 	stdNodes, stdDeps := GenerateStandardsCheckNodes(cfg)
-	for _, n := range stdNodes {
-		nodes = append(nodes, n)
-	}
+	nodes = append(nodes, stdNodes...)
 	for k, v := range stdDeps {
 		deps[k] = v
 	}

@@ -8,12 +8,10 @@ terraform {
     }
   }
 
-  # Local state for now. Migrate to GCS backend once stable:
-  #
-  # backend "gcs" {
-  #   bucket = "granicus-terraform-state"
-  #   prefix = "granicus"
-  # }
+  backend "gcs" {
+    bucket = "granicus-terraform-state"
+    prefix = "granicus"
+  }
 }
 
 provider "google" {

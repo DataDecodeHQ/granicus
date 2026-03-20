@@ -1746,7 +1746,12 @@ func newBQClientForContext(cfg *config.PipelineConfig) *bigquery.Client {
 		var opts []option.ClientOption
 		credMethod := "default"
 		if creds := conn.Properties["credentials"]; creds != "" {
-			opts = append(opts, option.WithCredentialsFile(creds))
+			data, err := os.ReadFile(creds)
+			if err != nil {
+				slog.Warn("could not read credentials file", "error", err)
+				return nil
+			}
+			opts = append(opts, option.WithCredentialsJSON(data))
 			credMethod = "file"
 		}
 		client, err := bigquery.NewClient(context.Background(), conn.Properties["project"], opts...)
@@ -1783,7 +1788,11 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 
 		var opts []option.ClientOption
 		if key.creds != "" {
-			opts = append(opts, option.WithCredentialsFile(key.creds))
+			data, err := os.ReadFile(key.creds)
+			if err != nil {
+				return fmt.Errorf("reading credentials file %s: %w", key.creds, err)
+			}
+			opts = append(opts, option.WithCredentialsJSON(data))
 		}
 		client, err := bigquery.NewClient(ctx, key.project, opts...)
 		if err != nil {

@@ -33,9 +33,9 @@ func FormatSummary(r *TestResult) string {
 	b.WriteString("\n--- Test Run Summary ---\n")
 
 	if r.Passed() {
-		b.WriteString(fmt.Sprintf("Status: PASSED\n"))
+		b.WriteString("Status: PASSED\n")
 	} else {
-		b.WriteString(fmt.Sprintf("Status: FAILED\n"))
+		b.WriteString("Status: FAILED\n")
 	}
 
 	b.WriteString(fmt.Sprintf("Assets: %d\n", r.AssetCount))

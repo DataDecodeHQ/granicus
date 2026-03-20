@@ -7,8 +7,6 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
-func floatPtr(f float64) *float64 { return &f }
-
 func makeCompleteCfg(assets []config.AssetConfig) *config.PipelineConfig {
 	return &config.PipelineConfig{
 		Pipeline: "test",

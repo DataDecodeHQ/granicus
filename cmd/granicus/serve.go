@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -79,6 +80,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	var apiKeys []server.APIKey
 	for _, k := range serverCfg.Server.APIKeys {
 		apiKeys = append(apiKeys, server.APIKey{Name: k.Name, Key: k.Key})
+	}
+	// GRANICUS_API_KEYS overrides / supplements server config api_keys.
+	// Expected format: JSON array of {name, key} objects, e.g.
+	//   [{"name":"scheduler","key":"<value>"}]
+	if envKeys := os.Getenv("GRANICUS_API_KEYS"); envKeys != "" {
+		var parsed []server.APIKey
+		if err := json.Unmarshal([]byte(envKeys), &parsed); err != nil {
+			return fmt.Errorf("parsing GRANICUS_API_KEYS: %w", err)
+		}
+		apiKeys = append(apiKeys, parsed...)
+		slog.Info("api_keys_loaded", "source", "GRANICUS_API_KEYS", "count", len(parsed))
 	}
 	if err := server.ValidateAuth(apiKeys); err != nil {
 		slog.Error("auth validation failed", "env", envName, "error", err)

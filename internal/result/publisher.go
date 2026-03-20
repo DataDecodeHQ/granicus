@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"os"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 )
 
 // Publisher sends ResultEnvelopes to a Pub/Sub topic.
 // Used by Cloud Run Jobs to report results back to the engine.
 type Publisher struct {
-	client *pubsub.Client
-	topic  *pubsub.Topic
+	client    *pubsub.Client
+	publisher *pubsub.Publisher
 }
 
 // NewPublisher creates a result publisher. Project and topic are read from
@@ -37,12 +37,12 @@ func NewPublisher(ctx context.Context, project, topicName string) (*Publisher, e
 		return nil, fmt.Errorf("creating Pub/Sub client: %w", err)
 	}
 
-	topic := client.Topic(topicName)
-	topic.EnableMessageOrdering = true
+	pub := client.Publisher(topicName)
+	pub.EnableMessageOrdering = true
 
 	return &Publisher{
-		client: client,
-		topic:  topic,
+		client:    client,
+		publisher: pub,
 	}, nil
 }
 
@@ -56,7 +56,7 @@ func (p *Publisher) Publish(ctx context.Context, envelope ResultEnvelope) error 
 
 	orderingKey := envelope.Pipeline + ":" + envelope.RunID
 
-	result := p.topic.Publish(ctx, &pubsub.Message{
+	result := p.publisher.Publish(ctx, &pubsub.Message{
 		Data:        data,
 		OrderingKey: orderingKey,
 		Attributes: map[string]string{
@@ -77,6 +77,6 @@ func (p *Publisher) Publish(ctx context.Context, envelope ResultEnvelope) error 
 
 // Close releases resources held by the publisher.
 func (p *Publisher) Close() error {
-	p.topic.Stop()
+	p.publisher.Stop()
 	return p.client.Close()
 }

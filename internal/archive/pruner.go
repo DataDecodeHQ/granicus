@@ -141,7 +141,7 @@ func (p *Pruner) PruneIntervals(ctx context.Context) (int, error) {
 			Where("completed_at", "<", cutoff).
 			Documents(ctx)
 
-		batch := p.fs.Batch()
+		bw := p.fs.BulkWriter(ctx)
 		count := 0
 		for {
 			doc, err := intervalsIter.Next()
@@ -151,19 +151,15 @@ func (p *Pruner) PruneIntervals(ctx context.Context) (int, error) {
 			if err != nil {
 				break
 			}
-			batch.Delete(doc.Ref)
-			count++
-			if count >= 500 {
-				batch.Commit(ctx)
-				batch = p.fs.Batch()
-				count = 0
+			if _, err := bw.Delete(doc.Ref); err != nil {
+				break
 			}
+			count++
 		}
 		intervalsIter.Stop()
 
-		if count > 0 {
-			batch.Commit(ctx)
-		}
+		bw.Flush()
+		bw.End()
 		deleted += count
 	}
 

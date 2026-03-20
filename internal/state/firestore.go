@@ -28,7 +28,7 @@ func NewFirestoreStateBackend(ctx context.Context, project, pipeline string) (*F
 		project = os.Getenv("GRANICUS_FIRESTORE_PROJECT")
 	}
 	if project == "" {
-		return nil, fmt.Errorf("Firestore project not configured (set GRANICUS_FIRESTORE_PROJECT)")
+		return nil, fmt.Errorf("firestore project not configured (set GRANICUS_FIRESTORE_PROJECT)")
 	}
 
 	client, err := firestore.NewClient(ctx, project)
@@ -133,43 +133,35 @@ func (f *FirestoreStateBackend) InvalidateAll(asset string) error {
 		Documents(ctx)
 	defer iter.Stop()
 
-	batch := f.client.Batch()
-	count := 0
+	bw := f.client.BulkWriter(ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
 			break
 		}
 		if err != nil {
+			bw.End()
 			return fmt.Errorf("querying intervals to invalidate: %w", err)
 		}
-		batch.Delete(doc.Ref)
-		count++
-		if count >= 500 {
-			if _, err := batch.Commit(ctx); err != nil {
-				return fmt.Errorf("batch delete: %w", err)
-			}
-			batch = f.client.Batch()
-			count = 0
+		if _, err := bw.Delete(doc.Ref); err != nil {
+			bw.End()
+			return fmt.Errorf("enqueuing delete: %w", err)
 		}
 	}
-	if count > 0 {
-		if _, err := batch.Commit(ctx); err != nil {
-			return fmt.Errorf("batch delete: %w", err)
-		}
-	}
+	bw.Flush()
+	bw.End()
 	return nil
 }
 
 // markRunsCrashed marks parent runs as crashed and writes recovery events for a batch of orphaned intervals.
-func markRunsCrashed(batch *firestore.WriteBatch, orphans []IntervalState, pipeline string, runsCol *firestore.CollectionRef) {
+func markRunsCrashed(bw *firestore.BulkWriter, orphans []IntervalState, pipeline string, runsCol *firestore.CollectionRef) {
 	now := time.Now().UTC()
 	seenRuns := make(map[string]bool)
 	for _, iv := range orphans {
 		if iv.RunID != "" && !seenRuns[iv.RunID] {
 			seenRuns[iv.RunID] = true
 			runRef := runsCol.Doc(iv.RunID)
-			batch.Update(runRef, []firestore.Update{
+			bw.Update(runRef, []firestore.Update{ //nolint:errcheck
 				{Path: "status", Value: "crashed"},
 				{Path: "error_summary", Value: "engine process terminated unexpectedly"},
 				{Path: "completed_at", Value: now},
@@ -177,7 +169,7 @@ func markRunsCrashed(batch *firestore.WriteBatch, orphans []IntervalState, pipel
 		}
 		// Write recovery event
 		eventsCol := runsCol.Doc(iv.RunID).Collection("events")
-		batch.Create(eventsCol.NewDoc(), EventDoc{
+		bw.Create(eventsCol.NewDoc(), EventDoc{ //nolint:errcheck
 			RunID:     iv.RunID,
 			Pipeline:  pipeline,
 			Node:      iv.AssetName,
@@ -210,7 +202,7 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 	defer iter.Stop()
 
 	var orphans []IntervalState
-	batch := f.client.Batch()
+	bw := f.client.BulkWriter(ctx)
 
 	for {
 		doc, err := iter.Next()
@@ -218,6 +210,7 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 			break
 		}
 		if err != nil {
+			bw.End()
 			return nil, fmt.Errorf("querying orphaned intervals: %w", err)
 		}
 		data := doc.Data()
@@ -235,7 +228,7 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 			"asset", iv.AssetName, "interval", iv.IntervalStart,
 			"run_id", iv.RunID, "started_at", iv.StartedAt)
 
-		batch.Update(doc.Ref, []firestore.Update{
+		bw.Update(doc.Ref, []firestore.Update{ //nolint:errcheck
 			{Path: "status", Value: "failed"},
 			{Path: "error", Value: "engine crashed during execution (orphan recovery)"},
 			{Path: "completed_at", Value: time.Now().UTC()},
@@ -243,14 +236,14 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 	}
 
 	if len(orphans) == 0 {
+		bw.End()
 		return nil, nil
 	}
 
-	markRunsCrashed(batch, orphans, f.pipeline, f.runsCol())
+	markRunsCrashed(bw, orphans, f.pipeline, f.runsCol())
 
-	if _, err := batch.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("committing orphan recovery: %w", err)
-	}
+	bw.Flush()
+	bw.End()
 
 	return orphans, nil
 }
@@ -330,39 +323,45 @@ func (f *FirestoreStateBackend) WriteEvent(ctx context.Context, runID string, ev
 }
 
 // WriteFailureBatch atomically records a node failure, updates the interval,
-// and records downstream skips in a single Firestore batch.
+// and records downstream skips in a single Firestore transaction.
 func (f *FirestoreStateBackend) WriteFailureBatch(ctx context.Context, runID string, failedEvent EventDoc, intervalAsset, intervalStart string, skippedNodes []string) error {
-	batch := f.client.Batch()
-
-	// Record the failure event
 	eventsCol := f.runsCol().Doc(runID).Collection("events")
-	batch.Create(eventsCol.NewDoc(), failedEvent)
-
-	// Update interval state atomically
-	if intervalAsset != "" && intervalStart != "" {
-		docID := intervalAsset + ":" + intervalStart
-		batch.Update(f.intervalsCol().Doc(docID), []firestore.Update{
-			{Path: "status", Value: "failed"},
-			{Path: "error", Value: failedEvent.Error},
-			{Path: "completed_at", Value: time.Now().UTC()},
-		})
-	}
-
-	// Record downstream skips
 	now := time.Now().UTC()
-	for _, node := range skippedNodes {
-		batch.Create(eventsCol.NewDoc(), EventDoc{
-			RunID:     runID,
-			Pipeline:  f.pipeline,
-			Node:      node,
-			EventType: "node_skipped",
-			Error:     "upstream " + failedEvent.Node + " failed",
-			Timestamp: now,
-		})
-	}
 
-	_, err := batch.Commit(ctx)
-	return err
+	return f.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// Record the failure event
+		if err := tx.Create(eventsCol.NewDoc(), failedEvent); err != nil {
+			return err
+		}
+
+		// Update interval state atomically
+		if intervalAsset != "" && intervalStart != "" {
+			docID := intervalAsset + ":" + intervalStart
+			if err := tx.Update(f.intervalsCol().Doc(docID), []firestore.Update{
+				{Path: "status", Value: "failed"},
+				{Path: "error", Value: failedEvent.Error},
+				{Path: "completed_at", Value: now},
+			}); err != nil {
+				return err
+			}
+		}
+
+		// Record downstream skips
+		for _, node := range skippedNodes {
+			if err := tx.Create(eventsCol.NewDoc(), EventDoc{
+				RunID:     runID,
+				Pipeline:  f.pipeline,
+				Node:      node,
+				EventType: "node_skipped",
+				Error:     "upstream " + failedEvent.Node + " failed",
+				Timestamp: now,
+			}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 // GetRun retrieves a run document by ID.

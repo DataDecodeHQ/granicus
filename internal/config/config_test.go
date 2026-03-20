@@ -156,7 +156,7 @@ assets:
 	if cfg.Pipeline != "simple" {
 		t.Errorf("got pipeline %q", cfg.Pipeline)
 	}
-	if cfg.Connections != nil && len(cfg.Connections) > 0 {
+	if len(cfg.Connections) > 0 {
 		t.Error("expected no connections")
 	}
 }

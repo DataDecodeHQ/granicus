@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"github.com/DataDecodeHQ/granicus/internal/result"
 )
 
@@ -20,7 +20,7 @@ type CloudRunJobDispatch struct {
 	region       string
 	image        string
 	resultClient *pubsub.Client
-	resultSub    *pubsub.Subscription
+	resultSub    *pubsub.Subscriber
 	defaultCPU   string
 	defaultMem   string
 	timeout      time.Duration
@@ -81,7 +81,7 @@ func NewCloudRunJobDispatch(ctx context.Context, cfg CloudRunJobConfig) (*CloudR
 		region:       cfg.Region,
 		image:        cfg.Image,
 		resultClient: client,
-		resultSub:    client.Subscription(subName),
+		resultSub:    client.Subscriber(subName),
 		defaultCPU:   cfg.DefaultCPU,
 		defaultMem:   cfg.DefaultMem,
 		timeout:      cfg.Timeout,

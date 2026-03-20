@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"text/template"
 
@@ -53,7 +54,11 @@ func newBQClient(ctx context.Context, conn *config.ConnectionConfig) (*bigquery.
 	project := conn.Properties["project"]
 	var opts []option.ClientOption
 	if creds := conn.Properties["credentials"]; creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
+		data, err := os.ReadFile(creds)
+		if err != nil {
+			return nil, fmt.Errorf("reading credentials file %s: %w", creds, err)
+		}
+		opts = append(opts, option.WithCredentialsJSON(data))
 	}
 	return bigquery.NewClient(ctx, project, opts...)
 }
