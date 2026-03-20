@@ -174,16 +174,6 @@ func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, do
 	}
 }
 
-func flattenConnection(conn *config.ConnectionConfig) map[string]string {
-	flat := make(map[string]string, len(conn.Properties)+2)
-	flat["name"] = conn.Name
-	flat["type"] = conn.Type
-	for k, v := range conn.Properties {
-		flat[k] = v
-	}
-	return flat
-}
-
 // validateEnv checks the subprocess env slice against the runner contract.
 // Returns a combined error for any violations.
 func validateEnv(env []string, assetName, runID string) error {
