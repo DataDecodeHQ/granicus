@@ -399,3 +399,252 @@ func TestAdaptivePoolManager_Basic(t *testing.T) {
 		t.Error("expected nil for non-existent pool")
 	}
 }
+
+func TestAdaptivePool_ObserverPoolCreated(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 10,
+		InitialSlots:  3,
+		RampStep:      2,
+		RampInterval:  time.Hour,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	var events []string
+	var eventData []map[string]any
+	p.SetObserver(func(eventType string, data map[string]any) {
+		events = append(events, eventType)
+		eventData = append(eventData, data)
+	})
+
+	if len(events) != 1 || events[0] != "pool_created" {
+		t.Fatalf("expected pool_created event, got %v", events)
+	}
+	if eventData[0]["initial_slots"] != 3 {
+		t.Errorf("expected initial_slots=3, got %v", eventData[0]["initial_slots"])
+	}
+	if eventData[0]["max_concurrent"] != 10 {
+		t.Errorf("expected max_concurrent=10, got %v", eventData[0]["max_concurrent"])
+	}
+}
+
+func TestAdaptivePool_ObserverRampUp(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 20,
+		InitialSlots:  2,
+		RampStep:      3,
+		RampInterval:  50 * time.Millisecond,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	var events []string
+	var eventData []map[string]any
+	p.SetObserver(func(eventType string, data map[string]any) {
+		events = append(events, eventType)
+		eventData = append(eventData, data)
+	})
+
+	// Force ramp
+	p.mu.Lock()
+	p.lastRamp = time.Now().Add(-100 * time.Millisecond)
+	p.mu.Unlock()
+
+	if err := p.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+
+	found := false
+	for i, ev := range events {
+		if ev == "pool_ramp_up" {
+			found = true
+			if eventData[i]["old_slots"] != 2 {
+				t.Errorf("expected old_slots=2, got %v", eventData[i]["old_slots"])
+			}
+			if eventData[i]["new_slots"] != 5 {
+				t.Errorf("expected new_slots=5, got %v", eventData[i]["new_slots"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected pool_ramp_up event")
+	}
+}
+
+func TestAdaptivePool_ObserverBackpressure(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 20,
+		InitialSlots:  2,
+		RampStep:      2,
+		RampInterval:  time.Hour,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	p.mu.Lock()
+	p.resize(10)
+	p.mu.Unlock()
+
+	var events []string
+	var eventData []map[string]any
+	p.SetObserver(func(eventType string, data map[string]any) {
+		events = append(events, eventType)
+		eventData = append(eventData, data)
+	})
+
+	p.SignalBackpressure()
+
+	found := false
+	for i, ev := range events {
+		if ev == "pool_backpressure" {
+			found = true
+			if eventData[i]["old_slots"] != 10 {
+				t.Errorf("expected old_slots=10, got %v", eventData[i]["old_slots"])
+			}
+			if eventData[i]["new_slots"] != 5 {
+				t.Errorf("expected new_slots=5, got %v", eventData[i]["new_slots"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected pool_backpressure event")
+	}
+}
+
+func TestAdaptivePool_Stats(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 20,
+		InitialSlots:  2,
+		RampStep:      2,
+		RampInterval:  time.Hour,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	s := p.Stats()
+	if s.PeakSlots != 2 {
+		t.Errorf("expected peak_slots=2, got %d", s.PeakSlots)
+	}
+	if s.TotalAcquires != 0 {
+		t.Errorf("expected total_acquires=0, got %d", s.TotalAcquires)
+	}
+
+	if err := p.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+
+	s = p.Stats()
+	if s.TotalAcquires != 1 {
+		t.Errorf("expected total_acquires=1, got %d", s.TotalAcquires)
+	}
+
+	p.mu.Lock()
+	p.resize(10)
+	p.mu.Unlock()
+	p.SignalBackpressure()
+
+	s = p.Stats()
+	if s.BackpressureCount != 1 {
+		t.Errorf("expected backpressure_count=1, got %d", s.BackpressureCount)
+	}
+}
+
+func TestAdaptivePool_StatsWaits(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 1,
+		InitialSlots:  1,
+		RampStep:      1,
+		RampInterval:  time.Hour,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	if err := p.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second acquire will block (counted as wait), release after short delay
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		p.Release()
+	}()
+
+	if err := p.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+
+	s := p.Stats()
+	if s.TotalWaits != 1 {
+		t.Errorf("expected total_waits=1, got %d", s.TotalWaits)
+	}
+	if s.TotalAcquires != 2 {
+		t.Errorf("expected total_acquires=2, got %d", s.TotalAcquires)
+	}
+}
+
+func TestAdaptivePool_EmitStats(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 10,
+		InitialSlots:  2,
+		RampStep:      2,
+		RampInterval:  time.Hour,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	if err := p.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p.Release()
+
+	var statsEvent map[string]any
+	p.SetObserver(func(eventType string, data map[string]any) {
+		if eventType == "pool_stats" {
+			statsEvent = data
+		}
+	})
+
+	p.EmitStats()
+
+	if statsEvent == nil {
+		t.Fatal("expected pool_stats event")
+	}
+	if statsEvent["total_acquires"] != 1 {
+		t.Errorf("expected total_acquires=1, got %v", statsEvent["total_acquires"])
+	}
+	if statsEvent["peak_slots"] != 2 {
+		t.Errorf("expected peak_slots=2, got %v", statsEvent["peak_slots"])
+	}
+}
+
+func TestAdaptivePool_PeakSlotsTrackedOnRamp(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 20,
+		InitialSlots:  2,
+		RampStep:      5,
+		RampInterval:  50 * time.Millisecond,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	// Ramp up twice
+	for i := 0; i < 2; i++ {
+		p.mu.Lock()
+		p.lastRamp = time.Now().Add(-100 * time.Millisecond)
+		p.mu.Unlock()
+		if err := p.Acquire(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		p.Release()
+	}
+
+	s := p.Stats()
+	if s.PeakSlots != 12 {
+		t.Errorf("expected peak_slots=12, got %d", s.PeakSlots)
+	}
+
+	// Backpressure shouldn't reduce peak
+	p.SignalBackpressure()
+	s = p.Stats()
+	if s.PeakSlots != 12 {
+		t.Errorf("expected peak_slots still 12 after backpressure, got %d", s.PeakSlots)
+	}
+}

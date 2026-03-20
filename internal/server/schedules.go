@@ -26,6 +26,7 @@ func (s *Server) SetScheduleStore(store ScheduleStore) {
 // handleScheduleRoutes dispatches /api/v1/schedules/* subroutes.
 //
 //	GET  /api/v1/schedules/list        - list all schedules
+//	POST /api/v1/schedules/sync        - reconcile cloud scheduler jobs
 //	GET  /api/v1/schedules/{pipeline}  - show detail for one pipeline
 //	POST /api/v1/schedules/{pipeline}  - create/update schedule entry
 //	DELETE /api/v1/schedules/{pipeline} - remove schedule entry
@@ -43,6 +44,11 @@ func (s *Server) handleScheduleRoutes(w http.ResponseWriter, r *http.Request) {
 
 	if path == "list" || path == "list/" {
 		s.handleScheduleList(w, r, store)
+		return
+	}
+
+	if path == "sync" || path == "sync/" {
+		s.handleScheduleSync(w, r, store)
 		return
 	}
 
@@ -178,4 +184,78 @@ func (s *Server) handleScheduleDelete(w http.ResponseWriter, r *http.Request, st
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"pipeline": pipeline, "deleted": true})
+}
+
+type scheduleSyncRequest struct {
+	DryRun bool `json:"dry_run"`
+}
+
+type scheduleSyncEntry struct {
+	Pipeline string `json:"pipeline"`
+	Cron     string `json:"cron"`
+	Timezone string `json:"timezone"`
+	Mode     string `json:"mode"`
+	Enabled  bool   `json:"enabled"`
+	Action   string `json:"action"`
+}
+
+type scheduleSyncResponse struct {
+	DryRun      bool                `json:"dry_run"`
+	Schedules   []scheduleSyncEntry `json:"schedules"`
+	WouldCreate int                 `json:"would_create"`
+	WouldUpdate int                 `json:"would_update"`
+	WouldDelete int                 `json:"would_delete"`
+}
+
+func (s *Server) handleScheduleSync(w http.ResponseWriter, r *http.Request, store ScheduleStore) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		return
+	}
+
+	var req scheduleSyncRequest
+	req.DryRun = true // default to dry-run
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid JSON body"})
+			return
+		}
+	}
+
+	entries := store.List()
+
+	var (
+		syncEntries []scheduleSyncEntry
+		wouldCreate int
+		wouldUpdate int
+	)
+
+	for name, e := range entries {
+		mode := e.Mode
+		if mode == "" {
+			mode = "local"
+		}
+
+		if (mode == "cloud" || mode == "auto") && e.IsEnabled() {
+			action := "create"
+			wouldCreate++
+
+			syncEntries = append(syncEntries, scheduleSyncEntry{
+				Pipeline: name,
+				Cron:     e.Cron,
+				Timezone: e.EffectiveTimezone(),
+				Mode:     mode,
+				Enabled:  true,
+				Action:   action,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, scheduleSyncResponse{
+		DryRun:      req.DryRun,
+		Schedules:   syncEntries,
+		WouldCreate: wouldCreate,
+		WouldUpdate: wouldUpdate,
+		WouldDelete: 0,
+	})
 }

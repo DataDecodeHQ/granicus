@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/pool"
 )
 
 func successRunner(delay time.Duration) RunnerFunc {
@@ -816,5 +818,58 @@ func TestExecute_GracefulShutdown_NilContext(t *testing.T) {
 	}
 	if resultMap(rr)["A"] != "success" {
 		t.Errorf("A should succeed")
+	}
+}
+
+func TestExecute_AdaptivePoolConcurrency(t *testing.T) {
+	// Create an AdaptivePoolManager with a bigquery resource and verify
+	// that assets with DestinationResource set complete successfully
+	// when routed through adaptive pools.
+	resources := map[string]*config.ResourceConfig{
+		"bigquery": {Type: "bigquery"},
+	}
+	apm := pool.NewAdaptivePoolManager(resources)
+
+	g := buildTestGraph(t,
+		[]graph.AssetInput{
+			{Name: "stg_orders", Type: "shell", Source: "stg_orders.sh", DestinationResource: "bigquery"},
+			{Name: "stg_customers", Type: "shell", Source: "stg_customers.sh", DestinationResource: "bigquery"},
+			{Name: "int_orders", Type: "shell", Source: "int_orders.sh", DestinationResource: "bigquery"},
+		},
+		map[string][]string{"int_orders": {"stg_orders", "stg_customers"}},
+	)
+
+	var executed []string
+	var running int32
+	var maxConcurrent int32
+
+	runner := func(asset *graph.Asset, pr string, rid string) NodeResult {
+		cur := atomic.AddInt32(&running, 1)
+		for {
+			old := atomic.LoadInt32(&maxConcurrent)
+			if cur <= old || atomic.CompareAndSwapInt32(&maxConcurrent, old, cur) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&running, -1)
+		executed = append(executed, asset.Name)
+		return NodeResult{AssetName: asset.Name, Status: "success", ExitCode: 0}
+	}
+
+	rr := Execute(g, RunConfig{AdaptivePoolManager: apm}, runner)
+	rm := resultMap(rr)
+
+	if len(rr.Results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(rr.Results))
+	}
+	for _, name := range []string{"stg_orders", "stg_customers", "int_orders"} {
+		if rm[name] != "success" {
+			t.Errorf("%s should succeed, got %s", name, rm[name])
+		}
+	}
+	// With two independent roots, adaptive pool should allow parallel execution
+	if atomic.LoadInt32(&maxConcurrent) < 2 {
+		t.Error("expected at least 2 concurrent executions for parallel roots with adaptive pool")
 	}
 }

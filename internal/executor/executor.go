@@ -213,8 +213,8 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 
 			// Signal backpressure on rate limit or quota errors
 			if result.Status == "failed" && cfg.AdaptivePoolManager != nil && resourceType != "" {
-				errLower := strings.ToLower(result.Error)
-				if strings.Contains(errLower, "rate_limit") || strings.Contains(errLower, "quota") {
+				cat := ClassifyError(result.Error)
+				if cat == CategoryRateLimit || cat == CategoryQuota {
 					cfg.AdaptivePoolManager.SignalBackpressure(resourceType)
 				}
 			}

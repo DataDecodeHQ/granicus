@@ -15,6 +15,18 @@ const (
 	maxCooldown = 5 * time.Minute
 )
 
+// PoolObserver is a callback invoked at key pool lifecycle points.
+// eventType identifies the event; data carries event-specific key-value pairs.
+type PoolObserver func(eventType string, data map[string]any)
+
+// PoolStats holds cumulative counters for pool activity.
+type PoolStats struct {
+	PeakSlots         int `json:"peak_slots"`
+	TotalAcquires     int `json:"total_acquires"`
+	TotalWaits        int `json:"total_waits"`
+	BackpressureCount int `json:"backpressure_count"`
+}
+
 type AdaptivePool struct {
 	mu           sync.Mutex
 	name         string
@@ -24,6 +36,13 @@ type AdaptivePool struct {
 	lastRamp     time.Time
 	backoffUntil time.Time
 	cooldown     time.Duration
+	observer     PoolObserver
+
+	// stats counters
+	peakSlots         int
+	totalAcquires     int
+	totalWaits        int
+	backpressureCount int
 }
 
 func NewAdaptivePool(name string, limit ResourceLimit) *AdaptivePool {
@@ -38,6 +57,65 @@ func NewAdaptivePool(name string, limit ResourceLimit) *AdaptivePool {
 		sem:          make(chan struct{}, slots),
 		lastRamp:     time.Now(),
 		cooldown:     minCooldown,
+		peakSlots:    slots,
+	}
+}
+
+// SetObserver registers a callback that is invoked at key pool lifecycle points.
+func (p *AdaptivePool) SetObserver(fn PoolObserver) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.observer = fn
+	p.emit("pool_created", map[string]any{
+		"resource":      p.name,
+		"initial_slots": p.currentSlots,
+		"max_concurrent": p.limit.MaxConcurrent,
+	})
+}
+
+// emit calls the observer if set. Must NOT be called with mu held if the
+// observer might call back into the pool. For simplicity, callers snapshot
+// data before calling emit outside the lock, or accept that emit is called
+// under the lock (observers should not block).
+func (p *AdaptivePool) emit(eventType string, data map[string]any) {
+	if p.observer != nil {
+		p.observer(eventType, data)
+	}
+}
+
+// Stats returns the current pool activity counters.
+func (p *AdaptivePool) Stats() PoolStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return PoolStats{
+		PeakSlots:         p.peakSlots,
+		TotalAcquires:     p.totalAcquires,
+		TotalWaits:        p.totalWaits,
+		BackpressureCount: p.backpressureCount,
+	}
+}
+
+// EmitStats emits a pool_stats event with current counters via the observer.
+func (p *AdaptivePool) EmitStats() {
+	p.mu.Lock()
+	s := PoolStats{
+		PeakSlots:         p.peakSlots,
+		TotalAcquires:     p.totalAcquires,
+		TotalWaits:        p.totalWaits,
+		BackpressureCount: p.backpressureCount,
+	}
+	obs := p.observer
+	name := p.name
+	p.mu.Unlock()
+
+	if obs != nil {
+		obs("pool_stats", map[string]any{
+			"resource":           name,
+			"peak_slots":         s.PeakSlots,
+			"total_acquires":     s.TotalAcquires,
+			"total_waits":        s.TotalWaits,
+			"backpressure_count": s.BackpressureCount,
+		})
 	}
 }
 
@@ -54,7 +132,25 @@ func (p *AdaptivePool) Acquire(ctx context.Context) error {
 
 	select {
 	case sem <- struct{}{}:
+		p.mu.Lock()
+		p.totalAcquires++
+		p.mu.Unlock()
 		slog.Debug("adaptive pool slot acquired", "pool", name, "in_use", len(sem), "slots", slots)
+		return nil
+	default:
+		// Would block — count as a wait
+		p.mu.Lock()
+		p.totalWaits++
+		p.mu.Unlock()
+	}
+
+	// Block until slot available or context cancelled
+	select {
+	case sem <- struct{}{}:
+		p.mu.Lock()
+		p.totalAcquires++
+		p.mu.Unlock()
+		slog.Debug("adaptive pool slot acquired (after wait)", "pool", name, "in_use", len(sem), "slots", slots)
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("adaptive pool %s: context cancelled while waiting for slot: %w", name, ctx.Err())
@@ -72,8 +168,8 @@ func (p *AdaptivePool) Release() {
 
 func (p *AdaptivePool) SignalBackpressure() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
+	oldSlots := p.currentSlots
 	newSlots := p.currentSlots / 2
 	if newSlots < p.limit.InitialSlots {
 		newSlots = p.limit.InitialSlots
@@ -90,10 +186,23 @@ func (p *AdaptivePool) SignalBackpressure() {
 
 	p.backoffUntil = time.Now().Add(p.cooldown)
 	p.lastRamp = time.Now()
+	p.backpressureCount++
+	cd := p.cooldown
 
-	slog.Info("adaptive pool backpressure", "pool", p.name, "old_slots", p.currentSlots, "new_slots", newSlots, "cooldown", p.cooldown)
+	slog.Info("adaptive pool backpressure", "pool", p.name, "old_slots", oldSlots, "new_slots", newSlots, "cooldown", cd)
 
 	p.resize(newSlots)
+	obs := p.observer
+	p.mu.Unlock()
+
+	if obs != nil {
+		obs("pool_backpressure", map[string]any{
+			"resource":  p.name,
+			"old_slots": oldSlots,
+			"new_slots": newSlots,
+			"cooldown":  cd.String(),
+		})
+	}
 }
 
 func (p *AdaptivePool) CurrentSlots() int {
@@ -111,28 +220,44 @@ func (p *AdaptivePool) InUse() int {
 
 func (p *AdaptivePool) maybeRamp() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	now := time.Now()
 	if now.Before(p.backoffUntil) {
+		p.mu.Unlock()
 		return
 	}
 	if now.Sub(p.lastRamp) < p.limit.RampInterval {
+		p.mu.Unlock()
 		return
 	}
 	if p.currentSlots >= p.limit.MaxConcurrent {
+		p.mu.Unlock()
 		return
 	}
 
+	oldSlots := p.currentSlots
 	newSlots := p.currentSlots + p.limit.RampStep
 	if newSlots > p.limit.MaxConcurrent {
 		newSlots = p.limit.MaxConcurrent
 	}
 
-	slog.Debug("adaptive pool ramping up", "pool", p.name, "old_slots", p.currentSlots, "new_slots", newSlots)
+	slog.Debug("adaptive pool ramping up", "pool", p.name, "old_slots", oldSlots, "new_slots", newSlots)
 
 	p.resize(newSlots)
 	p.lastRamp = now
+	if newSlots > p.peakSlots {
+		p.peakSlots = newSlots
+	}
+	obs := p.observer
+	p.mu.Unlock()
+
+	if obs != nil {
+		obs("pool_ramp_up", map[string]any{
+			"resource":  p.name,
+			"old_slots": oldSlots,
+			"new_slots": newSlots,
+		})
+	}
 }
 
 // resize changes the channel capacity. Must be called with mu held.
