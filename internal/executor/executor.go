@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/graph"
+	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/state"
 	"github.com/DataDecodeHQ/granicus/internal/types"
 )
@@ -20,23 +21,24 @@ const DefaultShutdownTimeout = 5 * time.Minute
 type NodeResult = types.AssetResult
 
 type RunConfig struct {
-	MaxParallel  int
-	Assets       []string
-	ProjectRoot  string
-	RunID        string
-	FromDate     string
-	ToDate       string
-	FullRefresh  bool
-	StateStore   state.StateBackend
-	TestMode     bool
-	TestStart    string
-	TestEnd      string
-	KeepTestData    bool
-	TestDataset     string // set by test mode setup (the created dataset name)
-	DownstreamOnly  bool
-	Only            bool
-	Ctx             context.Context   // cancelled on SIGTERM/SIGINT for graceful shutdown
-	ShutdownTimeout time.Duration     // max wait for in-progress nodes; 0 = DefaultShutdownTimeout
+	MaxParallel         int
+	AdaptivePoolManager *pool.AdaptivePoolManager
+	Assets              []string
+	ProjectRoot         string
+	RunID               string
+	FromDate            string
+	ToDate              string
+	FullRefresh         bool
+	StateStore          state.StateBackend
+	TestMode            bool
+	TestStart           string
+	TestEnd             string
+	KeepTestData        bool
+	TestDataset         string // set by test mode setup (the created dataset name)
+	DownstreamOnly      bool
+	Only                bool
+	Ctx                 context.Context   // cancelled on SIGTERM/SIGINT for graceful shutdown
+	ShutdownTimeout     time.Duration     // max wait for in-progress nodes; 0 = DefaultShutdownTimeout
 }
 
 type RunnerFunc func(asset *graph.Asset, projectRoot string, runID string) NodeResult
@@ -91,9 +93,15 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}
 	}
 
-	maxP := cfg.MaxParallel
-	if maxP <= 0 {
-		maxP = 10
+	// Concurrency gate: if an AdaptivePoolManager is provided, use resource-based
+	// pools. Otherwise fall back to a fixed semaphore.
+	var fallbackSem chan struct{}
+	if cfg.AdaptivePoolManager == nil {
+		maxP := cfg.MaxParallel
+		if maxP <= 0 {
+			maxP = 10
+		}
+		fallbackSem = make(chan struct{}, maxP)
 	}
 
 	shutdownTimeout := cfg.ShutdownTimeout
@@ -154,7 +162,6 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		unresolved[name] = count
 	}
 
-	sem := make(chan struct{}, maxP)
 	done := make(chan NodeResult, len(assetsToRun))
 	pending := len(assetsToRun)
 
@@ -163,10 +170,26 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	dedupResults := make(map[string]*NodeResult) // key: "source:intervalStart"
 
 	dispatch := func(name string) {
-		sem <- struct{}{}
+		asset := g.Assets[name]
+		resourceType := asset.DestinationResource
+
+		// Acquire slot from adaptive pool or fallback semaphore
+		if cfg.AdaptivePoolManager != nil && resourceType != "" {
+			if err := cfg.AdaptivePoolManager.Acquire(context.Background(), resourceType); err != nil {
+				slog.Warn("adaptive pool acquire failed, proceeding without pool", "asset", name, "resource", resourceType, "error", err)
+			}
+		} else if fallbackSem != nil {
+			fallbackSem <- struct{}{}
+		}
+
 		go func() {
-			defer func() { <-sem }()
-			asset := g.Assets[name]
+			defer func() {
+				if cfg.AdaptivePoolManager != nil && resourceType != "" {
+					cfg.AdaptivePoolManager.Release(resourceType)
+				} else if fallbackSem != nil {
+					<-fallbackSem
+				}
+			}()
 
 			// Source phantom nodes represent external data — succeed immediately (no-op)
 			// so that downstream check nodes are not skipped.
@@ -181,14 +204,22 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 				return
 			}
 
+			var result NodeResult
 			if asset.TimeColumn != "" && cfg.StateStore != nil {
-				result := executeIncremental(asset, cfg, runner, &dedupMu, dedupResults)
-				done <- result
+				result = executeIncremental(asset, cfg, runner, &dedupMu, dedupResults)
 			} else {
-				// Full refresh or no state store — run once, with retry
-				result := runWithRetry(asset, cfg, runner, &dedupMu, dedupResults, "", "")
-				done <- result
+				result = runWithRetry(asset, cfg, runner, &dedupMu, dedupResults, "", "")
 			}
+
+			// Signal backpressure on rate limit or quota errors
+			if result.Status == "failed" && cfg.AdaptivePoolManager != nil && resourceType != "" {
+				errLower := strings.ToLower(result.Error)
+				if strings.Contains(errLower, "rate_limit") || strings.Contains(errLower, "quota") {
+					cfg.AdaptivePoolManager.SignalBackpressure(resourceType)
+				}
+			}
+
+			done <- result
 		}()
 	}
 

@@ -69,6 +69,11 @@ func (w *Watcher) loop() {
 				continue
 			}
 
+			isScheduleFile := strings.HasSuffix(name, "schedule.yml") || strings.HasSuffix(name, "schedule.yaml")
+			if isScheduleFile {
+				slog.Info("schedule file changed, triggering scheduler reload", "file", name)
+			}
+
 			debounceMu.Lock()
 			if debounce != nil {
 				debounce.Stop()

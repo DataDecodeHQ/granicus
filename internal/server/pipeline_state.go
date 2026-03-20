@@ -11,8 +11,16 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/state"
 )
 
-// StateBackendFactory creates a Firestore state backend for a given pipeline.
-type StateBackendFactory func(ctx context.Context, pipeline string) (*state.FirestoreStateBackend, error)
+// PipelineStateBackend is the subset of state operations needed by pipeline state handlers.
+type PipelineStateBackend interface {
+	ListRuns(ctx context.Context, pipeline string, statuses []string, since time.Time, limit int) ([]state.RunDoc, error)
+	ListEvents(ctx context.Context, runID string, eventTypes []string) ([]state.EventDoc, error)
+	GetIntervals(asset string) ([]state.IntervalState, error)
+	Close() error
+}
+
+// StateBackendFactory creates a state backend for a given pipeline.
+type StateBackendFactory func(ctx context.Context, pipeline string) (PipelineStateBackend, error)
 
 // SetStateFactory sets the factory used to create state backends for pipeline state queries.
 func (s *Server) SetStateFactory(fn StateBackendFactory) {
@@ -71,7 +79,7 @@ func (s *Server) handlePipelineState(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleStateHistory(w http.ResponseWriter, r *http.Request, backend *state.FirestoreStateBackend, pipeline string) {
+func (s *Server) handleStateHistory(w http.ResponseWriter, r *http.Request, backend PipelineStateBackend, pipeline string) {
 	limit := 20
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
@@ -94,7 +102,7 @@ func (s *Server) handleStateHistory(w http.ResponseWriter, r *http.Request, back
 	writeJSON(w, http.StatusOK, runs)
 }
 
-func (s *Server) handleStateEvents(w http.ResponseWriter, r *http.Request, backend *state.FirestoreStateBackend) {
+func (s *Server) handleStateEvents(w http.ResponseWriter, r *http.Request, backend PipelineStateBackend) {
 	runID := r.URL.Query().Get("run_id")
 	if runID == "" {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "run_id query param required"})
@@ -114,7 +122,7 @@ func (s *Server) handleStateEvents(w http.ResponseWriter, r *http.Request, backe
 	writeJSON(w, http.StatusOK, events)
 }
 
-func (s *Server) handleStateFailures(w http.ResponseWriter, r *http.Request, backend *state.FirestoreStateBackend, pipeline string) {
+func (s *Server) handleStateFailures(w http.ResponseWriter, r *http.Request, backend PipelineStateBackend, pipeline string) {
 	since := time.Now().AddDate(0, 0, -7)
 	if s := r.URL.Query().Get("since"); s != "" {
 		if t, err := parseSinceParam(s); err == nil {
@@ -154,7 +162,7 @@ func (s *Server) handleStateFailures(w http.ResponseWriter, r *http.Request, bac
 	writeJSON(w, http.StatusOK, records)
 }
 
-func (s *Server) handleStateStats(w http.ResponseWriter, r *http.Request, backend *state.FirestoreStateBackend, pipeline string) {
+func (s *Server) handleStateStats(w http.ResponseWriter, r *http.Request, backend PipelineStateBackend, pipeline string) {
 	node := r.URL.Query().Get("node")
 	if node == "" {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "node query param required"})
@@ -216,7 +224,7 @@ func (s *Server) handleStateStats(w http.ResponseWriter, r *http.Request, backen
 	writeJSON(w, http.StatusOK, stats)
 }
 
-func (s *Server) handleStateStatus(w http.ResponseWriter, r *http.Request, backend *state.FirestoreStateBackend, pipeline string) {
+func (s *Server) handleStateStatus(w http.ResponseWriter, r *http.Request, backend PipelineStateBackend, pipeline string) {
 	runs, err := backend.ListRuns(r.Context(), pipeline, []string{"running"}, time.Time{}, 50)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -225,7 +233,7 @@ func (s *Server) handleStateStatus(w http.ResponseWriter, r *http.Request, backe
 	writeJSON(w, http.StatusOK, runs)
 }
 
-func (s *Server) handleStateIntervals(w http.ResponseWriter, r *http.Request, backend *state.FirestoreStateBackend) {
+func (s *Server) handleStateIntervals(w http.ResponseWriter, r *http.Request, backend PipelineStateBackend) {
 	asset := r.URL.Query().Get("asset")
 	if asset == "" {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "asset query param required"})

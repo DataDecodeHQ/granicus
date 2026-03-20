@@ -138,6 +138,35 @@ func cloudPostMultipart(path, fieldName, filePath string, fields map[string]stri
 	return respBody, nil
 }
 
+// cloudDelete performs a DELETE request to the cloud API.
+func cloudDelete(path string) ([]byte, error) {
+	endpoint := CloudEndpoint()
+	apiKey := CloudAPIKey()
+	if endpoint == "" {
+		return nil, fmt.Errorf("cloud endpoint not configured; run: granicus login")
+	}
+
+	req, err := http.NewRequest("DELETE", endpoint+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
 // isCloudMode checks if we're in cloud mode without requiring flags.
 func isCloudMode() bool {
 	cfg, _ := config.ResolveCLIConfig("", "", "")

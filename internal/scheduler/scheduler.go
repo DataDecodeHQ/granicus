@@ -46,7 +46,7 @@ func NewScheduler(src pipe_registry.PipelineRegistry, projectRoot string, db *sq
 	if err != nil {
 		return nil, fmt.Errorf("fetching pipeline source: %w", err)
 	}
-	// For LocalSource cleanup is a no-op; for GCS we need the dir to persist
+	// For local sources cleanup is a no-op; for GCS we need the dir to persist
 	// for the scheduler's lifetime, so we skip cleanup here (the dir is
 	// re-fetched on each LoadAndRegister/Reload for GCS).
 	_ = cleanup

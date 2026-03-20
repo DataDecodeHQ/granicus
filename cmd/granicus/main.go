@@ -29,6 +29,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/logging"
 	"github.com/DataDecodeHQ/granicus/internal/migrate"
 	"github.com/DataDecodeHQ/granicus/internal/monitor"
+	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/rerun"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/state"
@@ -726,21 +727,27 @@ func runRun(cmd *cobra.Command, args []string) error {
 		OutputJSON: outputJSON,
 	})
 
+	var poolMgr *pool.AdaptivePoolManager
+	if cfg.Resources != nil {
+		poolMgr = pool.NewAdaptivePoolManager(cfg.Resources)
+	}
+
 	runCfg := executor.RunConfig{
-		Assets:         assetFilter,
-		ProjectRoot:    projectRoot,
-		RunID:          runID,
-		FromDate:       fromDate,
-		ToDate:         toDate,
-		FullRefresh:    fullRefresh,
-		StateStore:     stateStore,
-		TestMode:       testMode,
-		TestStart:      testStart,
-		TestEnd:        testEnd,
-		KeepTestData:   keepTestData,
-		DownstreamOnly: downstreamOnly,
-		Only:           only,
-		Ctx:            shutdownCtx,
+		AdaptivePoolManager: poolMgr,
+		Assets:              assetFilter,
+		ProjectRoot:         projectRoot,
+		RunID:               runID,
+		FromDate:            fromDate,
+		ToDate:              toDate,
+		FullRefresh:         fullRefresh,
+		StateStore:          stateStore,
+		TestMode:            testMode,
+		TestStart:           testStart,
+		TestEnd:             testEnd,
+		KeepTestData:        keepTestData,
+		DownstreamOnly:      downstreamOnly,
+		Only:                only,
+		Ctx:                 shutdownCtx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)

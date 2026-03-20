@@ -286,6 +286,82 @@ func TestAdaptivePool_BackpressureWithInUseSlots(t *testing.T) {
 	}
 }
 
+func TestDefaultLimit_KnownResource(t *testing.T) {
+	limit := DefaultLimit("bigquery")
+	if limit.MaxConcurrent != 100 {
+		t.Errorf("expected bigquery max 100, got %d", limit.MaxConcurrent)
+	}
+	if limit.Source != "default" {
+		t.Errorf("expected source 'default', got %q", limit.Source)
+	}
+}
+
+func TestDefaultLimit_UnknownResource(t *testing.T) {
+	limit := DefaultLimit("something_unknown")
+	if limit.MaxConcurrent != 10 {
+		t.Errorf("expected unknown resource max 10, got %d", limit.MaxConcurrent)
+	}
+	if limit.InitialSlots != 2 {
+		t.Errorf("expected unknown resource initial 2, got %d", limit.InitialSlots)
+	}
+	if limit.Source != "default" {
+		t.Errorf("expected source 'default', got %q", limit.Source)
+	}
+}
+
+func TestDefaultLimit_EnvOverride(t *testing.T) {
+	t.Setenv("GRANICUS_MAX_CONCURRENT_BIGQUERY", "42")
+	limit := DefaultLimit("bigquery")
+	if limit.MaxConcurrent != 42 {
+		t.Errorf("expected env override max 42, got %d", limit.MaxConcurrent)
+	}
+	if limit.Source != "env" {
+		t.Errorf("expected source 'env', got %q", limit.Source)
+	}
+}
+
+func TestDefaultLimit_EnvOverrideInvalid(t *testing.T) {
+	t.Setenv("GRANICUS_MAX_CONCURRENT_BIGQUERY", "not_a_number")
+	limit := DefaultLimit("bigquery")
+	if limit.MaxConcurrent != 100 {
+		t.Errorf("expected default max 100 with invalid env, got %d", limit.MaxConcurrent)
+	}
+	if limit.Source != "default" {
+		t.Errorf("expected source 'default' with invalid env, got %q", limit.Source)
+	}
+}
+
+func TestAdaptivePool_CooldownResetsAfterBackoff(t *testing.T) {
+	limit := ResourceLimit{
+		MaxConcurrent: 100,
+		InitialSlots:  2,
+		RampStep:      2,
+		RampInterval:  50 * time.Millisecond,
+	}
+	p := NewAdaptivePool("test", limit)
+
+	p.mu.Lock()
+	p.resize(64)
+	p.mu.Unlock()
+
+	p.SignalBackpressure() // cooldown = 10s
+	p.SignalBackpressure() // cooldown = 20s (consecutive)
+
+	// Simulate backoff period expiring
+	p.mu.Lock()
+	p.backoffUntil = time.Now().Add(-1 * time.Second)
+	p.mu.Unlock()
+
+	p.SignalBackpressure() // should reset cooldown to 10s (not consecutive)
+
+	p.mu.Lock()
+	cd := p.cooldown
+	p.mu.Unlock()
+	if cd != 10*time.Second {
+		t.Errorf("expected cooldown reset to 10s after backoff expiry, got %v", cd)
+	}
+}
+
 func TestAdaptivePoolManager_Basic(t *testing.T) {
 	// Use config.ResourceConfig directly
 	configs := map[string]*struct {

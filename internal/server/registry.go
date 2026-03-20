@@ -12,7 +12,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/pipe_registry"
 )
 
-// RegistryProvider gives the server access to a PipelineSource for registry operations.
+// RegistryProvider gives the server access to a pipeline registry.
 type RegistryProvider interface {
 	Registry() pipe_registry.PipelineRegistry
 }

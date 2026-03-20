@@ -21,6 +21,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/executor"
+	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/scheduler"
 	"github.com/DataDecodeHQ/granicus/internal/server"
@@ -394,14 +395,20 @@ func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, to
 		ConfigDir:   pec.cfg.ConfigDir,
 	})
 
+	var poolMgr *pool.AdaptivePoolManager
+	if pec.cfg.Resources != nil {
+		poolMgr = pool.NewAdaptivePoolManager(pec.cfg.Resources)
+	}
+
 	runCfg := executor.RunConfig{
-		Assets:      assetFilter,
-		ProjectRoot: pec.projectRoot,
-		RunID:       pec.runID,
-		FromDate:    fromDate,
-		ToDate:      toDate,
-		StateStore:  stateStore,
-		Ctx:         pec.ctx,
+		AdaptivePoolManager: poolMgr,
+		Assets:              assetFilter,
+		ProjectRoot:         pec.projectRoot,
+		RunID:               pec.runID,
+		FromDate:            fromDate,
+		ToDate:              toDate,
+		StateStore:          stateStore,
+		Ctx:                 pec.ctx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)

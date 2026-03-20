@@ -42,7 +42,8 @@ type Server struct {
 	runFunc     RunFunc
 	pruneFunc    PruneFunc
 	registry     pipe_registry.PipelineRegistry
-	stateFactory StateBackendFactory
+	scheduleStore ScheduleStore
+	stateFactory  StateBackendFactory
 	httpServer   *http.Server
 	wg          sync.WaitGroup
 	shutdownCtx context.Context
@@ -87,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/runs/", s.handleRuns)
 	mux.HandleFunc("/api/v1/pipelines/", s.handlePipelines)
 	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)
+	mux.HandleFunc("/api/v1/schedules/", s.handleScheduleRoutes)
 	mux.HandleFunc("/api/v1/admin/prune", s.handleAdminPrune)
 	mux.HandleFunc("/api/v1/registry/", s.handleRegistry)
 	mux.HandleFunc("/api/v1/state/", s.handlePipelineState)
