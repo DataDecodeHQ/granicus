@@ -329,6 +329,190 @@ func validateAlertRouting(r *AlertRoutingConfig) error {
 	return nil
 }
 
+func validateAssetFields(cfg *PipelineConfig) error {
+	seen := make(map[string]bool)
+	for i := range cfg.Assets {
+		a := &cfg.Assets[i]
+
+		if a.Source == "" {
+			return fmt.Errorf("asset at index %d: source is required", i)
+		}
+
+		if a.Name == "" {
+			base := filepath.Base(a.Source)
+			a.Name = strings.TrimSuffix(base, filepath.Ext(base))
+		}
+
+		if !validTypes[a.Type] {
+			return fmt.Errorf("asset %q: invalid type %q (must be sql, python, shell, or dlt)", a.Name, a.Type)
+		}
+
+		if !validLayers[a.Layer] {
+			return fmt.Errorf("asset %q: invalid layer %q (must be staging, intermediate, entity, report, or publish)", a.Name, a.Layer)
+		}
+
+		if !validPartitionTypes[a.PartitionType] {
+			return fmt.Errorf("asset %q: invalid partition_type %q (must be DAY, HOUR, MONTH, or YEAR)", a.Name, a.PartitionType)
+		}
+
+		if a.PartitionType != "" && a.PartitionBy == "" {
+			return fmt.Errorf("asset %q: partition_type requires partition_by", a.Name)
+		}
+
+		if !validSchemaCheckValues[a.SchemaCheck] {
+			return fmt.Errorf("asset %q: invalid schema_check %q (must be warn, error, or ignore)", a.Name, a.SchemaCheck)
+		}
+
+		if a.Timeout != "" {
+			if _, err := time.ParseDuration(a.Timeout); err != nil {
+				return fmt.Errorf("asset %q: invalid timeout %q: %w", a.Name, a.Timeout, err)
+			}
+		}
+
+		if a.Runner == "" {
+			a.Runner = "local"
+		}
+
+		if err := validateAndApplyRetryDefaults(a); err != nil {
+			return fmt.Errorf("asset %q: %w", a.Name, err)
+		}
+
+		if seen[a.Name] {
+			return fmt.Errorf("duplicate asset name: %q", a.Name)
+		}
+		seen[a.Name] = true
+	}
+	return nil
+}
+
+func validateConnectionRefs(cfg *PipelineConfig) error {
+	for _, a := range cfg.Assets {
+		if a.DestinationConnection != "" {
+			if _, ok := cfg.Connections[a.DestinationConnection]; !ok {
+				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.DestinationConnection)
+			}
+		}
+		if a.SourceConnection != "" {
+			if _, ok := cfg.Connections[a.SourceConnection]; !ok {
+				return fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.SourceConnection)
+			}
+		}
+		if a.Type == "sql" && a.DestinationConnection == "" {
+			return fmt.Errorf("sql asset %q must have destination_connection", a.Name)
+		}
+		if (a.Type == "gcs_export" || a.Type == "gcs_ingest") && a.SourceConnection == "" {
+			return fmt.Errorf("%s asset %q must have source_connection", a.Type, a.Name)
+		}
+		if a.PollInterval != "" && a.Type != "gcs_ingest" {
+			return fmt.Errorf("asset %q: poll_interval is only valid for gcs_ingest assets", a.Name)
+		}
+		if a.Type == "gcs_ingest" {
+			if srcConn, ok := cfg.Connections[a.SourceConnection]; ok && srcConn.Type != "gcs" {
+				return fmt.Errorf("gcs_ingest asset %q: source_connection must be type gcs, got %q", a.Name, srcConn.Type)
+			}
+			if a.DestinationConnection != "" {
+				if destConn, ok := cfg.Connections[a.DestinationConnection]; ok && destConn.Type != "bigquery" {
+					return fmt.Errorf("gcs_ingest asset %q: destination_connection must be type bigquery, got %q", a.Name, destConn.Type)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateSourceDefs(cfg *PipelineConfig) error {
+	for name, src := range cfg.Sources {
+		if src.Identifier == "" {
+			return fmt.Errorf("source %q: identifier is required", name)
+		}
+		if src.Connection != "" {
+			if _, ok := cfg.Connections[src.Connection]; !ok {
+				return fmt.Errorf("source %q: references non-existent connection %q", name, src.Connection)
+			}
+		}
+		if src.ExpectedFresh != "" {
+			if _, err := time.ParseDuration(src.ExpectedFresh); err != nil {
+				return fmt.Errorf("source %q: invalid expected_freshness %q: %w", name, src.ExpectedFresh, err)
+			}
+		}
+		// Check no collision with asset names
+		for _, a := range cfg.Assets {
+			if a.Name == name {
+				return fmt.Errorf("source %q: name collides with asset %q", name, a.Name)
+			}
+		}
+	}
+	return nil
+}
+
+func validateCheckFields(cfg *PipelineConfig) error {
+	for i := range cfg.Assets {
+		a := &cfg.Assets[i]
+		for j := range a.Checks {
+			check := &a.Checks[j]
+			if check.Severity == "" {
+				check.Severity = "error"
+			} else if !validSeverities[check.Severity] {
+				return fmt.Errorf("asset %q: check %d: invalid severity %q (must be info, warning, error, or critical)", a.Name, j, check.Severity)
+			}
+		}
+		for j, fk := range a.ForeignKeys {
+			if fk.Column == "" {
+				return fmt.Errorf("asset %q: foreign_keys[%d]: column is required", a.Name, j)
+			}
+			if fk.References == "" {
+				return fmt.Errorf("asset %q: foreign_keys[%d]: references is required", a.Name, j)
+			}
+			if !strings.Contains(fk.References, ".") {
+				return fmt.Errorf("asset %q: foreign_keys[%d]: references must be in table.column format, got %q", a.Name, j, fk.References)
+			}
+		}
+		if a.Completeness != nil {
+			if a.Completeness.SourceTable == "" {
+				return fmt.Errorf("asset %q: completeness.source_table is required", a.Name)
+			}
+			if a.Completeness.SourcePK == "" {
+				return fmt.Errorf("asset %q: completeness.source_pk is required", a.Name)
+			}
+			if a.Completeness.Tolerance == nil {
+				defaultTolerance := 0.01
+				a.Completeness.Tolerance = &defaultTolerance
+			}
+		}
+		if a.MinRetentionRatio == nil {
+			defaultRatio := 0.5
+			a.MinRetentionRatio = &defaultRatio
+		}
+		if a.Contract != nil {
+			if err := validateContract(a.Name, a.Contract); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validatePoolDefs(cfg *PipelineConfig) error {
+	for name, pc := range cfg.Pools {
+		if pc.Slots <= 0 {
+			return fmt.Errorf("pool %q: slots must be > 0", name)
+		}
+		if pc.Timeout != "" {
+			if _, err := time.ParseDuration(pc.Timeout); err != nil {
+				return fmt.Errorf("pool %q: invalid timeout %q: %w", name, pc.Timeout, err)
+			}
+		}
+	}
+	for _, a := range cfg.Assets {
+		if a.Pool != "" && a.Pool != "none" {
+			if _, ok := cfg.Pools[a.Pool]; !ok {
+				return fmt.Errorf("asset %q references non-existent pool %q", a.Name, a.Pool)
+			}
+		}
+	}
+	return nil
+}
+
 // LoadConfig reads a pipeline YAML file, validates all fields, and returns the parsed configuration.
 func LoadConfig(path string) (*PipelineConfig, error) {
 	data, err := os.ReadFile(path)
@@ -355,57 +539,8 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		cfg.MaxParallel = 10
 	}
 
-	seen := make(map[string]bool)
-	for i := range cfg.Assets {
-		a := &cfg.Assets[i]
-
-		if a.Source == "" {
-			return nil, fmt.Errorf("asset at index %d: source is required", i)
-		}
-
-		if a.Name == "" {
-			base := filepath.Base(a.Source)
-			a.Name = strings.TrimSuffix(base, filepath.Ext(base))
-		}
-
-		if !validTypes[a.Type] {
-			return nil, fmt.Errorf("asset %q: invalid type %q (must be sql, python, shell, or dlt)", a.Name, a.Type)
-		}
-
-		if !validLayers[a.Layer] {
-			return nil, fmt.Errorf("asset %q: invalid layer %q (must be staging, intermediate, entity, report, or publish)", a.Name, a.Layer)
-		}
-
-		if !validPartitionTypes[a.PartitionType] {
-			return nil, fmt.Errorf("asset %q: invalid partition_type %q (must be DAY, HOUR, MONTH, or YEAR)", a.Name, a.PartitionType)
-		}
-
-		if a.PartitionType != "" && a.PartitionBy == "" {
-			return nil, fmt.Errorf("asset %q: partition_type requires partition_by", a.Name)
-		}
-
-		if !validSchemaCheckValues[a.SchemaCheck] {
-			return nil, fmt.Errorf("asset %q: invalid schema_check %q (must be warn, error, or ignore)", a.Name, a.SchemaCheck)
-		}
-
-		if a.Timeout != "" {
-			if _, err := time.ParseDuration(a.Timeout); err != nil {
-				return nil, fmt.Errorf("asset %q: invalid timeout %q: %w", a.Name, a.Timeout, err)
-			}
-		}
-
-		if a.Runner == "" {
-			a.Runner = "local"
-		}
-
-		if err := validateAndApplyRetryDefaults(a); err != nil {
-			return nil, fmt.Errorf("asset %q: %w", a.Name, err)
-		}
-
-		if seen[a.Name] {
-			return nil, fmt.Errorf("duplicate asset name: %q", a.Name)
-		}
-		seen[a.Name] = true
+	if err := validateAssetFields(&cfg); err != nil {
+		return nil, err
 	}
 
 	// Populate connection names from map keys
@@ -418,126 +553,20 @@ func LoadConfig(path string) (*PipelineConfig, error) {
 		return nil, err
 	}
 
-	// Validate connection references
-	for _, a := range cfg.Assets {
-		if a.DestinationConnection != "" {
-			if _, ok := cfg.Connections[a.DestinationConnection]; !ok {
-				return nil, fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.DestinationConnection)
-			}
-		}
-		if a.SourceConnection != "" {
-			if _, ok := cfg.Connections[a.SourceConnection]; !ok {
-				return nil, fmt.Errorf("asset %q references non-existent connection %q", a.Name, a.SourceConnection)
-			}
-		}
-		if a.Type == "sql" && a.DestinationConnection == "" {
-			return nil, fmt.Errorf("sql asset %q must have destination_connection", a.Name)
-		}
-		if (a.Type == "gcs_export" || a.Type == "gcs_ingest") && a.SourceConnection == "" {
-			return nil, fmt.Errorf("%s asset %q must have source_connection", a.Type, a.Name)
-		}
-		if a.PollInterval != "" && a.Type != "gcs_ingest" {
-			return nil, fmt.Errorf("asset %q: poll_interval is only valid for gcs_ingest assets", a.Name)
-		}
-		if a.Type == "gcs_ingest" {
-			if srcConn, ok := cfg.Connections[a.SourceConnection]; ok && srcConn.Type != "gcs" {
-				return nil, fmt.Errorf("gcs_ingest asset %q: source_connection must be type gcs, got %q", a.Name, srcConn.Type)
-			}
-			if a.DestinationConnection != "" {
-				if destConn, ok := cfg.Connections[a.DestinationConnection]; ok && destConn.Type != "bigquery" {
-					return nil, fmt.Errorf("gcs_ingest asset %q: destination_connection must be type bigquery, got %q", a.Name, destConn.Type)
-				}
-			}
-		}
+	if err := validateConnectionRefs(&cfg); err != nil {
+		return nil, err
 	}
 
-	// Validate sources
-	for name, src := range cfg.Sources {
-		if src.Identifier == "" {
-			return nil, fmt.Errorf("source %q: identifier is required", name)
-		}
-		if src.Connection != "" {
-			if _, ok := cfg.Connections[src.Connection]; !ok {
-				return nil, fmt.Errorf("source %q: references non-existent connection %q", name, src.Connection)
-			}
-		}
-		if src.ExpectedFresh != "" {
-			if _, err := time.ParseDuration(src.ExpectedFresh); err != nil {
-				return nil, fmt.Errorf("source %q: invalid expected_freshness %q: %w", name, src.ExpectedFresh, err)
-			}
-		}
-		// Check no collision with asset names
-		for _, a := range cfg.Assets {
-			if a.Name == name {
-				return nil, fmt.Errorf("source %q: name collides with asset %q", name, a.Name)
-			}
-		}
+	if err := validateSourceDefs(&cfg); err != nil {
+		return nil, err
 	}
 
-	// Validate asset structural check fields and apply defaults
-	for i := range cfg.Assets {
-		a := &cfg.Assets[i]
-		for j := range a.Checks {
-			check := &a.Checks[j]
-			if check.Severity == "" {
-				check.Severity = "error"
-			} else if !validSeverities[check.Severity] {
-				return nil, fmt.Errorf("asset %q: check %d: invalid severity %q (must be info, warning, error, or critical)", a.Name, j, check.Severity)
-			}
-		}
-		for j, fk := range a.ForeignKeys {
-			if fk.Column == "" {
-				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: column is required", a.Name, j)
-			}
-			if fk.References == "" {
-				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: references is required", a.Name, j)
-			}
-			if !strings.Contains(fk.References, ".") {
-				return nil, fmt.Errorf("asset %q: foreign_keys[%d]: references must be in table.column format, got %q", a.Name, j, fk.References)
-			}
-		}
-		if a.Completeness != nil {
-			if a.Completeness.SourceTable == "" {
-				return nil, fmt.Errorf("asset %q: completeness.source_table is required", a.Name)
-			}
-			if a.Completeness.SourcePK == "" {
-				return nil, fmt.Errorf("asset %q: completeness.source_pk is required", a.Name)
-			}
-			if a.Completeness.Tolerance == nil {
-				defaultTolerance := 0.01
-				a.Completeness.Tolerance = &defaultTolerance
-			}
-		}
-		if a.MinRetentionRatio == nil {
-			defaultRatio := 0.5
-			a.MinRetentionRatio = &defaultRatio
-		}
-		if a.Contract != nil {
-			if err := validateContract(a.Name, a.Contract); err != nil {
-				return nil, err
-			}
-		}
+	if err := validateCheckFields(&cfg); err != nil {
+		return nil, err
 	}
 
-	// Validate pools
-	for name, pc := range cfg.Pools {
-		if pc.Slots <= 0 {
-			return nil, fmt.Errorf("pool %q: slots must be > 0", name)
-		}
-		if pc.Timeout != "" {
-			if _, err := time.ParseDuration(pc.Timeout); err != nil {
-				return nil, fmt.Errorf("pool %q: invalid timeout %q: %w", name, pc.Timeout, err)
-			}
-		}
-	}
-
-	// Validate pool references on assets
-	for _, a := range cfg.Assets {
-		if a.Pool != "" && a.Pool != "none" {
-			if _, ok := cfg.Pools[a.Pool]; !ok {
-				return nil, fmt.Errorf("asset %q references non-existent pool %q", a.Name, a.Pool)
-			}
-		}
+	if err := validatePoolDefs(&cfg); err != nil {
+		return nil, err
 	}
 
 	// Validate alerts routing config

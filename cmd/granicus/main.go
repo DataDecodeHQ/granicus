@@ -31,7 +31,6 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/rerun"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
-	"github.com/DataDecodeHQ/granicus/internal/server"
 	"github.com/DataDecodeHQ/granicus/internal/state"
 	"github.com/DataDecodeHQ/granicus/internal/testmode"
 	"github.com/DataDecodeHQ/granicus/internal/validate"
@@ -456,26 +455,6 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 	return reg
 }
 
-func findAssetConfig(cfg *config.PipelineConfig, name string) *config.AssetConfig {
-	for i := range cfg.Assets {
-		if cfg.Assets[i].Name == name {
-			return &cfg.Assets[i]
-		}
-	}
-	return nil
-}
-
-func connectionForAsset(cfg *config.PipelineConfig, asset *config.AssetConfig) *config.ConnectionConfig {
-	connName := asset.DestinationConnection
-	if connName == "" {
-		return nil
-	}
-	if conn, ok := cfg.Connections[connName]; ok {
-		return conn
-	}
-	return nil
-}
-
 func runDryRun(g *graph.Graph, cfg *config.PipelineConfig, assetFilter []string, downstreamOnly bool, fromDate, toDate string, fullRefresh bool, projectRoot string) error {
 	// Determine which nodes to run
 	nodesToRun := make(map[string]bool)
@@ -769,143 +748,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 		},
 	})
 
-	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
-		var ts string
-		if !outputJSON {
-			ts = time.Now().Format("15:04:05")
-			fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
-		}
-
-		logEmit(eventStore, events.Event{
-			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
-			EventType: "node_started", Severity: "info",
-			Summary: fmt.Sprintf("Node %s started", asset.Name),
-		})
-
-		// Model version tracking
-		if asset.Source != "" {
-			srcPath := filepath.Join(pr, asset.Source)
-			if hash, herr := events.HashFile(srcPath); herr == nil {
-				if _, _, mvErr := eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID); mvErr != nil {
-					slog.Warn("failed to record model version", "asset", asset.Name, "error", mvErr)
-				}
-			}
-		}
-
-		// Resolve per-asset dataset from layer routing
-		assetCfg := findAssetConfig(cfg, asset.Name)
-		resolvedDataset := ""
-		if assetCfg != nil {
-			defaultDS := ""
-			if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-				defaultDS = conn.Properties["dataset"]
-			}
-			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
-		}
-
-		// Resolve per-asset connections for Python/shell runners
-		var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
-		if assetCfg != nil {
-			if assetCfg.DestinationConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
-					resolvedDestConn = conn
-				}
-			}
-			if assetCfg.SourceConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
-					resolvedSourceConn = conn
-				}
-			}
-		}
-
-		ra := &runner.Asset{
-			Name:                  asset.Name,
-			Type:                  asset.Type,
-			Source:                asset.Source,
-			DestinationConnection: asset.DestinationConnection,
-			SourceConnection:      asset.SourceConnection,
-			IntervalStart:         asset.IntervalStart,
-			IntervalEnd:           asset.IntervalEnd,
-			Prefix:                cfg.Prefix,
-			InlineSQL:             asset.InlineSQL,
-			TestStart:             asset.TestStart,
-			TestEnd:               asset.TestEnd,
-			Dataset:               resolvedDataset,
-			Layer:                 asset.Layer,
-			DependsOn:             asset.DependsOn,
-			Timeout:               asset.Timeout,
-			ResolvedDestConn:      resolvedDestConn,
-			ResolvedSourceConn:    resolvedSourceConn,
-		}
-
-		r := registry.Run(ra, pr, rid)
-
-		if r.Status == "success" {
-			logEmit(eventStore, events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_succeeded", Severity: "info",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
-				Details: map[string]any{
-					"exit_code":    r.ExitCode,
-					"metadata":     r.Metadata,
-					"stdout_lines": events.CountLines(r.Stdout),
-					"stderr_lines": events.CountLines(r.Stderr),
-				},
-			})
-		} else {
-			stdout := r.Stdout
-			if len(stdout) > 10*1024 {
-				stdout = stdout[:10*1024] + "[truncated]"
-			}
-			stderr := r.Stderr
-			if len(stderr) > 10*1024 {
-				stderr = stderr[:10*1024] + "[truncated]"
-			}
-			logEmit(eventStore, events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_failed", Severity: "error",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
-				Details: map[string]any{
-					"error_message": r.Error,
-					"exit_code":     r.ExitCode,
-					"source_file":   asset.Source,
-					"metadata":      r.Metadata,
-					"stdout":        stdout,
-					"stderr":        stderr,
-				},
-			})
-		}
-
-		if !outputJSON {
-			ts = time.Now().Format("15:04:05")
-			switch r.Status {
-			case "success":
-				fmt.Printf("[%s] %s %-24s success (%.1fs)\n", ts, greenCheck, r.AssetName, r.Duration.Seconds())
-			case "failed":
-				fmt.Printf("[%s] %s %-24s failed (%.1fs) -- %s\n", ts, redCross, r.AssetName, r.Duration.Seconds(), r.Error)
-				if r.Stderr != "" {
-					for _, line := range strings.Split(strings.TrimSpace(r.Stderr), "\n") {
-						fmt.Printf("         %s\n", line)
-					}
-				}
-			}
-		}
-
-		return executor.NodeResult{
-			AssetName: r.AssetName,
-			Status:    r.Status,
-			StartTime: r.StartTime,
-			EndTime:   r.EndTime,
-			Duration:  r.Duration,
-			Error:     r.Error,
-			Stdout:    r.Stdout,
-			Stderr:    r.Stderr,
-			ExitCode:  r.ExitCode,
-			Metadata:  r.Metadata,
-		}
-	}
+	runnerFunc := buildNodeRunner(cfg, runID, eventStore, registry, nodeRunnerOptions{
+		OutputJSON: outputJSON,
+	})
 
 	// Build pool manager and asset-pool mappings
 	poolMgr, assetPools := buildPoolManager(cfg)
@@ -1013,50 +858,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Send run summary notification
-	if cfg.Alerts != nil {
-		alertMgr := server.NewAlertManager(cfg.Alerts, eventStore)
-		var summaryResults []struct {
-			AssetName string
-			Status    string
-			Error     string
-			Duration  float64
-			Cost      float64
-		}
-		for _, r := range rr.Results {
-			cost := 0.0
-			if r.Metadata != nil {
-				if c, ok := r.Metadata["bq_total_bytes_billed"]; ok {
-					if v, err := fmt.Sscanf(c, "%f", &cost); v == 1 && err == nil {
-						cost = cost / 1e12 * 5.0 // approx $/TB
-					}
-				}
-			}
-			summaryResults = append(summaryResults, struct {
-				AssetName string
-				Status    string
-				Error     string
-				Duration  float64
-				Cost      float64
-			}{r.AssetName, r.Status, r.Error, r.Duration.Seconds(), cost})
-		}
-		alertData := server.BuildRunSummary(cfg.Pipeline, runID, summaryResults, totalDuration.Seconds())
-		alertMgr.SendRunSummary(alertData)
-	}
+	sendRunAlerts(cfg, runID, eventStore, rr, totalDuration)
 
 	// Post-run hooks: context.db + monitor.db
-	bqClient := newBQClientForContext(cfg)
-	if bqClient != nil {
-		defer bqClient.Close()
-	}
-	hooks := []executor.PostRunHook{
-		executor.WriteContextHook(bqClient),
-		monitorHook(bqClient),
-		executor.DuckDBAssemblyHook(),
-	}
-	hookFailures := executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
-	if hookFailures > 0 {
-		slog.Warn("post-run hooks failed", "failures", hookFailures)
-	}
+	runPostRunHooks(cfg, g, projectRoot, rr)
 
 	if failed > 0 {
 		return fmt.Errorf("%d node(s) failed", failed)
@@ -1713,6 +1518,135 @@ type jsonModelsHistoryOutput struct {
 	History []events.ModelVersion `json:"history"`
 }
 
+func listModels(eventStore *events.Store, outputJSON bool) error {
+	models, err := eventStore.ListModels()
+	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
+		}
+		return err
+	}
+
+	if outputJSON {
+		out := jsonModelsListOutput{Models: models}
+		if out.Models == nil {
+			out.Models = []events.ModelVersion{}
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if len(models) == 0 {
+		fmt.Println("No models registered.")
+		return nil
+	}
+
+	fmt.Printf("%-32s %-8s %-10s %s\n", "Asset", "Version", "Hash", "Last Run")
+	for _, m := range models {
+		hash := m.SourceHash
+		if len(hash) > 8 {
+			hash = hash[:8]
+		}
+		fmt.Printf("%-32s v%-7d %-10s %s\n", m.AssetName, m.Version, hash, m.ActivatedAt[:19])
+	}
+	return nil
+}
+
+func diffModelVersions(eventStore *events.Store, asset string, diffFlag string) error {
+	var v1, v2 int
+	if _, err := fmt.Sscanf(diffFlag, "%d,%d", &v1, &v2); err != nil {
+		return fmt.Errorf("--diff expects N,M (e.g., --diff 1,2)")
+	}
+	history, err := eventStore.GetModelHistory(asset)
+	if err != nil {
+		return err
+	}
+	var src1, src2 string
+	for _, h := range history {
+		if h.Version == v1 {
+			src1 = h.SourceSnapshot
+		}
+		if h.Version == v2 {
+			src2 = h.SourceSnapshot
+		}
+	}
+	if src1 == "" || src2 == "" {
+		return fmt.Errorf("version not found")
+	}
+	// Simple line-by-line diff
+	lines1 := strings.Split(src1, "\n")
+	lines2 := strings.Split(src2, "\n")
+	fmt.Printf("--- %s v%d\n+++ %s v%d\n", asset, v1, asset, v2)
+	maxLen := len(lines1)
+	if len(lines2) > maxLen {
+		maxLen = len(lines2)
+	}
+	for i := 0; i < maxLen; i++ {
+		l1, l2 := "", ""
+		if i < len(lines1) {
+			l1 = lines1[i]
+		}
+		if i < len(lines2) {
+			l2 = lines2[i]
+		}
+		if l1 != l2 {
+			if l1 != "" {
+				fmt.Printf("-%s\n", l1)
+			}
+			if l2 != "" {
+				fmt.Printf("+%s\n", l2)
+			}
+		} else {
+			fmt.Printf(" %s\n", l1)
+		}
+	}
+	return nil
+}
+
+func showModelHistory(eventStore *events.Store, asset string, outputJSON bool) error {
+	history, err := eventStore.GetModelHistory(asset)
+	if err != nil {
+		if outputJSON {
+			printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
+		}
+		return err
+	}
+	if len(history) == 0 {
+		if outputJSON {
+			printJSONError("NOT_FOUND", fmt.Sprintf("no history for %s", asset), "Check the asset name with: granicus models", map[string]any{"asset": asset})
+			return nil
+		}
+		return fmt.Errorf("no history for %s", asset)
+	}
+
+	if outputJSON {
+		out := jsonModelsHistoryOutput{Asset: asset, History: history}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	}
+
+	fmt.Printf("Model: %s\n\n", asset)
+	fmt.Printf("%-8s %-10s %-20s %-32s %s\n", "Version", "Hash", "Activated", "Run", "Replaced")
+	for _, h := range history {
+		hash := h.SourceHash
+		if len(hash) > 8 {
+			hash = hash[:8]
+		}
+		replaced := "-"
+		if h.ReplacedAt != "" {
+			replaced = h.ReplacedAt[:19]
+		}
+		activated := h.ActivatedAt
+		if len(activated) > 19 {
+			activated = activated[:19]
+		}
+		fmt.Printf("v%-7d %-10s %-20s %-32s %s\n", h.Version, hash, activated, h.ActivatedRun, replaced)
+	}
+	return nil
+}
+
 func runModels(cmd *cobra.Command, args []string) error {
 	projectRoot, _ := cmd.Flags().GetString("project-root")
 	diffFlag, _ := cmd.Flags().GetString("diff")
@@ -1739,133 +1673,16 @@ func runModels(cmd *cobra.Command, args []string) error {
 	defer eventStore.Close()
 
 	if len(args) == 0 {
-		models, err := eventStore.ListModels()
-		if err != nil {
-			if outputJSON {
-				printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
-			}
-			return err
-		}
-
-		if outputJSON {
-			out := jsonModelsListOutput{Models: models}
-			if out.Models == nil {
-				out.Models = []events.ModelVersion{}
-			}
-			data, _ := json.MarshalIndent(out, "", "  ")
-			fmt.Println(string(data))
-			return nil
-		}
-
-		if len(models) == 0 {
-			fmt.Println("No models registered.")
-			return nil
-		}
-
-		fmt.Printf("%-32s %-8s %-10s %s\n", "Asset", "Version", "Hash", "Last Run")
-		for _, m := range models {
-			hash := m.SourceHash
-			if len(hash) > 8 {
-				hash = hash[:8]
-			}
-			fmt.Printf("%-32s v%-7d %-10s %s\n", m.AssetName, m.Version, hash, m.ActivatedAt[:19])
-		}
-		return nil
+		return listModels(eventStore, outputJSON)
 	}
 
 	assetName := args[0]
 
 	if diffFlag != "" {
-		var v1, v2 int
-		if _, err := fmt.Sscanf(diffFlag, "%d,%d", &v1, &v2); err != nil {
-			return fmt.Errorf("--diff expects N,M (e.g., --diff 1,2)")
-		}
-		history, err := eventStore.GetModelHistory(assetName)
-		if err != nil {
-			return err
-		}
-		var src1, src2 string
-		for _, h := range history {
-			if h.Version == v1 {
-				src1 = h.SourceSnapshot
-			}
-			if h.Version == v2 {
-				src2 = h.SourceSnapshot
-			}
-		}
-		if src1 == "" || src2 == "" {
-			return fmt.Errorf("version not found")
-		}
-		// Simple line-by-line diff
-		lines1 := strings.Split(src1, "\n")
-		lines2 := strings.Split(src2, "\n")
-		fmt.Printf("--- %s v%d\n+++ %s v%d\n", assetName, v1, assetName, v2)
-		maxLen := len(lines1)
-		if len(lines2) > maxLen {
-			maxLen = len(lines2)
-		}
-		for i := 0; i < maxLen; i++ {
-			l1, l2 := "", ""
-			if i < len(lines1) {
-				l1 = lines1[i]
-			}
-			if i < len(lines2) {
-				l2 = lines2[i]
-			}
-			if l1 != l2 {
-				if l1 != "" {
-					fmt.Printf("-%s\n", l1)
-				}
-				if l2 != "" {
-					fmt.Printf("+%s\n", l2)
-				}
-			} else {
-				fmt.Printf(" %s\n", l1)
-			}
-		}
-		return nil
+		return diffModelVersions(eventStore, assetName, diffFlag)
 	}
 
-	history, err := eventStore.GetModelHistory(assetName)
-	if err != nil {
-		if outputJSON {
-			printJSONError("INTERNAL_ERROR", err.Error(), "", nil)
-		}
-		return err
-	}
-	if len(history) == 0 {
-		if outputJSON {
-			printJSONError("NOT_FOUND", fmt.Sprintf("no history for %s", assetName), "Check the asset name with: granicus models", map[string]any{"asset": assetName})
-			return nil
-		}
-		return fmt.Errorf("no history for %s", assetName)
-	}
-
-	if outputJSON {
-		out := jsonModelsHistoryOutput{Asset: assetName, History: history}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
-		return nil
-	}
-
-	fmt.Printf("Model: %s\n\n", assetName)
-	fmt.Printf("%-8s %-10s %-20s %-32s %s\n", "Version", "Hash", "Activated", "Run", "Replaced")
-	for _, h := range history {
-		hash := h.SourceHash
-		if len(hash) > 8 {
-			hash = hash[:8]
-		}
-		replaced := "-"
-		if h.ReplacedAt != "" {
-			replaced = h.ReplacedAt[:19]
-		}
-		activated := h.ActivatedAt
-		if len(activated) > 19 {
-			activated = activated[:19]
-		}
-		fmt.Printf("v%-7d %-10s %-20s %-32s %s\n", h.Version, hash, activated, h.ActivatedRun, replaced)
-	}
-	return nil
+	return showModelHistory(eventStore, assetName, outputJSON)
 }
 
 func buildPoolManager(cfg *config.PipelineConfig) (*pool.PoolManager, map[string]string) {

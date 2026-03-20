@@ -407,149 +407,11 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 
 	registry := buildRegistry(cfg, parseRoot)
 
-	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
-		if err := eventStore.Emit(events.Event{
-			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
-			EventType: "node_started", Severity: "info",
-			Summary: fmt.Sprintf("Node %s started", asset.Name),
-		}); err != nil {
-			slog.Warn("event emission failed", "event_type", "node_started", "error", err)
-		}
-
-		if asset.Source != "" {
-			// Resolve source path: use config dir (GCS extraction) if set, else project root
-			sourceBase := pr
-			if cfg.ConfigDir != "" {
-				sourceBase = cfg.ConfigDir
-			}
-			srcPath := filepath.Join(sourceBase, asset.Source)
-			if hash, herr := events.HashFile(srcPath); herr == nil {
-				eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID)
-			}
-		}
-
-		assetCfg := findAssetConfig(cfg, asset.Name)
-		resolvedDataset := ""
-		if assetCfg != nil {
-			defaultDS := ""
-			if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-				defaultDS = conn.Properties["dataset"]
-			}
-			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
-		}
-
-		var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
-		if assetCfg != nil {
-			if assetCfg.DestinationConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
-					resolvedDestConn = conn
-				}
-			}
-			if assetCfg.SourceConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
-					resolvedSourceConn = conn
-				}
-			}
-		}
-
-		ra := &runner.Asset{
-			Name:                  asset.Name,
-			Type:                  asset.Type,
-			Source:                asset.Source,
-			DestinationConnection: asset.DestinationConnection,
-			SourceConnection:      asset.SourceConnection,
-			IntervalStart:         asset.IntervalStart,
-			IntervalEnd:           asset.IntervalEnd,
-			Prefix:                cfg.Prefix,
-			InlineSQL:             asset.InlineSQL,
-			DependsOn:             asset.DependsOn,
-			Timeout:               asset.Timeout,
-			Dataset:               resolvedDataset,
-			Layer:                 asset.Layer,
-			ResolvedDestConn:      resolvedDestConn,
-			ResolvedSourceConn:    resolvedSourceConn,
-		}
-
-		// Use config dir for source resolution when pipeline was fetched from GCS
-		runRoot := pr
-		if cfg.ConfigDir != "" {
-			runRoot = cfg.ConfigDir
-		}
-
-		var r runner.NodeResult
-		if dispatch != nil && dispatch.Supports(ra.Type) {
-			var derr error
-			r, derr = dispatch.Execute(ctx, ra, runRoot, rid)
-			if derr != nil {
-				r = runner.NodeResult{
-					AssetName: ra.Name,
-					Status:    "failed",
-					StartTime: time.Now(),
-					EndTime:   time.Now(),
-					Error:     fmt.Sprintf("dispatch error: %v", derr),
-					ExitCode:  -1,
-					Metadata:  map[string]string{"runner": "cloud_run_job"},
-				}
-			}
-		} else {
-			r = registry.Run(ra, runRoot, rid)
-		}
-
-		if r.Status == "success" {
-			if err := eventStore.Emit(events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_succeeded", Severity: "info",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
-				Details: map[string]any{
-					"exit_code":    r.ExitCode,
-					"metadata":     r.Metadata,
-					"stdout_lines": events.CountLines(r.Stdout),
-					"stderr_lines": events.CountLines(r.Stderr),
-				},
-			}); err != nil {
-				slog.Warn("event emission failed", "event_type", "node_succeeded", "error", err)
-			}
-		} else {
-			stdout := r.Stdout
-			if len(stdout) > 10*1024 {
-				stdout = stdout[:10*1024] + "[truncated]"
-			}
-			stderr := r.Stderr
-			if len(stderr) > 10*1024 {
-				stderr = stderr[:10*1024] + "[truncated]"
-			}
-			if err := eventStore.Emit(events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_failed", Severity: "error",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
-				Details: map[string]any{
-					"error_message": r.Error,
-					"exit_code":     r.ExitCode,
-					"source_file":   asset.Source,
-					"metadata":      r.Metadata,
-					"stdout":        stdout,
-					"stderr":        stderr,
-				},
-			}); err != nil {
-				slog.Warn("event emission failed", "event_type", "node_failed", "error", err)
-			}
-		}
-
-		return executor.NodeResult{
-			AssetName: r.AssetName,
-			Status:    r.Status,
-			StartTime: r.StartTime,
-			EndTime:   r.EndTime,
-			Duration:  r.Duration,
-			Error:     r.Error,
-			Stdout:    r.Stdout,
-			Stderr:    r.Stderr,
-			ExitCode:  r.ExitCode,
-			Metadata:  r.Metadata,
-		}
-	}
+	runnerFunc := buildNodeRunner(cfg, runID, eventStore, registry, nodeRunnerOptions{
+		Dispatch:    dispatch,
+		DispatchCtx: ctx,
+		ConfigDir:   cfg.ConfigDir,
+	})
 
 	runCfg := executor.RunConfig{
 		MaxParallel: cfg.MaxParallel,
@@ -618,45 +480,8 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	slog.Info("run completed", "run_id", runID, "pipeline", cfg.Pipeline, "succeeded", succeeded, "failed", failed, "skipped", skipped, "duration_s", totalDuration.Seconds())
 
 	// Send run summary notification
-	if cfg.Alerts != nil {
-		alertMgr := server.NewAlertManager(cfg.Alerts, eventStore)
-		var summaryResults []struct {
-			AssetName string
-			Status    string
-			Error     string
-			Duration  float64
-			Cost      float64
-		}
-		for _, r := range rr.Results {
-			cost := 0.0
-			if r.Metadata != nil {
-				if c, ok := r.Metadata["bq_total_bytes_billed"]; ok {
-					if v, err := fmt.Sscanf(c, "%f", &cost); v == 1 && err == nil {
-						cost = cost / 1e12 * 5.0
-					}
-				}
-			}
-			summaryResults = append(summaryResults, struct {
-				AssetName string
-				Status    string
-				Error     string
-				Duration  float64
-				Cost      float64
-			}{r.AssetName, r.Status, r.Error, r.Duration.Seconds(), cost})
-		}
-		alertData := server.BuildRunSummary(cfg.Pipeline, runID, summaryResults, totalDuration.Seconds())
-		alertMgr.SendRunSummary(alertData)
-	}
+	sendRunAlerts(cfg, runID, eventStore, rr, totalDuration)
 
 	// Post-run hooks: context.db + monitor.db
-	bqClient := newBQClientForContext(cfg)
-	if bqClient != nil {
-		defer bqClient.Close()
-	}
-	hooks := []executor.PostRunHook{
-		executor.WriteContextHook(bqClient),
-		monitorHook(bqClient),
-		executor.DuckDBAssemblyHook(),
-	}
-	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
+	runPostRunHooks(cfg, g, projectRoot, rr)
 }

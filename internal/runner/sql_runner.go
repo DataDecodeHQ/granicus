@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,9 +14,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/DataDecodeHQ/granicus/internal/config"
-	"github.com/DataDecodeHQ/granicus/internal/result"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 )
 
 type SQLRunner struct {
@@ -58,11 +55,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
-	tmpl := template.New("sql")
-	if r.FuncMap != nil {
-		tmpl = tmpl.Funcs(r.FuncMap)
-	}
-	tmpl, err = tmpl.Parse(string(rawSQL))
+	rendered, err := renderSQL(rawSQL, r.Connection, asset, r.FuncMap)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -70,39 +63,10 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 			StartTime: start,
 			EndTime:   time.Now(),
 			Duration:  time.Since(start),
-			Error:     fmt.Sprintf("parsing SQL template: %v", err),
+			Error:     err.Error(),
 			ExitCode:  -1,
 		}
 	}
-
-	dataset := r.Connection.Properties["dataset"]
-	if asset.Dataset != "" {
-		dataset = asset.Dataset
-	}
-	data := templateData{
-		Project: r.Connection.Properties["project"],
-		Dataset: dataset,
-		Prefix:  asset.Prefix,
-	}
-
-	var rendered []byte
-	buf := new(bytes.Buffer)
-	if err := tmpl.Execute(buf, data); err != nil {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			StartTime: start,
-			EndTime:   time.Now(),
-			Duration:  time.Since(start),
-			Error:     fmt.Sprintf("executing SQL template: %v", err),
-			ExitCode:  -1,
-		}
-	}
-	rendered = buf.Bytes()
-
-	// Second pass: replace @start/@end with interval boundaries
-	rendered = substituteIntervalVars(rendered, asset)
-	rendered = SubstituteTestVars(rendered, asset.TestStart, asset.TestEnd)
 
 	// Prepend DROP TABLE to avoid partition spec conflicts on CREATE OR REPLACE
 	rendered = prependDropForReplace(rendered)
@@ -112,13 +76,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	project := r.Connection.Properties["project"]
-	var opts []option.ClientOption
-	if creds := r.Connection.Properties["credentials"]; creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
-	}
-
-	client, err := bigquery.NewClient(ctx, project, opts...)
+	client, err := newBQClient(ctx, r.Connection)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -172,30 +130,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
-	metadata := make(map[string]string)
-	if stats := status.Statistics; stats != nil {
-		bytesProcessed := stats.TotalBytesProcessed
-		metadata["total_bytes_processed"] = strconv.FormatInt(bytesProcessed, 10)
-		metadata["estimated_cost_usd"] = fmt.Sprintf("%.6f", estimateBQCostUSD(bytesProcessed))
-		metadata[result.TelBQBytesScanned] = strconv.FormatInt(bytesProcessed, 10)
-		metadata[result.TelBQJobID] = job.ID()
-		if qStats, ok := stats.Details.(*bigquery.QueryStatistics); ok {
-			metadata["total_slot_ms"] = strconv.FormatInt(qStats.SlotMillis, 10)
-			metadata[result.TelBQSlotMs] = strconv.FormatInt(qStats.SlotMillis, 10)
-			metadata[result.TelBQCacheHit] = strconv.FormatBool(qStats.CacheHit)
-			metadata["cache_hit"] = strconv.FormatBool(qStats.CacheHit)
-			metadata["rows_affected"] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
-			metadata[result.TelBQRowCount] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
-			if qStats.ReferencedTables != nil {
-				for _, t := range qStats.ReferencedTables {
-					metadata["destination_table"] = t.DatasetID + "." + t.TableID
-				}
-			}
-			if qStats.TotalBytesProcessedAccuracy != "" {
-				metadata[result.TelBQBytesWritten] = strconv.FormatInt(stats.TotalBytesProcessed, 10)
-			}
-		}
-	}
+	metadata := collectBQMetadata(status, job)
 
 	return NodeResult{
 		AssetName: asset.Name,
@@ -242,51 +177,20 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
-	tmpl := template.New("check")
-	if r.FuncMap != nil {
-		tmpl = tmpl.Funcs(r.FuncMap)
-	}
-	tmpl, parseErr := tmpl.Parse(string(rawSQL))
-	if parseErr != nil {
+	checkSQL, err := renderSQL(rawSQL, r.Connection, asset, r.FuncMap)
+	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
 			EndTime: time.Now(), Duration: time.Since(start),
-			Error: fmt.Sprintf("parsing check template: %v", parseErr), ExitCode: -1,
+			Error: err.Error(), ExitCode: -1,
 		}
 	}
-
-	checkDataset := r.Connection.Properties["dataset"]
-	if asset.Dataset != "" {
-		checkDataset = asset.Dataset
-	}
-	data := templateData{
-		Project: r.Connection.Properties["project"],
-		Dataset: checkDataset,
-		Prefix:  asset.Prefix,
-	}
-	buf := new(bytes.Buffer)
-	if err := tmpl.Execute(buf, data); err != nil {
-		return NodeResult{
-			AssetName: asset.Name, Status: "failed", StartTime: start,
-			EndTime: time.Now(), Duration: time.Since(start),
-			Error: fmt.Sprintf("executing check template: %v", err), ExitCode: -1,
-		}
-	}
-
-	checkSQL := substituteIntervalVars(buf.Bytes(), asset)
-	checkSQL = SubstituteTestVars(checkSQL, asset.TestStart, asset.TestEnd)
 
 	timeout := effectiveTimeout(asset.Timeout, r.Timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	project := r.Connection.Properties["project"]
-	var opts []option.ClientOption
-	if creds := r.Connection.Properties["credentials"]; creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
-	}
-
-	client, err := bigquery.NewClient(ctx, project, opts...)
+	client, err := newBQClient(ctx, r.Connection)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
