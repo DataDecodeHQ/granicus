@@ -1,10 +1,8 @@
 """Tests for check_go.py — Go structural checker."""
 
-import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from check_go import (
+from code_checks.check_go import (
     check_error_handling,
     check_inline_side_effects,
     check_package_level_vars,
@@ -36,7 +34,7 @@ def _make_func(start_line: int, end_line: int, name: str = "doThing") -> dict:
 class TestSwallowedErrorSuppression:
     """SWALLOWED_ERROR should be suppressed when // dag:intentional is present."""
 
-    def test_without_dag_intentional_emits_warning(self):
+    def test_without_dag_intentional_emits_warning(self) -> None:
         # "_ = foo()" matches the swallowed-error regex (single blank identifier)
         lines = [
             "func doThing() {\n",          # line 1
@@ -51,7 +49,7 @@ class TestSwallowedErrorSuppression:
             "Expected SWALLOWED_ERROR warning for unannotated discarded error"
         )
 
-    def test_with_dag_intentional_suppresses_warning(self):
+    def test_with_dag_intentional_suppresses_warning(self) -> None:
         lines = [
             "func doThing() {\n",                               # line 1
             "    _ = foo() // dag:intentional\n",               # line 2 — annotated
@@ -75,7 +73,7 @@ class TestCollectBQMetadataBoundary:
     and will PASS once task 3uk9 adds // dag:boundary to the function.
     """
 
-    def test_without_dag_boundary_emits_failure(self):
+    def test_without_dag_boundary_emits_failure(self) -> None:
         """INLINE_SIDE_EFFECT_DATABASE is raised for an unannotated BQ-touching function."""
         lines = [
             "func collectBQMetadata(status *bigquery.JobStatus, job *bigquery.Job) map[string]string {\n",
@@ -101,7 +99,7 @@ class TestCollectBQMetadataBoundary:
             "Expected INLINE_SIDE_EFFECT_DATABASE for collectBQMetadata without dag:boundary"
         )
 
-    def test_with_dag_boundary_suppresses_failure(self):
+    def test_with_dag_boundary_suppresses_failure(self) -> None:
         """// dag:boundary above collectBQMetadata suppresses INLINE_SIDE_EFFECT_DATABASE."""
         lines = [
             "// dag:boundary\n",
@@ -128,7 +126,7 @@ class TestCollectBQMetadataBoundary:
             "Expected no INLINE_SIDE_EFFECT_DATABASE when // dag:boundary is present"
         )
 
-    def test_sql_helpers_go_no_inline_side_effect_failures(self):
+    def test_sql_helpers_go_no_inline_side_effect_failures(self) -> None:
         """
         check_go.py must report zero INLINE_SIDE_EFFECT_DATABASE failures for
         sql_helpers.go once // dag:boundary is added to collectBQMetadata.
@@ -182,7 +180,7 @@ class TestDispatchBlockNoFalsePositivePackageLevelVar:
         "}\n",                                                            # line 16 — in_func ends
     ]
 
-    def test_closure_local_r_not_flagged(self):
+    def test_closure_local_r_not_flagged(self) -> None:
         """var r inside a closure must not produce PACKAGE_LEVEL_VAR."""
         result = CheckResult()
         check_package_level_vars(
@@ -199,7 +197,7 @@ class TestDispatchBlockNoFalsePositivePackageLevelVar:
             + "\n".join(flagged_names)
         )
 
-    def test_closure_local_derr_not_flagged(self):
+    def test_closure_local_derr_not_flagged(self) -> None:
         """var derr inside a closure must not produce PACKAGE_LEVEL_VAR."""
         result = CheckResult()
         check_package_level_vars(
@@ -216,7 +214,7 @@ class TestDispatchBlockNoFalsePositivePackageLevelVar:
             + "\n".join(flagged_names)
         )
 
-    def test_serve_go_dispatch_block_no_package_level_var(self):
+    def test_serve_go_dispatch_block_no_package_level_var(self) -> None:
         """
         The real dispatch block in serve.go (executePipeline) must produce zero
         PACKAGE_LEVEL_VAR warnings for 'r' and 'derr'.
