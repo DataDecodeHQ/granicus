@@ -100,6 +100,7 @@ func (r *GCSIngestRunner) Run(asset *Asset, projectRoot string, runID string) No
 		env = append(env, "GOOGLE_APPLICATION_CREDENTIALS="+creds)
 	}
 
+	// Contract: Go owns this boundary. Base env + runner-specific vars. Legacy env vars preserved for backward compat.
 	sub := RunSubprocess(SubprocessConfig{
 		Command: inferCommand(asset.Source, projectRoot),
 		Env:     env,

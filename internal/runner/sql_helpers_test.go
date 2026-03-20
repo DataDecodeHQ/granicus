@@ -12,8 +12,9 @@ import (
 )
 
 // renderSQLForTest replicates the template rendering pipeline used by both
-// SQLRunner.Run and SQLCheckRunner.Run. Any refactoring that changes these
-// steps should update this helper and the tests below.
+// SQLRunner.Run and SQLCheckRunner.Run. @start/@end are left intact by
+// renderSQL; this helper optionally applies DDL-style string substitution so
+// existing tests that assert on the substituted output still pass.
 func renderSQLForTest(rawSQL string, project, dataset, prefix, intervalStart, intervalEnd, testStart, testEnd string) ([]byte, error) {
 	tmpl, err := template.New("sql").Parse(rawSQL)
 	if err != nil {
@@ -34,7 +35,9 @@ func renderSQLForTest(rawSQL string, project, dataset, prefix, intervalStart, in
 		TestStart:     testStart,
 		TestEnd:       testEnd,
 	}
-	rendered := substituteIntervalVars(buf.Bytes(), asset)
+	// @start/@end are handled as BQ named parameters at query time; apply the
+	// DDL fallback here so tests can assert on the substituted values.
+	rendered := substituteIntervalVarsForDDL(buf.Bytes(), asset)
 	rendered = SubstituteTestVars(rendered, asset.TestStart, asset.TestEnd)
 	return rendered, nil
 }

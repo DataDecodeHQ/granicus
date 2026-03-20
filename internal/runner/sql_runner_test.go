@@ -55,11 +55,11 @@ func TestSQLRunner_MissingFile(t *testing.T) {
 	}
 }
 
-func TestSubstituteIntervalVars_DayInterval(t *testing.T) {
+func TestSubstituteIntervalVarsForDDL_DayInterval(t *testing.T) {
 	sql := []byte(`SELECT * FROM tbl WHERE dt >= @start AND dt < @end`)
 	asset := &Asset{IntervalStart: "2025-01-10", IntervalEnd: "2025-01-11"}
 
-	result := string(substituteIntervalVars(sql, asset))
+	result := string(substituteIntervalVarsForDDL(sql, asset))
 	if !strings.Contains(result, "'2025-01-10'") {
 		t.Errorf("@start not replaced: %s", result)
 	}
@@ -71,37 +71,74 @@ func TestSubstituteIntervalVars_DayInterval(t *testing.T) {
 	}
 }
 
-func TestSubstituteIntervalVars_HourInterval(t *testing.T) {
+func TestSubstituteIntervalVarsForDDL_HourInterval(t *testing.T) {
 	sql := []byte(`WHERE ts >= @start AND ts < @end`)
 	asset := &Asset{IntervalStart: "2025-01-10T00:00:00", IntervalEnd: "2025-01-10T01:00:00"}
 
-	result := string(substituteIntervalVars(sql, asset))
+	result := string(substituteIntervalVarsForDDL(sql, asset))
 	if !strings.Contains(result, "'2025-01-10T00:00:00'") {
 		t.Errorf("@start not replaced: %s", result)
 	}
 }
 
-func TestSubstituteIntervalVars_NoInterval(t *testing.T) {
+func TestSubstituteIntervalVarsForDDL_NoInterval(t *testing.T) {
 	sql := []byte(`SELECT * FROM tbl WHERE dt >= @start AND dt < @end`)
 	asset := &Asset{}
 
-	result := string(substituteIntervalVars(sql, asset))
+	result := string(substituteIntervalVarsForDDL(sql, asset))
 	// With empty interval, @start/@end should pass through unchanged
 	if !strings.Contains(result, "@start") || !strings.Contains(result, "@end") {
 		t.Errorf("should pass through without interval: %s", result)
 	}
 }
 
-func TestSubstituteIntervalVars_MultipleOccurrences(t *testing.T) {
+func TestSubstituteIntervalVarsForDDL_MultipleOccurrences(t *testing.T) {
 	sql := []byte(`SELECT @start as s1, @start as s2, @end as e1, @end as e2`)
 	asset := &Asset{IntervalStart: "2025-01-10", IntervalEnd: "2025-01-11"}
 
-	result := string(substituteIntervalVars(sql, asset))
+	result := string(substituteIntervalVarsForDDL(sql, asset))
 	if strings.Count(result, "'2025-01-10'") != 2 {
 		t.Errorf("@start should be replaced twice: %s", result)
 	}
 	if strings.Count(result, "'2025-01-11'") != 2 {
 		t.Errorf("@end should be replaced twice: %s", result)
+	}
+}
+
+func TestIsMultiStatementScript(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{
+			name: "drop prefix",
+			sql:  "DROP TABLE IF EXISTS `p.d.t`;\nCREATE OR REPLACE TABLE `p.d.t` AS SELECT 1",
+			want: true,
+		},
+		{
+			name: "create only",
+			sql:  "CREATE OR REPLACE TABLE `p.d.t` AS SELECT 1",
+			want: false,
+		},
+		{
+			name: "plain select",
+			sql:  "SELECT * FROM t WHERE dt >= @start",
+			want: false,
+		},
+		{
+			name: "leading whitespace before drop",
+			sql:  "  DROP TABLE IF EXISTS `p.d.t`;\nSELECT 1",
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isMultiStatementScript([]byte(tt.sql))
+			if got != tt.want {
+				t.Errorf("isMultiStatementScript(%q) = %v, want %v", tt.sql, got, tt.want)
+			}
+		})
 	}
 }
 

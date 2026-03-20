@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -71,6 +72,13 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	// Prepend DROP TABLE to avoid partition spec conflicts on CREATE OR REPLACE
 	rendered = prependDropForReplace(rendered)
 
+	// Multi-statement scripts (DROP TABLE + CREATE OR REPLACE) don't support BQ
+	// named parameters, so fall back to string substitution for @start/@end.
+	// Single-statement queries use BQ named parameters instead.
+	if isMultiStatementScript(rendered) {
+		rendered = substituteIntervalVarsForDDL(rendered, asset)
+	}
+
 	timeout := effectiveTimeout(asset.Timeout, r.Timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -91,6 +99,16 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	defer client.Close()
 
 	q := client.Query(string(rendered))
+	if !isMultiStatementScript(rendered) && asset.IntervalStart != "" {
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "start",
+			Value: asset.IntervalStart,
+		})
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "end",
+			Value: asset.IntervalEnd,
+		})
+	}
 	job, err := q.Run(ctx)
 	if err != nil {
 		return NodeResult{
@@ -200,8 +218,20 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 	defer client.Close()
 
+	// Check queries are always single-statement SELECTs; pass @start/@end as
+	// BQ named parameters rather than substituting into the SQL string.
 	sqlStr := string(checkSQL)
 	q := client.Query(sqlStr)
+	if asset.IntervalStart != "" {
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "start",
+			Value: asset.IntervalStart,
+		})
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "end",
+			Value: asset.IntervalEnd,
+		})
+	}
 	it, err := q.Read(ctx)
 	if err != nil {
 		return NodeResult{
@@ -306,13 +336,23 @@ func estimateBQCostUSD(bytesProcessed int64) float64 {
 	return float64(bytesProcessed) * 5.0 / 1e12
 }
 
-func substituteIntervalVars(sql []byte, asset *Asset) []byte {
+// substituteIntervalVarsForDDL replaces @start/@end with quoted string literals.
+// Use this only for multi-statement scripts (DDL contexts) where BigQuery named
+// parameters are not supported.
+func substituteIntervalVarsForDDL(sql []byte, asset *Asset) []byte {
 	s := string(sql)
 	if asset.IntervalStart != "" {
 		s = strings.ReplaceAll(s, "@start", "'"+asset.IntervalStart+"'")
 		s = strings.ReplaceAll(s, "@end", "'"+asset.IntervalEnd+"'")
 	}
 	return []byte(s)
+}
+
+// isMultiStatementScript reports whether sql is a multi-statement script.
+// We detect this via the DROP prefix that prependDropForReplace injects, since
+// that is the only source of multi-statement SQL in this runner.
+func isMultiStatementScript(sql []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(sql), []byte("DROP TABLE IF EXISTS"))
 }
 
 // SubstituteTestVars replaces @test_start and @test_end placeholders with the given date boundaries.

@@ -14,7 +14,10 @@ import (
 )
 
 // renderSQL parses rawSQL as a Go template, executes it with project/dataset/prefix
-// derived from conn and asset, then applies interval and test-var substitutions.
+// derived from conn and asset, then applies test-var substitutions.
+// @start/@end interval placeholders are left intact so callers can pass them as
+// BigQuery named parameters (or fall back to substituteIntervalVarsForDDL for
+// multi-statement scripts where BQ parameters are not supported).
 func renderSQL(rawSQL []byte, conn *config.ConnectionConfig, asset *Asset, funcMap template.FuncMap) ([]byte, error) {
 	tmpl := template.New("sql")
 	if funcMap != nil {
@@ -41,8 +44,7 @@ func renderSQL(rawSQL []byte, conn *config.ConnectionConfig, asset *Asset, funcM
 		return nil, fmt.Errorf("executing SQL template: %w", err)
 	}
 
-	rendered := substituteIntervalVars(buf.Bytes(), asset)
-	rendered = SubstituteTestVars(rendered, asset.TestStart, asset.TestEnd)
+	rendered := SubstituteTestVars(buf.Bytes(), asset.TestStart, asset.TestEnd)
 	return rendered, nil
 }
 

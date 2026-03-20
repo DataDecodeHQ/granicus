@@ -2,9 +2,13 @@ package result
 
 import "time"
 
+// EnvelopeVersion is the current ResultEnvelope schema version.
+const EnvelopeVersion = "1.0.0"
+
 // ResultEnvelope is the contract between runners and the control plane.
 // Local runners populate it directly; remote runners serialize it as JSON.
 type ResultEnvelope struct {
+	Version    string            `json:"version,omitempty"`
 	Node       string            `json:"node"`
 	RunID      string            `json:"run_id"`
 	Pipeline   string            `json:"pipeline"`

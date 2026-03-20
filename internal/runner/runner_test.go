@@ -147,6 +147,34 @@ func TestShellRunner_AssetTimeoutOverride(t *testing.T) {
 	}
 }
 
+func TestShellRunner_MissingScript(t *testing.T) {
+	dir := t.TempDir()
+	r := NewShellRunner()
+	result := r.Run(&Asset{Name: "missing", Type: "shell", Source: "no_such_script.sh"}, dir, "test-run")
+	if result.Status != "failed" {
+		t.Errorf("expected failed, got %s", result.Status)
+	}
+	if !strings.Contains(result.Error, "script not found") {
+		t.Errorf("expected 'script not found' in error, got %q", result.Error)
+	}
+}
+
+func TestShellRunner_NotExecutable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "noexec.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/bash\necho hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r := NewShellRunner()
+	result := r.Run(&Asset{Name: "noexec", Type: "shell", Source: "noexec.sh"}, dir, "test-run")
+	if result.Status != "failed" {
+		t.Errorf("expected failed, got %s", result.Status)
+	}
+	if !strings.Contains(result.Error, "script not executable") {
+		t.Errorf("expected 'script not executable' in error, got %q", result.Error)
+	}
+}
+
 func TestEffectiveTimeout(t *testing.T) {
 	tests := []struct {
 		name     string

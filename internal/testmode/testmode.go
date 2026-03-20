@@ -46,6 +46,7 @@ func CreateTestDataset(cfg TestConfig, baseDataset, runID string) (string, error
 		},
 	}
 
+	// Contract: Go owns this boundary. Dataset lifecycle management; isolated per run ID.
 	if err := client.Dataset(name).Create(cfg.Ctx, meta); err != nil {
 		return "", fmt.Errorf("creating test dataset %q: %w", name, err)
 	}

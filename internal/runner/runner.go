@@ -105,6 +105,28 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		}
 	}
 
+	scriptPath := asset.Source
+	if projectRoot != "" {
+		scriptPath = projectRoot + "/" + asset.Source
+	}
+	info, statErr := os.Stat(scriptPath)
+	if statErr != nil {
+		return NodeResult{
+			AssetName: asset.Name,
+			Status:    "failed",
+			Error:     fmt.Sprintf("script not found: %s", scriptPath),
+			ExitCode:  -1,
+		}
+	}
+	if info.Mode()&0111 == 0 {
+		return NodeResult{
+			AssetName: asset.Name,
+			Status:    "failed",
+			Error:     fmt.Sprintf("script not executable: %s", scriptPath),
+			ExitCode:  -1,
+		}
+	}
+
 	if err := makeExecutable(asset.Source, projectRoot); err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -134,6 +156,7 @@ func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeRe
 		MetadataPath: metadataPath,
 	})
 
+	// Contract: Go owns this boundary. Base env vars per contracts/env_contract.json
 	start := time.Now()
 	sub := RunSubprocess(SubprocessConfig{
 		Command: []string{"bash", asset.Source},

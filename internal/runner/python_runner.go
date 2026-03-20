@@ -102,6 +102,7 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		go r.monitorProgress(metadataPath, asset.Name, runID, done)
 	}
 
+	// Contract: Go owns this boundary. Schema: contracts/env_contract.json
 	sub := RunSubprocess(SubprocessConfig{
 		Command: []string{pythonBin, asset.Source},
 		Env:     env,

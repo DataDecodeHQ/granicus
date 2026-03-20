@@ -94,11 +94,12 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 
 	// Build environment variables for the job
 	env := map[string]string{
-		"GRANICUS_ASSET_NAME":    asset.Name,
-		"GRANICUS_RUN_ID":        runID,
-		"GRANICUS_PROJECT_ROOT":  "/app",
-		"GRANICUS_RESULT_TOPIC":  "granicus-results",
-		"GRANICUS_RESULT_BUCKET": os.Getenv("GRANICUS_OPS_BUCKET"),
+		"GRANICUS_ASSET_NAME":      asset.Name,
+		"GRANICUS_RUN_ID":          runID,
+		"GRANICUS_PROJECT_ROOT":    "/app",
+		"GRANICUS_RESULT_TOPIC":    "granicus-results",
+		"GRANICUS_RESULT_BUCKET":   os.Getenv("GRANICUS_OPS_BUCKET"),
+		"GRANICUS_ENVELOPE_VERSION": result.EnvelopeVersion,
 	}
 	if asset.IntervalStart != "" {
 		env["GRANICUS_INTERVAL_START"] = asset.IntervalStart
@@ -115,6 +116,7 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 		}
 	}
 
+	// Contract: Go owns this boundary. ResultEnvelope schema in result/envelope.go
 	slog.Info("dispatching to Cloud Run Job",
 		"asset", asset.Name, "run_id", runID, "project", d.project)
 
@@ -136,6 +138,11 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 				slog.Warn("malformed result message", "error", err)
 				msg.Nack()
 				return
+			}
+			if envelope.Version == "" {
+				slog.Warn("result envelope missing version (possible old runner)", "run_id", runID, "node", asset.Name)
+			} else if envelope.Version != result.EnvelopeVersion {
+				slog.Warn("result envelope version mismatch", "expected", result.EnvelopeVersion, "got", envelope.Version, "run_id", runID, "node", asset.Name)
 			}
 			msg.Ack()
 			resultCh <- envelope
