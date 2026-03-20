@@ -61,7 +61,27 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
 
+	// Migrate date-only intervals to datetime format
+	if err := migrateIntervalDatetime(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating intervals to datetime: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+func migrateIntervalDatetime(db *sql.DB) error {
+	var version int
+	_ = db.QueryRow("PRAGMA user_version").Scan(&version)
+	if version >= 1 {
+		return nil
+	}
+	_, err := db.Exec(`
+		UPDATE interval_state SET interval_start = interval_start || 'T00:00:00Z' WHERE interval_start NOT LIKE '%T%';
+		UPDATE interval_state SET interval_end = interval_end || 'T00:00:00Z' WHERE interval_end NOT LIKE '%T%';
+		PRAGMA user_version = 1;
+	`)
+	return err
 }
 
 // Close closes the underlying SQLite database connection.

@@ -6,14 +6,11 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/config"
 )
 
-func TestRegistry_DispatchShell(t *testing.T) {
-	dir := t.TempDir()
-	src := writeScript(t, dir, "hello.sh", `echo hello`)
+func TestRegistry_NoDefaultRunners(t *testing.T) {
 	reg := NewRunnerRegistry(nil)
-
-	result := reg.Run(&Asset{Name: "test", Type: "shell", Source: src}, dir, "run1")
-	if result.Status != "success" {
-		t.Errorf("expected success, got %s: %s", result.Status, result.Error)
+	result := reg.Run(&Asset{Name: "test", Type: "shell", Source: "x.sh"}, "/tmp", "run1")
+	if result.Status != "failed" {
+		t.Errorf("expected failed for unregistered type, got %s", result.Status)
 	}
 }
 

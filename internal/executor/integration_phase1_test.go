@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/checker"
 	"github.com/DataDecodeHQ/granicus/internal/config"
@@ -271,12 +272,15 @@ assets:
 	eventStore := newTestEventStore(t)
 	runID1 := "run-fail-001"
 
-	shellRunner := runner.NewShellRunner()
 	makeRunnerFunc := func(rid string) func(*graph.Asset, string, string) NodeResult {
 		return func(asset *graph.Asset, pr string, _ string) NodeResult {
-			r := shellRunner.Run(&runner.Asset{
-				Name: asset.Name, Type: asset.Type, Source: asset.Source,
-			}, pr, rid)
+			start := time.Now()
+			sub := runner.RunSubprocess(runner.SubprocessConfig{
+				Command: []string{"bash", asset.Source},
+				WorkDir: pr,
+				Timeout: 5 * time.Minute,
+			})
+			r := runner.NodeResultFromSubprocess(asset.Name, start, sub)
 
 			eventType := "node_succeeded"
 			if r.Status == "failed" {

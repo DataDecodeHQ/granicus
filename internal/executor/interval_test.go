@@ -109,10 +109,10 @@ func TestInterval_InitialBackfill(t *testing.T) {
 	if len(calls) != 3 {
 		t.Fatalf("expected 3 calls, got %d", len(calls))
 	}
-	if calls[0].IntervalStart != "2025-01-01" {
+	if calls[0].IntervalStart != "2025-01-01T00:00:00Z" {
 		t.Errorf("first call: %v", calls[0])
 	}
-	if calls[2].IntervalStart != "2025-01-03" {
+	if calls[2].IntervalStart != "2025-01-03T00:00:00Z" {
 		t.Errorf("last call: %v", calls[2])
 	}
 
@@ -163,7 +163,7 @@ func TestInterval_IncrementalRun(t *testing.T) {
 	if len(calls2) != 3 {
 		t.Fatalf("incremental: expected 3, got %d", len(calls2))
 	}
-	if calls2[0].IntervalStart != "2025-01-04" {
+	if calls2[0].IntervalStart != "2025-01-04T00:00:00Z" {
 		t.Errorf("first new: %v", calls2[0])
 	}
 }
@@ -187,7 +187,7 @@ func TestInterval_GapFill(t *testing.T) {
 	store.InvalidateAll("a") // clear all
 	// Re-add all except Jan 3
 	for _, c := range calls1 {
-		if c.IntervalStart != "2025-01-03" {
+		if c.IntervalStart != "2025-01-03T00:00:00Z" {
 			store.MarkInProgress("a", c.IntervalStart, c.IntervalEnd, "r1")
 			store.MarkComplete("a", c.IntervalStart, c.IntervalEnd)
 		}
@@ -204,7 +204,7 @@ func TestInterval_GapFill(t *testing.T) {
 	if len(calls2) != 1 {
 		t.Fatalf("gap fill: expected 1, got %d: %v", len(calls2), calls2)
 	}
-	if calls2[0].IntervalStart != "2025-01-03" {
+	if calls2[0].IntervalStart != "2025-01-03T00:00:00Z" {
 		t.Errorf("gap: %v", calls2[0])
 	}
 }
@@ -311,7 +311,7 @@ func TestInterval_FromDateOverride(t *testing.T) {
 	if len(calls) != 3 {
 		t.Fatalf("from-date: expected 3, got %d", len(calls))
 	}
-	if calls[0].IntervalStart != "2025-01-08" {
+	if calls[0].IntervalStart != "2025-01-08T00:00:00Z" {
 		t.Errorf("first: %v", calls[0])
 	}
 }
@@ -325,7 +325,7 @@ func TestInterval_FailureStopsSequence(t *testing.T) {
 		"a": {Name: "a", Type: "shell", Source: "a.sh", TimeColumn: "dt", IntervalUnit: "day", StartDate: "2025-01-01"},
 	})
 
-	failOn := map[string]bool{"a:2025-01-03": true}
+	failOn := map[string]bool{"a:2025-01-03T00:00:00Z": true}
 
 	rr := Execute(g, RunConfig{
 		MaxParallel: 1, ProjectRoot: t.TempDir(), RunID: "r1",
@@ -348,16 +348,16 @@ func TestInterval_FailureStopsSequence(t *testing.T) {
 	for _, iv := range intervals {
 		statusMap[iv.IntervalStart] = iv.Status
 	}
-	if statusMap["2025-01-01"] != "complete" {
-		t.Errorf("jan 1: %s", statusMap["2025-01-01"])
+	if statusMap["2025-01-01T00:00:00Z"] != "complete" {
+		t.Errorf("jan 1: %s", statusMap["2025-01-01T00:00:00Z"])
 	}
-	if statusMap["2025-01-02"] != "complete" {
-		t.Errorf("jan 2: %s", statusMap["2025-01-02"])
+	if statusMap["2025-01-02T00:00:00Z"] != "complete" {
+		t.Errorf("jan 2: %s", statusMap["2025-01-02T00:00:00Z"])
 	}
-	if statusMap["2025-01-03"] != "failed" {
-		t.Errorf("jan 3: %s", statusMap["2025-01-03"])
+	if statusMap["2025-01-03T00:00:00Z"] != "failed" {
+		t.Errorf("jan 3: %s", statusMap["2025-01-03T00:00:00Z"])
 	}
-	if _, ok := statusMap["2025-01-04"]; ok {
+	if _, ok := statusMap["2025-01-04T00:00:00Z"]; ok {
 		t.Error("jan 4 should not be in state")
 	}
 }
@@ -372,7 +372,7 @@ func TestInterval_FailedIntervalRerun(t *testing.T) {
 
 	// First run: fail at Jan 3
 	var calls1 []mockCall
-	failOn := map[string]bool{"a:2025-01-03": true}
+	failOn := map[string]bool{"a:2025-01-03T00:00:00Z": true}
 	Execute(g, RunConfig{
 		MaxParallel: 1, ProjectRoot: t.TempDir(), RunID: "r1",
 		ToDate: "2025-01-06", StateStore: store,
@@ -389,7 +389,7 @@ func TestInterval_FailedIntervalRerun(t *testing.T) {
 	if len(calls2) != 3 {
 		t.Fatalf("rerun: expected 3, got %d: %v", len(calls2), calls2)
 	}
-	if calls2[0].IntervalStart != "2025-01-03" {
+	if calls2[0].IntervalStart != "2025-01-03T00:00:00Z" {
 		t.Errorf("first rerun: %v", calls2[0])
 	}
 }
@@ -405,7 +405,7 @@ func TestInterval_CrossAssetIndependence(t *testing.T) {
 		"independent": {Name: "independent", Type: "shell", Source: "c.sh", TimeColumn: "dt", IntervalUnit: "day", StartDate: "2025-01-01"},
 	})
 
-	failOn := map[string]bool{"upstream:2025-01-02": true}
+	failOn := map[string]bool{"upstream:2025-01-02T00:00:00Z": true}
 
 	rr := Execute(g, RunConfig{
 		MaxParallel: 2, ProjectRoot: t.TempDir(), RunID: "r1",
@@ -430,7 +430,7 @@ func TestInterval_CrashRecovery(t *testing.T) {
 	store := newTestState(t)
 
 	// Simulate crash: mark interval in_progress
-	store.MarkInProgress("a", "2025-01-01", "2025-01-02", "crashed-run")
+	store.MarkInProgress("a", "2025-01-01T00:00:00Z", "2025-01-02T00:00:00Z", "crashed-run")
 
 	g := buildSimpleGraph(t, map[string]graph.Asset{
 		"a": {Name: "a", Type: "shell", Source: "a.sh", TimeColumn: "dt", IntervalUnit: "day", StartDate: "2025-01-01"},
@@ -446,7 +446,7 @@ func TestInterval_CrashRecovery(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("crash recovery: expected 2, got %d", len(calls))
 	}
-	if calls[0].IntervalStart != "2025-01-01" {
+	if calls[0].IntervalStart != "2025-01-01T00:00:00Z" {
 		t.Errorf("first: %v", calls[0])
 	}
 }
@@ -499,7 +499,7 @@ func TestInterval_FullRefreshWithFailure(t *testing.T) {
 
 	// Full refresh, fail at interval 3
 	var calls2 []mockCall
-	failOn := map[string]bool{"a:2025-01-03": true}
+	failOn := map[string]bool{"a:2025-01-03T00:00:00Z": true}
 	Execute(g, RunConfig{
 		MaxParallel: 1, ProjectRoot: t.TempDir(), RunID: "r2",
 		ToDate: "2025-01-06", StateStore: store,
@@ -516,11 +516,11 @@ func TestInterval_FullRefreshWithFailure(t *testing.T) {
 	for _, iv := range intervals {
 		statusMap[iv.IntervalStart] = iv.Status
 	}
-	if statusMap["2025-01-01"] != "complete" {
-		t.Errorf("jan 1: %s", statusMap["2025-01-01"])
+	if statusMap["2025-01-01T00:00:00Z"] != "complete" {
+		t.Errorf("jan 1: %s", statusMap["2025-01-01T00:00:00Z"])
 	}
-	if statusMap["2025-01-03"] != "failed" {
-		t.Errorf("jan 3: %s", statusMap["2025-01-03"])
+	if statusMap["2025-01-03T00:00:00Z"] != "failed" {
+		t.Errorf("jan 3: %s", statusMap["2025-01-03T00:00:00Z"])
 	}
 }
 

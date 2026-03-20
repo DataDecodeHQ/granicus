@@ -107,14 +107,14 @@ assets:
 
 	runID := events.GenerateRunID()
 	eventStore := newTestEventStore(t)
-	shellRunner := runner.NewShellRunner()
-
 	runnerFunc := func(asset *graph.Asset, pr string, rid string) NodeResult {
-		r := shellRunner.Run(&runner.Asset{
-			Name:   asset.Name,
-			Type:   asset.Type,
-			Source: asset.Source,
-		}, pr, rid)
+		start := time.Now()
+		sub := runner.RunSubprocess(runner.SubprocessConfig{
+			Command: []string{"bash", asset.Source},
+			WorkDir: pr,
+			Timeout: 5 * time.Minute,
+		})
+		r := runner.NodeResultFromSubprocess(asset.Name, start, sub)
 
 		eventType := "node_succeeded"
 		if r.Status == "failed" {

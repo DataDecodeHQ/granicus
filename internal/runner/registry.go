@@ -11,14 +11,12 @@ type RunnerRegistry struct {
 	connections map[string]*config.ConnectionConfig
 }
 
-// NewRunnerRegistry creates a RunnerRegistry with the given connections and registers a default shell runner.
+// NewRunnerRegistry creates a RunnerRegistry with the given connections.
 func NewRunnerRegistry(connections map[string]*config.ConnectionConfig) *RunnerRegistry {
-	r := &RunnerRegistry{
+	return &RunnerRegistry{
 		runners:     make(map[string]Runner),
 		connections: connections,
 	}
-	r.Register("shell", NewShellRunner())
-	return r
 }
 
 // Register adds a runner for the given asset type name.

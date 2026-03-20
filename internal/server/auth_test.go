@@ -67,6 +67,20 @@ func TestAuth_HealthExempt(t *testing.T) {
 	}
 }
 
+func TestAuth_XAPIKeyOnly_Returns401(t *testing.T) {
+	keys := []APIKey{{Name: "test", Key: "grnc_sk_test123"}}
+	handler := AuthMiddleware(keys, dummyHandler())
+
+	req := httptest.NewRequest("GET", "/api/v1/trigger/foo", nil)
+	req.Header.Set("X-API-Key", "grnc_sk_test123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for X-API-Key-only request, got %d", w.Code)
+	}
+}
+
 func TestAuth_NoKeysConfigured_PassesThrough(t *testing.T) {
 	handler := AuthMiddleware(nil, dummyHandler())
 

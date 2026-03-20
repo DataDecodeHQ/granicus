@@ -2,8 +2,6 @@ package runner
 
 import (
 	"bytes"
-	"fmt"
-	"os"
 	"time"
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
@@ -83,112 +81,6 @@ func effectiveTimeout(assetTimeout, runnerTimeout time.Duration) time.Duration {
 		return runnerTimeout
 	}
 	return DefaultTimeout
-}
-
-type ShellRunner struct {
-	Timeout time.Duration
-}
-
-// NewShellRunner creates a ShellRunner with the default timeout.
-func NewShellRunner() *ShellRunner {
-	return &ShellRunner{Timeout: DefaultTimeout}
-}
-
-// Run executes a shell script asset as a bash subprocess.
-func (r *ShellRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
-	if asset.Type != "shell" {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			Error:     fmt.Sprintf("runner not implemented for type: %s", asset.Type),
-			ExitCode:  -1,
-		}
-	}
-
-	scriptPath := asset.Source
-	if projectRoot != "" {
-		scriptPath = projectRoot + "/" + asset.Source
-	}
-	info, statErr := os.Stat(scriptPath)
-	if statErr != nil {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			Error:     fmt.Sprintf("script not found: %s", scriptPath),
-			ExitCode:  -1,
-		}
-	}
-	if info.Mode()&0111 == 0 {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			Error:     fmt.Sprintf("script not executable: %s", scriptPath),
-			ExitCode:  -1,
-		}
-	}
-
-	if err := makeExecutable(asset.Source, projectRoot); err != nil {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			Error:     fmt.Sprintf("chmod: %v", err),
-			ExitCode:  -1,
-		}
-	}
-
-	metadataFile, err := os.CreateTemp("", "granicus-metadata-*.json")
-	if err != nil {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			Error:     fmt.Sprintf("creating metadata file: %v", err),
-			ExitCode:  -1,
-		}
-	}
-	metadataPath := metadataFile.Name()
-	metadataFile.Close()
-	defer os.Remove(metadataPath)
-
-	env := buildSubprocessEnv(SubprocessEnvConfig{
-		Asset:        asset,
-		ProjectRoot:  projectRoot,
-		RunID:        runID,
-		MetadataPath: metadataPath,
-	})
-
-	// Contract: Go owns this boundary. Base env vars per contracts/env_contract.json
-	LogSubprocessLaunch(asset.Name, "shell", len(env), false)
-	start := time.Now()
-	sub := RunSubprocess(SubprocessConfig{
-		Command: []string{"bash", asset.Source},
-		Env:     env,
-		WorkDir: projectRoot,
-		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
-	})
-
-	result := NodeResultFromSubprocess(asset.Name, start, sub)
-
-	if meta, err := readMetadata(metadataPath); err == nil && meta != nil {
-		result.Metadata = meta
-	}
-	LogSubprocessComplete(asset.Name, "shell", result.ExitCode, result.Duration, result.Metadata != nil)
-
-	return result
-}
-
-func makeExecutable(source, projectRoot string) error {
-	path := source
-	if projectRoot != "" {
-		path = projectRoot + "/" + source
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&0111 == 0 {
-		return os.Chmod(path, info.Mode()|0755)
-	}
-	return nil
 }
 
 func truncateOutput(s string) string {

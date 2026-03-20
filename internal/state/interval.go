@@ -10,13 +10,23 @@ type Interval struct {
 	End   string
 }
 
+func parseFlexibleDate(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02T15:04:05Z", s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05", s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02", s)
+}
+
 // GenerateIntervals produces a sequence of time intervals between startDate and endDate using the given unit (hour, day, week, month).
 func GenerateIntervals(startDate, endDate, unit string) ([]Interval, error) {
-	start, err := time.Parse("2006-01-02", startDate)
+	start, err := parseFlexibleDate(startDate)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start_date %q: %w", startDate, err)
 	}
-	end, err := time.Parse("2006-01-02", endDate)
+	end, err := parseFlexibleDate(endDate)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end_date %q: %w", endDate, err)
 	}
@@ -59,10 +69,7 @@ func advance(t time.Time, unit string) time.Time {
 }
 
 func formatTime(t time.Time, unit string) string {
-	if unit == "hour" {
-		return t.Format("2006-01-02T15:04:05")
-	}
-	return t.Format("2006-01-02")
+	return t.Format("2006-01-02T15:04:05Z")
 }
 
 // ComputeMissing returns intervals that are not yet complete, including the last N completed intervals if lookback is set.

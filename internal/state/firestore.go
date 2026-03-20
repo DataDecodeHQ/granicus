@@ -248,6 +248,46 @@ func (f *FirestoreStateBackend) RecoverOrphans(threshold time.Duration) ([]Inter
 	return orphans, nil
 }
 
+// MigrateToDatetime converts date-only interval_start/interval_end values to datetime format.
+func (f *FirestoreStateBackend) MigrateToDatetime() error {
+	ctx := context.Background()
+	iter := f.intervalsCol().Documents(ctx)
+	defer iter.Stop()
+
+	bw := f.client.BulkWriter(ctx)
+	migrated := 0
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			bw.End()
+			return fmt.Errorf("iterating intervals for migration: %w", err)
+		}
+		data := doc.Data()
+		start := strVal(data, "interval_start")
+		end := strVal(data, "interval_end")
+		var updates []firestore.Update
+		if start != "" && len(start) == 10 {
+			updates = append(updates, firestore.Update{Path: "interval_start", Value: start + "T00:00:00Z"})
+		}
+		if end != "" && len(end) == 10 {
+			updates = append(updates, firestore.Update{Path: "interval_end", Value: end + "T00:00:00Z"})
+		}
+		if len(updates) > 0 {
+			bw.Update(doc.Ref, updates) //nolint:errcheck
+			migrated++
+		}
+	}
+	if migrated > 0 {
+		bw.Flush()
+		slog.Info("migrated intervals to datetime format", "count", migrated)
+	}
+	bw.End()
+	return nil
+}
+
 // Close shuts down the Firestore client connection.
 func (f *FirestoreStateBackend) Close() error {
 	return f.client.Close()
