@@ -24,12 +24,12 @@ func TestIntegration_FullEventSequence(t *testing.T) {
 	// Node A started + succeeded
 	store.Emit(Event{
 		RunID: runID, Pipeline: pipeline, Asset: "a",
-		EventType: "node_started", Severity: "info",
+		EventType: "asset_started", Severity: "info",
 		Summary: "Node a started",
 	})
 	store.Emit(Event{
 		RunID: runID, Pipeline: pipeline, Asset: "a",
-		EventType: "node_succeeded", Severity: "info",
+		EventType: "asset_succeeded", Severity: "info",
 		DurationMs: 150,
 		Summary:    "Node a succeeded",
 		Details:    map[string]any{"metadata": map[string]any{"rows": "100"}},
@@ -38,12 +38,12 @@ func TestIntegration_FullEventSequence(t *testing.T) {
 	// Node B started + failed
 	store.Emit(Event{
 		RunID: runID, Pipeline: pipeline, Asset: "b",
-		EventType: "node_started", Severity: "info",
+		EventType: "asset_started", Severity: "info",
 		Summary: "Node b started",
 	})
 	store.Emit(Event{
 		RunID: runID, Pipeline: pipeline, Asset: "b",
-		EventType: "node_failed", Severity: "error",
+		EventType: "asset_failed", Severity: "error",
 		DurationMs: 200,
 		Summary:    "Node b failed: exit 1",
 		Details:    map[string]any{"error_message": "exit 1", "exit_code": 1},
@@ -52,7 +52,7 @@ func TestIntegration_FullEventSequence(t *testing.T) {
 	// Node C skipped (depends on B)
 	store.Emit(Event{
 		RunID: runID, Pipeline: pipeline, Asset: "c",
-		EventType: "node_skipped", Severity: "warning",
+		EventType: "asset_skipped", Severity: "warning",
 		Summary: "Node c skipped: dependency failed",
 	})
 
@@ -77,8 +77,8 @@ func TestIntegration_FullEventSequence(t *testing.T) {
 	}
 
 	expectedTypes := []string{
-		"run_started", "node_started", "node_succeeded",
-		"node_started", "node_failed", "node_skipped", "run_completed",
+		"run_started", "asset_started", "asset_succeeded",
+		"asset_started", "asset_failed", "asset_skipped", "run_completed",
 	}
 	for i, want := range expectedTypes {
 		if allEvents[i].EventType != want {
@@ -87,17 +87,17 @@ func TestIntegration_FullEventSequence(t *testing.T) {
 	}
 
 	// Verify query by type
-	succeeded, _ := store.Query(QueryFilters{RunID: runID, EventType: "node_succeeded"})
+	succeeded, _ := store.Query(QueryFilters{RunID: runID, EventType: "asset_succeeded"})
 	if len(succeeded) != 1 || succeeded[0].Asset != "a" {
 		t.Errorf("node_succeeded query: %v", succeeded)
 	}
 
-	failed, _ := store.Query(QueryFilters{RunID: runID, EventType: "node_failed"})
+	failed, _ := store.Query(QueryFilters{RunID: runID, EventType: "asset_failed"})
 	if len(failed) != 1 || failed[0].Asset != "b" {
 		t.Errorf("node_failed query: %v", failed)
 	}
 
-	skipped, _ := store.Query(QueryFilters{RunID: runID, EventType: "node_skipped"})
+	skipped, _ := store.Query(QueryFilters{RunID: runID, EventType: "asset_skipped"})
 	if len(skipped) != 1 || skipped[0].Asset != "c" {
 		t.Errorf("node_skipped query: %v", skipped)
 	}
@@ -283,13 +283,13 @@ func TestIntegration_GCDeletesOldEvents(t *testing.T) {
 	// Emit old and recent events
 	for i := 0; i < 5; i++ {
 		store.Emit(Event{
-			RunID: "old_run", Pipeline: "p", EventType: "node_succeeded",
+			RunID: "old_run", Pipeline: "p", EventType: "asset_succeeded",
 			Asset: fmt.Sprintf("old_%d", i), Timestamp: old,
 		})
 	}
 	for i := 0; i < 3; i++ {
 		store.Emit(Event{
-			RunID: "new_run", Pipeline: "p", EventType: "node_succeeded",
+			RunID: "new_run", Pipeline: "p", EventType: "asset_succeeded",
 			Asset: fmt.Sprintf("new_%d", i), Timestamp: recent,
 		})
 	}
@@ -309,7 +309,7 @@ func TestIntegration_GCDeletesOldEvents(t *testing.T) {
 	// Old events gone
 	oldEvents, _ := store.Query(QueryFilters{RunID: "old_run"})
 	for _, e := range oldEvents {
-		if e.EventType == "node_succeeded" {
+		if e.EventType == "asset_succeeded" {
 			t.Error("old node_succeeded events should be deleted")
 		}
 	}

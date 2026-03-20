@@ -68,12 +68,12 @@ type jsonRunOutput struct {
 	Succeeded       int           `json:"succeeded"`
 	Failed          int           `json:"failed"`
 	Skipped         int           `json:"skipped"`
-	TotalNodes      int           `json:"total_nodes"`
-	Interrupted     bool          `json:"interrupted,omitempty"`
-	Nodes           []jsonRunNode `json:"nodes"`
+	TotalAssets     int            `json:"total_assets"`
+	Interrupted     bool           `json:"interrupted,omitempty"`
+	Assets          []jsonRunAsset `json:"assets"`
 }
 
-type jsonRunNode struct {
+type jsonRunAsset struct {
 	Asset           string  `json:"asset"`
 	Status          string  `json:"status"`
 	DurationSeconds float64 `json:"duration_seconds,omitempty"`
@@ -91,8 +91,8 @@ type jsonStatusOutput struct {
 	Succeeded       int                 `json:"succeeded"`
 	Failed          int                 `json:"failed"`
 	Skipped         int                 `json:"skipped"`
-	TotalNodes      int                 `json:"total_nodes"`
-	Nodes           []events.NodeResult `json:"nodes,omitempty"`
+	TotalAssets     int                    `json:"total_assets"`
+	Assets          []events.AssetResult   `json:"assets,omitempty"`
 }
 
 type jsonErrorOutput struct {
@@ -732,8 +732,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 			logEmit(eventStore, events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_skipped", Severity: "warning",
-				Summary: fmt.Sprintf("Node %s skipped: dependency failed", r.AssetName),
+				EventType: "asset_skipped", Severity: "warning",
+				Summary: fmt.Sprintf("Asset %s skipped: dependency failed", r.AssetName),
 				Details: map[string]any{"error_message": r.Error},
 			})
 		}
@@ -816,22 +816,22 @@ func runRun(cmd *cobra.Command, args []string) error {
 }
 
 func buildRunJSON(runID, pipeline, status string, durationSeconds float64, succeeded, failed, skipped int, rr *executor.RunResult) jsonRunOutput {
-	var nodes []jsonRunNode
+	var assets []jsonRunAsset
 	for _, r := range rr.Results {
-		node := jsonRunNode{
+		a := jsonRunAsset{
 			Asset:  r.AssetName,
 			Status: r.Status,
 		}
 		if r.Duration > 0 {
-			node.DurationSeconds = r.Duration.Seconds()
+			a.DurationSeconds = r.Duration.Seconds()
 		}
 		if r.Error != "" {
-			node.Error = r.Error
+			a.Error = r.Error
 		}
 		if r.Status == "failed" && r.Stderr != "" {
-			node.Stderr = r.Stderr
+			a.Stderr = r.Stderr
 		}
-		nodes = append(nodes, node)
+		assets = append(assets, a)
 	}
 	return jsonRunOutput{
 		RunID:           runID,
@@ -841,9 +841,9 @@ func buildRunJSON(runID, pipeline, status string, durationSeconds float64, succe
 		Succeeded:       succeeded,
 		Failed:          failed,
 		Skipped:         skipped,
-		TotalNodes:      len(rr.Results),
+		TotalAssets:     len(rr.Results),
 		Interrupted:     rr.Interrupted,
-		Nodes:           nodes,
+		Assets:          assets,
 	}
 }
 
@@ -1144,8 +1144,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			Succeeded:       summary.Succeeded,
 			Failed:          summary.Failed,
 			Skipped:         summary.Skipped,
-			TotalNodes:      summary.TotalNodes,
-			Nodes:           nodes,
+			TotalAssets:     summary.TotalNodes,
+			Assets:          nodes,
 		}
 		data, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(data))

@@ -358,7 +358,7 @@ func runFailures(cmd *cobra.Command, args []string) error {
 
 	var records []failureRecord
 	for _, r := range runs {
-		events, _ := backend.ListEvents(ctx, r.RunID, []string{"node_failed"})
+		events, _ := backend.ListEvents(ctx, r.RunID, []string{"asset_failed", "node_failed"})
 		records = append(records, failureRecord{
 			RunID:          r.RunID,
 			Pipeline:       r.Pipeline,
@@ -436,11 +436,11 @@ func runStats(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			switch e.EventType {
-			case "node_succeeded":
+			case "asset_succeeded", "node_succeeded":
 				totalRuns++
 				successes++
 				totalDuration += e.DurationMs
-			case "node_failed":
+			case "asset_failed", "node_failed":
 				totalRuns++
 				failures++
 				totalDuration += e.DurationMs

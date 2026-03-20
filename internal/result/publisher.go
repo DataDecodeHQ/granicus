@@ -62,7 +62,7 @@ func (p *Publisher) Publish(ctx context.Context, envelope ResultEnvelope) error 
 		Attributes: map[string]string{
 			"pipeline": envelope.Pipeline,
 			"run_id":   envelope.RunID,
-			"node":     envelope.Node,
+			"asset":    envelope.Asset,
 			"status":   envelope.Status,
 		},
 	})

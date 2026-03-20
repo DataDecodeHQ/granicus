@@ -116,9 +116,9 @@ assets:
 		})
 		r := runner.NodeResultFromSubprocess(asset.Name, start, sub)
 
-		eventType := "node_succeeded"
+		eventType := "asset_succeeded"
 		if r.Status == "failed" {
-			eventType = "node_failed"
+			eventType = "asset_failed"
 		}
 		_ = eventStore.Emit(events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
@@ -154,7 +154,7 @@ assets:
 		if r.Status == "skipped" {
 			_ = eventStore.Emit(events.Event{
 				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_skipped", Severity: "warning",
+				EventType: "asset_skipped", Severity: "warning",
 			})
 		}
 	}

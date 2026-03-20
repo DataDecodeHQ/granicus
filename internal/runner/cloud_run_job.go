@@ -130,7 +130,7 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 
 	go func() {
 		err := d.resultSub.Receive(timeoutCtx, func(ctx context.Context, msg *pubsub.Message) {
-			if msg.Attributes["run_id"] != runID || msg.Attributes["node"] != asset.Name {
+			if msg.Attributes["run_id"] != runID || msg.Attributes["asset"] != asset.Name {
 				msg.Nack()
 				return
 			}
@@ -141,9 +141,9 @@ func (d *CloudRunJobDispatch) Execute(ctx context.Context, asset *Asset, project
 				return
 			}
 			if envelope.Version == "" {
-				slog.Warn("result envelope missing version (possible old runner)", "run_id", runID, "node", asset.Name)
+				slog.Warn("result envelope missing version (possible old runner)", "run_id", runID, "asset", asset.Name)
 			} else if envelope.Version != result.EnvelopeVersion {
-				slog.Warn("result envelope version mismatch", "expected", result.EnvelopeVersion, "got", envelope.Version, "run_id", runID, "node", asset.Name)
+				slog.Warn("result envelope version mismatch", "expected", result.EnvelopeVersion, "got", envelope.Version, "run_id", runID, "asset", asset.Name)
 			}
 			msg.Ack()
 			resultCh <- envelope

@@ -590,26 +590,26 @@ func TestNodeRunner_EventEmission_NodeStarted(t *testing.T) {
 		RunID:     runID,
 		Pipeline:  "test_pipeline",
 		Asset:     "stg_orders",
-		EventType: "node_started",
+		EventType: "asset_started",
 		Severity:  "info",
 		Summary:   "Node stg_orders started",
 	}); err != nil {
 		t.Fatalf("emit failed: %v", err)
 	}
 
-	emitted, err := store.Query(events.QueryFilters{RunID: runID, EventType: "node_started"})
+	emitted, err := store.Query(events.QueryFilters{RunID: runID, EventType: "asset_started"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 	if len(emitted) != 1 {
-		t.Fatalf("expected 1 node_started event, got %d", len(emitted))
+		t.Fatalf("expected 1 asset_started event, got %d", len(emitted))
 	}
 	e := emitted[0]
 	if e.Asset != "stg_orders" {
 		t.Errorf("Asset: expected %q, got %q", "stg_orders", e.Asset)
 	}
-	if e.EventType != "node_started" {
-		t.Errorf("EventType: expected %q, got %q", "node_started", e.EventType)
+	if e.EventType != "asset_started" {
+		t.Errorf("EventType: expected %q, got %q", "asset_started", e.EventType)
 	}
 }
 
@@ -621,7 +621,7 @@ func TestNodeRunner_EventEmission_NodeSucceeded(t *testing.T) {
 		RunID:      runID,
 		Pipeline:   "test_pipeline",
 		Asset:      "stg_orders",
-		EventType:  "node_succeeded",
+		EventType:  "asset_succeeded",
 		Severity:   "info",
 		DurationMs: 1500,
 		Summary:    "Node stg_orders succeeded (1.5s)",
@@ -634,12 +634,12 @@ func TestNodeRunner_EventEmission_NodeSucceeded(t *testing.T) {
 		t.Fatalf("emit failed: %v", err)
 	}
 
-	emitted, err := store.Query(events.QueryFilters{RunID: runID, EventType: "node_succeeded"})
+	emitted, err := store.Query(events.QueryFilters{RunID: runID, EventType: "asset_succeeded"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 	if len(emitted) != 1 {
-		t.Fatalf("expected 1 node_succeeded event, got %d", len(emitted))
+		t.Fatalf("expected 1 asset_succeeded event, got %d", len(emitted))
 	}
 	if emitted[0].DurationMs != 1500 {
 		t.Errorf("DurationMs: expected 1500, got %d", emitted[0].DurationMs)
@@ -654,7 +654,7 @@ func TestNodeRunner_EventEmission_NodeFailed(t *testing.T) {
 		RunID:     runID,
 		Pipeline:  "test_pipeline",
 		Asset:     "bad_asset",
-		EventType: "node_failed",
+		EventType: "asset_failed",
 		Severity:  "error",
 		Summary:   "Node bad_asset failed: exit status 1",
 		Details: map[string]any{
@@ -667,12 +667,12 @@ func TestNodeRunner_EventEmission_NodeFailed(t *testing.T) {
 		t.Fatalf("emit failed: %v", err)
 	}
 
-	emitted, err := store.Query(events.QueryFilters{RunID: runID, EventType: "node_failed"})
+	emitted, err := store.Query(events.QueryFilters{RunID: runID, EventType: "asset_failed"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 	if len(emitted) != 1 {
-		t.Fatalf("expected 1 node_failed event, got %d", len(emitted))
+		t.Fatalf("expected 1 asset_failed event, got %d", len(emitted))
 	}
 	if emitted[0].Severity != "error" {
 		t.Errorf("Severity: expected %q, got %q", "error", emitted[0].Severity)
@@ -683,7 +683,7 @@ func TestNodeRunner_EventEmission_LifecycleSequence(t *testing.T) {
 	store := newTestEventStore(t)
 	runID := "run_test_004"
 
-	for _, et := range []string{"node_started", "node_succeeded"} {
+	for _, et := range []string{"asset_started", "asset_succeeded"} {
 		if err := store.Emit(events.Event{
 			RunID:     runID,
 			Pipeline:  "test_pipeline",
@@ -714,7 +714,7 @@ func TestNodeRunner_LogEmit_StoreReceivesEvent(t *testing.T) {
 		RunID:     "run_logtest",
 		Pipeline:  "test_pipeline",
 		Asset:     "stg_orders",
-		EventType: "node_started",
+		EventType: "asset_started",
 		Severity:  "info",
 		Summary:   "via logEmit",
 	})
@@ -742,12 +742,12 @@ func TestEmitNodeResult_SuccessEmitsNodeSucceeded(t *testing.T) {
 
 	emitNodeResult(store, "run_001", cfg, asset, r)
 
-	emitted, err := store.Query(events.QueryFilters{RunID: "run_001", EventType: "node_succeeded"})
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_001", EventType: "asset_succeeded"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 	if len(emitted) != 1 {
-		t.Fatalf("expected 1 node_succeeded event, got %d", len(emitted))
+		t.Fatalf("expected 1 asset_succeeded event, got %d", len(emitted))
 	}
 	if emitted[0].Asset != "stg_orders" {
 		t.Errorf("Asset: expected %q, got %q", "stg_orders", emitted[0].Asset)
@@ -768,12 +768,12 @@ func TestEmitNodeResult_FailureEmitsNodeFailed(t *testing.T) {
 
 	emitNodeResult(store, "run_002", cfg, asset, r)
 
-	emitted, err := store.Query(events.QueryFilters{RunID: "run_002", EventType: "node_failed"})
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_002", EventType: "asset_failed"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 	if len(emitted) != 1 {
-		t.Fatalf("expected 1 node_failed event, got %d", len(emitted))
+		t.Fatalf("expected 1 asset_failed event, got %d", len(emitted))
 	}
 	if emitted[0].Severity != "error" {
 		t.Errorf("Severity: expected %q, got %q", "error", emitted[0].Severity)
@@ -788,12 +788,12 @@ func TestEmitNodeResult_SuccessDoesNotEmitNodeFailed(t *testing.T) {
 
 	emitNodeResult(store, "run_003", cfg, asset, r)
 
-	failed, err := store.Query(events.QueryFilters{RunID: "run_003", EventType: "node_failed"})
+	failed, err := store.Query(events.QueryFilters{RunID: "run_003", EventType: "asset_failed"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 	if len(failed) != 0 {
-		t.Errorf("expected no node_failed events for success, got %d", len(failed))
+		t.Errorf("expected no asset_failed events for success, got %d", len(failed))
 	}
 }
 
@@ -816,7 +816,7 @@ func TestEmitNodeResult_LargeStdoutTruncatedAt10KB(t *testing.T) {
 
 	emitNodeResult(store, "run_004", cfg, asset, r)
 
-	emitted, err := store.Query(events.QueryFilters{RunID: "run_004", EventType: "node_failed"})
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_004", EventType: "asset_failed"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -851,7 +851,7 @@ func TestEmitNodeResult_LargeStderrTruncatedAt10KB(t *testing.T) {
 
 	emitNodeResult(store, "run_005", cfg, asset, r)
 
-	emitted, err := store.Query(events.QueryFilters{RunID: "run_005", EventType: "node_failed"})
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_005", EventType: "asset_failed"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -877,7 +877,7 @@ func TestEmitNodeResult_ShortOutputNotTruncated(t *testing.T) {
 
 	emitNodeResult(store, "run_006", cfg, asset, r)
 
-	emitted, err := store.Query(events.QueryFilters{RunID: "run_006", EventType: "node_failed"})
+	emitted, err := store.Query(events.QueryFilters{RunID: "run_006", EventType: "asset_failed"})
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

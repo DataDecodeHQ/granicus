@@ -173,7 +173,7 @@ func markRunsCrashed(bw *firestore.BulkWriter, orphans []IntervalState, pipeline
 			RunID:     iv.RunID,
 			Pipeline:  pipeline,
 			Node:      iv.AssetName,
-			EventType: "node_failed",
+			EventType: "asset_failed",
 			Error:     "engine crashed during execution (orphan recovery)",
 			Timestamp: now,
 		})
@@ -392,7 +392,7 @@ func (f *FirestoreStateBackend) WriteFailureBatch(ctx context.Context, runID str
 				RunID:     runID,
 				Pipeline:  f.pipeline,
 				Node:      node,
-				EventType: "node_skipped",
+				EventType: "asset_skipped",
 				Error:     "upstream " + failedEvent.Node + " failed",
 				Timestamp: now,
 			}); err != nil {

@@ -9,7 +9,7 @@ const EnvelopeVersion = "1.0.0"
 // Local runners populate it directly; remote runners serialize it as JSON.
 type ResultEnvelope struct {
 	Version    string            `json:"version,omitempty"`
-	Node       string            `json:"node"`
+	Asset      string            `json:"asset"`
 	RunID      string            `json:"run_id"`
 	Pipeline   string            `json:"pipeline"`
 	Status     string            `json:"status"` // success, failed, skipped

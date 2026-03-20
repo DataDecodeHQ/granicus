@@ -47,8 +47,8 @@ func buildNodeRunner(
 
 		logEmit(eventStore, events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
-			EventType: "node_started", Severity: "info",
-			Summary: fmt.Sprintf("Node %s started", asset.Name),
+			EventType: "asset_started", Severity: "info",
+			Summary: fmt.Sprintf("Asset %s started", asset.Name),
 		})
 
 		// Model version tracking
@@ -217,15 +217,15 @@ func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset 
 	return dataset, destConn, sourceConn
 }
 
-// emitNodeResult emits a node_succeeded or node_failed event to eventStore.
+// emitNodeResult emits an asset_succeeded or asset_failed event to eventStore.
 // Stdout and stderr are truncated to 10 KiB before inclusion in failure details.
 func emitNodeResult(eventStore *events.Store, runID string, cfg *config.PipelineConfig, asset config.AssetConfig, r types.AssetResult) {
 	if r.Status == "success" {
 		logEmit(eventStore, events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-			EventType: "node_succeeded", Severity: "info",
+			EventType: "asset_succeeded", Severity: "info",
 			DurationMs: r.Duration.Milliseconds(),
-			Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
+			Summary:    fmt.Sprintf("Asset %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
 			Details: map[string]any{
 				"exit_code":    r.ExitCode,
 				"metadata":     r.Metadata,
@@ -245,9 +245,9 @@ func emitNodeResult(eventStore *events.Store, runID string, cfg *config.Pipeline
 	}
 	logEmit(eventStore, events.Event{
 		RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-		EventType: "node_failed", Severity: "error",
+		EventType: "asset_failed", Severity: "error",
 		DurationMs: r.Duration.Milliseconds(),
-		Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
+		Summary:    fmt.Sprintf("Asset %s failed: %s", r.AssetName, r.Error),
 		Details: map[string]any{
 			"error_message": r.Error,
 			"exit_code":     r.ExitCode,

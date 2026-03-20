@@ -25,7 +25,7 @@ func TestEmit_RoundTrip(t *testing.T) {
 		RunID:     "run_001",
 		Pipeline:  "test_pipe",
 		Asset:     "my_asset",
-		EventType: "node_succeeded",
+		EventType: "asset_succeeded",
 		Severity:  "info",
 		Summary:   "completed",
 		Details:   map[string]any{"rows": 42, "note": "ok"},
@@ -137,11 +137,11 @@ func TestEmitBatch(t *testing.T) {
 
 func TestQuery_FilterByEventType(t *testing.T) {
 	s := newTestStore(t)
-	s.Emit(Event{RunID: "r", Pipeline: "p", EventType: "node_succeeded"})
-	s.Emit(Event{RunID: "r", Pipeline: "p", EventType: "node_failed"})
+	s.Emit(Event{RunID: "r", Pipeline: "p", EventType: "asset_succeeded"})
+	s.Emit(Event{RunID: "r", Pipeline: "p", EventType: "asset_failed"})
 	s.Emit(Event{RunID: "r", Pipeline: "p", EventType: "run_started"})
 
-	events, _ := s.Query(QueryFilters{RunID: "r", EventType: "node_succeeded,node_failed"})
+	events, _ := s.Query(QueryFilters{RunID: "r", EventType: "asset_succeeded,asset_failed"})
 	if len(events) != 2 {
 		t.Errorf("expected 2, got %d", len(events))
 	}
@@ -264,9 +264,9 @@ func TestListRuns(t *testing.T) {
 
 func TestGetFailedNodes(t *testing.T) {
 	s := newTestStore(t)
-	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "a", EventType: "node_succeeded"})
-	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "b", EventType: "node_failed"})
-	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "c", EventType: "node_failed"})
+	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "a", EventType: "asset_succeeded"})
+	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "b", EventType: "asset_failed"})
+	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "c", EventType: "asset_failed"})
 
 	names, err := s.GetFailedNodes("r1")
 	if err != nil {
@@ -279,10 +279,10 @@ func TestGetFailedNodes(t *testing.T) {
 
 func TestGetNodeResults(t *testing.T) {
 	s := newTestStore(t)
-	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "a", EventType: "node_succeeded", DurationMs: 100})
-	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "b", EventType: "node_failed", DurationMs: 200,
+	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "a", EventType: "asset_succeeded", DurationMs: 100})
+	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "b", EventType: "asset_failed", DurationMs: 200,
 		Details: map[string]any{"error_message": "timeout"}})
-	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "c", EventType: "node_skipped"})
+	s.Emit(Event{RunID: "r1", Pipeline: "p", Asset: "c", EventType: "asset_skipped"})
 
 	results, err := s.GetNodeResults("r1")
 	if err != nil {
@@ -403,7 +403,7 @@ func TestGetRunCostSummary(t *testing.T) {
 
 	// Emit two BQ node_succeeded events with cost metadata
 	s.Emit(Event{
-		RunID: "r1", Pipeline: "p", Asset: "asset_a", EventType: "node_succeeded",
+		RunID: "r1", Pipeline: "p", Asset: "asset_a", EventType: "asset_succeeded",
 		Details: map[string]any{"metadata": map[string]any{
 			"total_bytes_processed": "1073741824",  // 1 GiB
 			"estimated_cost_usd":    "0.005000",
@@ -411,7 +411,7 @@ func TestGetRunCostSummary(t *testing.T) {
 		}},
 	})
 	s.Emit(Event{
-		RunID: "r1", Pipeline: "p", Asset: "asset_b", EventType: "node_succeeded",
+		RunID: "r1", Pipeline: "p", Asset: "asset_b", EventType: "asset_succeeded",
 		Details: map[string]any{"metadata": map[string]any{
 			"total_bytes_processed": "536870912",  // 512 MiB
 			"estimated_cost_usd":    "0.002500",
@@ -420,7 +420,7 @@ func TestGetRunCostSummary(t *testing.T) {
 	})
 	// Non-BQ node (no BQ metadata keys) — should be skipped
 	s.Emit(Event{
-		RunID: "r1", Pipeline: "p", Asset: "py_asset", EventType: "node_succeeded",
+		RunID: "r1", Pipeline: "p", Asset: "py_asset", EventType: "asset_succeeded",
 		Details: map[string]any{"metadata": map[string]any{"rows_loaded": "200"}},
 	})
 

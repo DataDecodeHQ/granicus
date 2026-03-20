@@ -12,7 +12,7 @@ func TestResultEnvelope_Serialization(t *testing.T) {
 	end := now.Add(5 * time.Second)
 
 	orig := ResultEnvelope{
-		Node:       "load_orders",
+		Asset:       "load_orders",
 		RunID:      "run-abc123",
 		Pipeline:   "granicus",
 		Status:     "success",
@@ -55,8 +55,8 @@ func TestResultEnvelope_Serialization(t *testing.T) {
 		t.Fatalf("json.Unmarshal failed: %v", err)
 	}
 
-	if got.Node != orig.Node {
-		t.Errorf("Node: got %q, want %q", got.Node, orig.Node)
+	if got.Asset != orig.Asset {
+		t.Errorf("Asset: got %q, want %q", got.Asset, orig.Asset)
 	}
 	if got.RunID != orig.RunID {
 		t.Errorf("RunID: got %q, want %q", got.RunID, orig.RunID)
@@ -104,7 +104,7 @@ func TestResultEnvelope_Serialization(t *testing.T) {
 
 func TestResultEnvelope_OmitEmptyFields(t *testing.T) {
 	env := ResultEnvelope{
-		Node:     "node",
+		Asset:     "node",
 		RunID:    "run",
 		Pipeline: "pipe",
 		Status:   "skipped",
@@ -188,7 +188,7 @@ func TestPublisher_Publish(t *testing.T) {
 	defer p.Close()
 
 	env := ResultEnvelope{
-		Node:     "test-node",
+		Asset:     "test-node",
 		RunID:    "test-run",
 		Pipeline: "test-pipeline",
 		Status:   "success",

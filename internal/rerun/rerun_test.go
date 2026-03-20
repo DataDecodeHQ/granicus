@@ -25,10 +25,10 @@ func TestComputeRerunSet_Basic(t *testing.T) {
 	runID := "run_20260225_120000_test"
 
 	// Emit node events: A success, B failed, C skipped, D success
-	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "A", EventType: "node_succeeded"})
-	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "B", EventType: "node_failed"})
-	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "C", EventType: "node_skipped"})
-	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "D", EventType: "node_succeeded"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "A", EventType: "asset_succeeded"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "B", EventType: "asset_failed"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "C", EventType: "asset_skipped"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "D", EventType: "asset_succeeded"})
 
 	// Build graph: A -> B -> C, D independent
 	g, err := graph.BuildGraph(
@@ -63,7 +63,7 @@ func TestComputeRerunSet_MissingNode(t *testing.T) {
 	store := newTestEventStore(t)
 	runID := "run_20260225_120000_gone"
 
-	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "removed_node", EventType: "node_failed"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "removed_node", EventType: "asset_failed"})
 
 	g, _ := graph.BuildGraph(
 		[]graph.AssetInput{{Name: "A", Type: "shell", Source: "a.sh"}},
@@ -83,7 +83,7 @@ func TestComputeRerunSet_NoFailures(t *testing.T) {
 	store := newTestEventStore(t)
 	runID := "run_20260225_120000_ok"
 
-	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "A", EventType: "node_succeeded"})
+	store.Emit(events.Event{RunID: runID, Pipeline: "p", Asset: "A", EventType: "asset_succeeded"})
 
 	g, _ := graph.BuildGraph(
 		[]graph.AssetInput{{Name: "A", Type: "shell", Source: "a.sh"}},

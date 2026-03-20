@@ -213,7 +213,7 @@ func (s *Store) ListRuns(limit int) ([]RunSummary, error) {
 func (s *Store) GetFailedNodes(runID string) ([]string, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
-		EventType: "node_failed",
+		EventType: "asset_failed,node_failed",
 	})
 	if err != nil {
 		return nil, err
@@ -232,7 +232,7 @@ func (s *Store) GetFailedNodes(runID string) ([]string, error) {
 func (s *Store) GetNodeResults(runID string) ([]AssetResult, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
-		EventType: "node_succeeded,node_failed,node_skipped",
+		EventType: "asset_succeeded,asset_failed,asset_skipped,node_succeeded,node_failed,node_skipped",
 	})
 	if err != nil {
 		return nil, err
@@ -242,9 +242,9 @@ func (s *Store) GetNodeResults(runID string) ([]AssetResult, error) {
 	for _, e := range events {
 		status := "success"
 		switch e.EventType {
-		case "node_failed":
+		case "asset_failed", "node_failed":
 			status = "failed"
-		case "node_skipped":
+		case "asset_skipped", "node_skipped":
 			status = "skipped"
 		}
 		nr := AssetResult{
@@ -280,7 +280,7 @@ func (s *Store) GetCheckResults(runID, asset string) ([]Event, error) {
 func (s *Store) GetLastSuccess(asset string) (*time.Time, error) {
 	row := s.db.QueryRow(`
 		SELECT timestamp FROM events
-		WHERE asset = ? AND event_type = 'node_succeeded'
+		WHERE asset = ? AND event_type IN ('asset_succeeded', 'node_succeeded')
 		ORDER BY timestamp DESC LIMIT 1
 	`, asset)
 
@@ -349,12 +349,12 @@ type RunCostSummary struct {
 	CacheHitRate        float64 `json:"cache_hit_rate"`
 }
 
-// GetRunCostSummary aggregates BQ job metadata from node_succeeded events for a run.
+// GetRunCostSummary aggregates BQ job metadata from asset_succeeded events for a run.
 // Returns a summary with all-zero values if no BQ cost data was recorded.
 func (s *Store) GetRunCostSummary(runID string) (*RunCostSummary, error) {
 	evts, err := s.Query(QueryFilters{
 		RunID:     runID,
-		EventType: "node_succeeded",
+		EventType: "asset_succeeded,node_succeeded",
 	})
 	if err != nil {
 		return nil, err

@@ -63,7 +63,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	}
 
 	// Determine which nodes to run
-	nodesToRun := make(map[string]bool)
+	assetsToRun := make(map[string]bool)
 	if len(cfg.Assets) > 0 {
 		var subgraph []string
 		if cfg.Only {
@@ -74,17 +74,17 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 			subgraph = g.Subgraph(cfg.Assets)
 		}
 		for _, n := range subgraph {
-			nodesToRun[n] = true
+			assetsToRun[n] = true
 		}
 	} else {
 		for name := range g.Assets {
-			nodesToRun[name] = true
+			assetsToRun[name] = true
 		}
 	}
 
 	// Full refresh: invalidate state for targeted incremental assets
 	if cfg.FullRefresh && cfg.StateStore != nil {
-		for name := range nodesToRun {
+		for name := range assetsToRun {
 			asset := g.Assets[name]
 			if asset.TimeColumn != "" {
 				if err := cfg.StateStore.InvalidateAll(name); err != nil {
@@ -139,7 +139,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		return false
 	}
 
-	blockingChecks := precomputeBlockingChecks(g, nodesToRun)
+	blockingChecks := precomputeBlockingChecks(g, assetsToRun)
 
 	var mu sync.Mutex
 	results := make(map[string]*NodeResult)
@@ -147,10 +147,10 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 
 	// Track unresolved dependency counts
 	unresolved := make(map[string]int)
-	for name := range nodesToRun {
+	for name := range assetsToRun {
 		count := 0
 		for _, dep := range g.Assets[name].DependsOn {
-			if nodesToRun[dep] {
+			if assetsToRun[dep] {
 				count++
 			}
 		}
@@ -158,8 +158,8 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	}
 
 	sem := make(chan struct{}, maxP)
-	done := make(chan NodeResult, len(nodesToRun))
-	pending := len(nodesToRun)
+	done := make(chan NodeResult, len(assetsToRun))
+	pending := len(assetsToRun)
 
 	// Multi-output dedup: track which source+interval combos have been executed
 	var dedupMu sync.Mutex
@@ -250,7 +250,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	// have passed. Must be called with mu held; temporarily releases mu to
 	// dispatch. Returns true if mu was temporarily released.
 	tryDispatchDownstream := func(downstream string) bool {
-		if !nodesToRun[downstream] || resolved[downstream] {
+		if !assetsToRun[downstream] || resolved[downstream] {
 			return false
 		}
 		if unresolved[downstream] != 0 {
@@ -258,7 +258,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		}
 		// All graph deps resolved — verify each dep succeeded
 		for _, dep := range g.Assets[downstream].DependsOn {
-			if !nodesToRun[dep] {
+			if !assetsToRun[dep] {
 				continue
 			}
 			r, ok := results[dep]
@@ -272,7 +272,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		// parent asset succeeds.)
 		if !strings.HasPrefix(downstream, "check:") {
 			for _, dep := range g.Assets[downstream].DependsOn {
-				if !nodesToRun[dep] {
+				if !assetsToRun[dep] {
 					continue
 				}
 				if !allBlockingChecksPassed(dep) {
@@ -288,7 +288,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	}
 
 	// Find and dispatch root nodes
-	for name := range nodesToRun {
+	for name := range assetsToRun {
 		if unresolved[name] == 0 {
 			resolved[name] = true
 			dispatchOrSkip(name)
@@ -304,7 +304,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		select {
 		case result := <-done:
 			mu.Lock()
-			pending -= handleNodeResult(result, g, nodesToRun, results, resolved, unresolved,
+			pending -= handleNodeResult(result, g, assetsToRun, results, resolved, unresolved,
 				triggerShutdown, allBlockingChecksPassed, tryDispatchDownstream)
 			mu.Unlock()
 
@@ -318,7 +318,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		case <-shutdownTimer:
 			// Timeout expired: force-resolve all nodes not yet in results.
 			mu.Lock()
-			for name := range nodesToRun {
+			for name := range assetsToRun {
 				if _, ok := results[name]; !ok {
 					results[name] = &NodeResult{
 						AssetName: name,
@@ -337,7 +337,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	runResult.EndTime = time.Now()
 	runResult.Interrupted = isShuttingDown()
 
-	for name := range nodesToRun {
+	for name := range assetsToRun {
 		if r, ok := results[name]; ok {
 			runResult.Results = append(runResult.Results, *r)
 		}
@@ -349,9 +349,9 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 // precomputeBlockingChecks builds a map from asset name to the list of blocking
 // check node names that must pass before its downstream nodes can be dispatched.
 // Critical severity checks are always treated as blocking regardless of the Blocking field.
-func precomputeBlockingChecks(g *graph.Graph, nodesToRun map[string]bool) map[string][]string {
+func precomputeBlockingChecks(g *graph.Graph, assetsToRun map[string]bool) map[string][]string {
 	blockingChecks := make(map[string][]string)
-	for name := range nodesToRun {
+	for name := range assetsToRun {
 		asset := g.Assets[name]
 		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(name, "check:") {
 			for _, parent := range asset.DependsOn {
@@ -368,7 +368,7 @@ func precomputeBlockingChecks(g *graph.Graph, nodesToRun map[string]bool) map[st
 func handleNodeResult(
 	result NodeResult,
 	g *graph.Graph,
-	nodesToRun map[string]bool,
+	assetsToRun map[string]bool,
 	results map[string]*NodeResult,
 	resolved map[string]bool,
 	unresolved map[string]int,
@@ -387,7 +387,7 @@ func handleNodeResult(
 	if result.Status == "success" {
 		// Decrement unresolved counts and try dispatching downstream nodes
 		for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
-			if !nodesToRun[downstream] || resolved[downstream] {
+			if !assetsToRun[downstream] || resolved[downstream] {
 				continue
 			}
 			unresolved[downstream]--
@@ -411,7 +411,7 @@ func handleNodeResult(
 		// Skip all direct descendants of the failed/skipped node
 		descendants := g.Descendants(result.AssetName)
 		for _, desc := range descendants {
-			if !nodesToRun[desc] || resolved[desc] {
+			if !assetsToRun[desc] || resolved[desc] {
 				continue
 			}
 			resolved[desc] = true
@@ -434,7 +434,7 @@ func handleNodeResult(
 					if desc == result.AssetName {
 						continue
 					}
-					if !nodesToRun[desc] || resolved[desc] {
+					if !assetsToRun[desc] || resolved[desc] {
 						continue
 					}
 					resolved[desc] = true

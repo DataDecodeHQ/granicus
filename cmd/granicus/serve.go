@@ -409,10 +409,10 @@ func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, to
 			skipped++
 			if err := pec.eventStore.Emit(events.Event{
 				RunID: pec.runID, Pipeline: pec.cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_skipped", Severity: "warning",
-				Summary: fmt.Sprintf("Node %s skipped", r.AssetName),
+				EventType: "asset_skipped", Severity: "warning",
+				Summary: fmt.Sprintf("Asset %s skipped", r.AssetName),
 			}); err != nil {
-				slog.Warn("event emission failed", "event_type", "node_skipped", "error", err)
+				slog.Warn("event emission failed", "event_type", "asset_skipped", "error", err)
 			}
 		}
 	}

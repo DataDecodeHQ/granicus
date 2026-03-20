@@ -97,9 +97,9 @@ func runSubscribe(cmd *cobra.Command, args []string) error {
 		}
 
 		// Store failures
-		if eventType == "node_failed" || eventType == "run_completed" {
+		if eventType == "asset_failed" || eventType == "node_failed" || eventType == "run_completed" {
 			status, _ := event["status"].(string)
-			if eventType == "node_failed" || status == "completed_with_failures" || status == "failed" {
+			if eventType == "asset_failed" || eventType == "node_failed" || status == "completed_with_failures" || status == "failed" {
 				failDir := filepath.Join(dataDir, "failures")
 				path := filepath.Join(failDir, runID+"_"+eventType+".json")
 				data, _ := json.MarshalIndent(event, "", "  ")
