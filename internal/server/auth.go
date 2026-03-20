@@ -65,16 +65,21 @@ func AuthMiddleware(keys []APIKey, next http.Handler) http.Handler {
 			return
 		}
 
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "authorization required"})
-			return
-		}
+		// Check X-API-Key header first (used when Authorization carries an IAM identity token)
+		token := r.Header.Get("X-API-Key")
 
-		token := strings.TrimPrefix(auth, "Bearer ")
-		if token == auth {
-			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "invalid authorization format"})
-			return
+		// Fall back to Authorization: Bearer <key>
+		if token == "" {
+			auth := r.Header.Get("Authorization")
+			if auth == "" {
+				writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "authorization required"})
+				return
+			}
+			token = strings.TrimPrefix(auth, "Bearer ")
+			if token == auth {
+				writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "invalid authorization format"})
+				return
+			}
 		}
 
 		for _, k := range keys {

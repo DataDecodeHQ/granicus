@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/oauth2adapt"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 func newTriggerCmd() *cobra.Command {
@@ -44,11 +47,11 @@ func runTrigger(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	apiURL := os.Getenv("GRANICUS_API_URL")
-	apiKey := os.Getenv("GRANICUS_API_KEY")
+	apiURL := CloudEndpoint()
+	apiKey := CloudAPIKey()
 
 	if apiURL == "" {
-		return fmt.Errorf("GRANICUS_API_URL not set")
+		return fmt.Errorf("cloud endpoint not configured; run: granicus config set cloud.endpoint <url>")
 	}
 
 	body := map[string]any{
@@ -83,7 +86,7 @@ func runTrigger(cmd *cobra.Command, args []string) error {
 	}
 
 	data, _ := json.Marshal(body)
-	url := apiURL + "/api/v1/pipelines/" + pipeline + "/trigger"
+	url := apiURL + "/api/v1/trigger/" + pipeline
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
 	if err != nil {
@@ -94,7 +97,20 @@ func runTrigger(cmd *cobra.Command, args []string) error {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	// Cloud Run IAM: get identity token for the endpoint audience
+	client := http.DefaultClient
+	if idToken, err := getIDToken(apiURL); err == nil && idToken != "" {
+		client = oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: idToken, TokenType: "Bearer"},
+		))
+		// Move API key to a custom header so IAM token stays in Authorization
+		if apiKey != "" {
+			req.Header.Del("Authorization")
+			req.Header.Set("X-API-Key", apiKey)
+		}
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("API request failed: %w", err)
 	}
@@ -119,4 +135,20 @@ func runTrigger(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// getIDToken returns a GCP identity token for the given audience, or empty string if unavailable.
+func getIDToken(audience string) (string, error) {
+	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
+		Audience: audience,
+	})
+	if err != nil {
+		return "", err
+	}
+	ts := oauth2adapt.TokenSourceFromTokenProvider(creds)
+	tok, err := ts.Token()
+	if err != nil {
+		return "", err
+	}
+	return tok.AccessToken, nil
 }
