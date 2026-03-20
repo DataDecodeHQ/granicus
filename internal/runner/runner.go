@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/DataDecodeHQ/granicus/internal/config"
+	"github.com/DataDecodeHQ/granicus/internal/types"
 )
 
 const (
@@ -14,38 +14,11 @@ const (
 	TruncMarker      = "\n[truncated]"
 )
 
-type Asset struct {
-	Name                  string
-	Type                  string
-	Source                string
-	DestinationConnection string
-	SourceConnection      string
-	IntervalStart         string
-	IntervalEnd           string
-	Prefix                string
-	InlineSQL             string
-	TestStart             string
-	TestEnd               string
-	Dataset               string
-	Layer                 string
-	DependsOn             []string
-	Timeout               time.Duration
-	ResolvedDestConn      *config.ConnectionConfig
-	ResolvedSourceConn    *config.ConnectionConfig
-}
+// Asset is an alias for types.Asset, the canonical runtime asset representation.
+type Asset = types.Asset
 
-type NodeResult struct {
-	AssetName string            `json:"asset"`
-	Status    string            `json:"status"`
-	StartTime time.Time         `json:"start_time"`
-	EndTime   time.Time         `json:"end_time"`
-	Duration  time.Duration     `json:"duration_ms"`
-	Error     string            `json:"error"`
-	Stdout    string            `json:"stdout"`
-	Stderr    string            `json:"stderr"`
-	ExitCode  int               `json:"exit_code"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-}
+// NodeResult is an alias for types.AssetResult, the canonical execution result.
+type NodeResult = types.AssetResult
 
 type Runner interface {
 	Run(asset *Asset, projectRoot string, runID string) NodeResult

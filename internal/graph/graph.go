@@ -4,37 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/DataDecodeHQ/granicus/internal/types"
 )
 
-type Asset struct {
-	Name                  string
-	Type                  string
-	Source                string
-	DependsOn             []string
-	DependedOnBy          []string
-	DestinationConnection string
-	SourceConnection      string
-	TimeColumn            string
-	IntervalUnit          string
-	Lookback              int
-	StartDate             string
-	BatchSize             int
-	SourceAsset           string // back-reference for multi-output nodes
-	IntervalStart         string // set by executor at runtime
-	IntervalEnd           string // set by executor at runtime
-	TestStart             string // set by executor for @test_start substitution
-	TestEnd               string // set by executor for @test_end substitution
-	Layer                 string
-	Grain                 string
-	DefaultChecks         *bool
-	InlineSQL             string
-	Blocking              bool
-	Severity              string // info, warning, error, critical
-	Timeout               time.Duration
-	MaxAttempts           int
-	BackoffBase           time.Duration
-	RetryableErrors       []string
-}
+// Asset is an alias for types.Asset, the canonical asset representation.
+type Asset = types.Asset
 
 type Graph struct {
 	Assets    map[string]*Asset

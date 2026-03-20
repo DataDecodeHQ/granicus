@@ -34,13 +34,16 @@ type RunSummary struct {
 	Status          string    `json:"status"`
 }
 
-type NodeResult struct {
+type AssetResult struct {
 	Asset      string            `json:"asset"`
 	Status     string            `json:"status"`
 	DurationMs int64             `json:"duration_ms"`
 	Error      string            `json:"error,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
+
+// NodeResult is a deprecated alias for AssetResult.
+type NodeResult = AssetResult
 
 var severityLevels = map[string]int{
 	"error":   3,
@@ -225,8 +228,8 @@ func (s *Store) GetFailedNodes(runID string) ([]string, error) {
 	return names, nil
 }
 
-// GetNodeResults returns the execution result for every node in the given run.
-func (s *Store) GetNodeResults(runID string) ([]NodeResult, error) {
+// GetNodeResults returns the execution result for every asset in the given run.
+func (s *Store) GetNodeResults(runID string) ([]AssetResult, error) {
 	events, err := s.Query(QueryFilters{
 		RunID:     runID,
 		EventType: "node_succeeded,node_failed,node_skipped",
@@ -235,7 +238,7 @@ func (s *Store) GetNodeResults(runID string) ([]NodeResult, error) {
 		return nil, err
 	}
 
-	var results []NodeResult
+	var results []AssetResult
 	for _, e := range events {
 		status := "success"
 		switch e.EventType {
@@ -244,7 +247,7 @@ func (s *Store) GetNodeResults(runID string) ([]NodeResult, error) {
 		case "node_skipped":
 			status = "skipped"
 		}
-		nr := NodeResult{
+		nr := AssetResult{
 			Asset:      e.Asset,
 			Status:     status,
 			DurationMs: e.DurationMs,

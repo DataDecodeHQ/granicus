@@ -12,22 +12,13 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/state"
+	"github.com/DataDecodeHQ/granicus/internal/types"
 )
 
 const DefaultShutdownTimeout = 5 * time.Minute
 
-type NodeResult struct {
-	AssetName string
-	Status    string // "success", "failed", "skipped"
-	StartTime time.Time
-	EndTime   time.Time
-	Duration  time.Duration
-	Error     string
-	Stdout    string
-	Stderr    string
-	ExitCode  int
-	Metadata  map[string]string
-}
+// NodeResult is an alias for types.AssetResult, the canonical execution result.
+type NodeResult = types.AssetResult
 
 type RunConfig struct {
 	MaxParallel  int

@@ -14,6 +14,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/server"
+	"github.com/DataDecodeHQ/granicus/internal/types"
 )
 
 // nodeRunnerOptions holds the caller-specific parameters for buildNodeRunner.
@@ -29,7 +30,7 @@ type nodeRunnerOptions struct {
 	ConfigDir string
 }
 
-// buildNodeRunner returns the executor node-runner closure shared by runRun (main.go)
+// buildNodeRunner returns the executor asset-runner closure shared by runRun (main.go)
 // and executePipeline (serve.go). Callers populate opts with the fields they need.
 func buildNodeRunner(
 	cfg *config.PipelineConfig,
@@ -37,8 +38,8 @@ func buildNodeRunner(
 	eventStore *events.Store,
 	registry *runner.RunnerRegistry,
 	opts nodeRunnerOptions,
-) func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
-	return func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
+) func(asset *types.Asset, pr string, rid string) types.AssetResult {
+	return func(asset *types.Asset, pr string, rid string) types.AssetResult {
 		if !opts.OutputJSON && opts.Dispatch == nil {
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("[%s] %s %-24s started\n", ts, whiteBullet, asset.Name)
@@ -69,35 +70,22 @@ func buildNodeRunner(
 		if ac2 := findAssetConfig(cfg, asset.Name); ac2 != nil {
 			ac = *ac2
 		}
-		ra := &runner.Asset{
-			Name:                  asset.Name,
-			Type:                  asset.Type,
-			Source:                asset.Source,
-			DestinationConnection: asset.DestinationConnection,
-			SourceConnection:      asset.SourceConnection,
-			IntervalStart:         asset.IntervalStart,
-			IntervalEnd:           asset.IntervalEnd,
-			Prefix:                cfg.Prefix,
-			InlineSQL:             asset.InlineSQL,
-			TestStart:             asset.TestStart,
-			TestEnd:               asset.TestEnd,
-			Dataset:               resolvedDataset,
-			Layer:                 asset.Layer,
-			DependsOn:             asset.DependsOn,
-			Timeout:               asset.Timeout,
-			ResolvedDestConn:      resolvedDestConn,
-			ResolvedSourceConn:    resolvedSourceConn,
-		}
+		ra := *asset
+		ra.Prefix = cfg.Prefix
+		ra.Dataset = resolvedDataset
+		ra.ResolvedDestConn = resolvedDestConn
+		ra.ResolvedSourceConn = resolvedSourceConn
+
 		runRoot := pr
 		if opts.ConfigDir != "" {
 			runRoot = opts.ConfigDir
 		}
-		var r runner.NodeResult
+		var r types.AssetResult
 		if opts.Dispatch != nil && opts.Dispatch.Supports(ra.Type) {
 			var derr error
-			r, derr = opts.Dispatch.Execute(opts.DispatchCtx, ra, runRoot, rid)
+			r, derr = opts.Dispatch.Execute(opts.DispatchCtx, &ra, runRoot, rid)
 			if derr != nil {
-				r = runner.NodeResult{
+				r = types.AssetResult{
 					AssetName: ra.Name,
 					Status:    "failed",
 					StartTime: time.Now(),
@@ -108,7 +96,7 @@ func buildNodeRunner(
 				}
 			}
 		} else {
-			r = registry.Run(ra, runRoot, rid)
+			r = registry.Run(&ra, runRoot, rid)
 		}
 		emitNodeResult(eventStore, runID, cfg, ac, r)
 
@@ -127,18 +115,7 @@ func buildNodeRunner(
 			}
 		}
 
-		return executor.NodeResult{
-			AssetName: r.AssetName,
-			Status:    r.Status,
-			StartTime: r.StartTime,
-			EndTime:   r.EndTime,
-			Duration:  r.Duration,
-			Error:     r.Error,
-			Stdout:    r.Stdout,
-			Stderr:    r.Stderr,
-			ExitCode:  r.ExitCode,
-			Metadata:  r.Metadata,
-		}
+		return r
 	}
 }
 
@@ -242,7 +219,7 @@ func resolveAssetRuntime(cfg *config.PipelineConfig, assetName string) (dataset 
 
 // emitNodeResult emits a node_succeeded or node_failed event to eventStore.
 // Stdout and stderr are truncated to 10 KiB before inclusion in failure details.
-func emitNodeResult(eventStore *events.Store, runID string, cfg *config.PipelineConfig, asset config.AssetConfig, r runner.NodeResult) {
+func emitNodeResult(eventStore *events.Store, runID string, cfg *config.PipelineConfig, asset config.AssetConfig, r types.AssetResult) {
 	if r.Status == "success" {
 		logEmit(eventStore, events.Event{
 			RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
