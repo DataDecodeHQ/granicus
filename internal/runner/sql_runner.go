@@ -16,15 +16,16 @@ import (
 	"cloud.google.com/go/bigquery"
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 )
 
 type SQLRunner struct {
-	Timeout    time.Duration
-	Connection *config.ConnectionConfig
-	FuncMap    template.FuncMap
+	Timeout     time.Duration
+	Connection  *config.ConnectionConfig
+	FuncMap     template.FuncMap
+	ValidateSQL bool
 }
 
+// NewSQLRunner creates a SQLRunner for the given BigQuery connection.
 func NewSQLRunner(conn *config.ConnectionConfig) *SQLRunner {
 	return &SQLRunner{
 		Timeout:    DefaultTimeout,
@@ -38,6 +39,7 @@ type templateData struct {
 	Prefix  string
 }
 
+// Run reads, templates, and executes a SQL file against BigQuery.
 func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -55,11 +57,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
-	tmpl := template.New("sql")
-	if r.FuncMap != nil {
-		tmpl = tmpl.Funcs(r.FuncMap)
-	}
-	tmpl, err = tmpl.Parse(string(rawSQL))
+	rendered, err := renderSQL(rawSQL, r.Connection, asset, r.FuncMap)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -67,55 +65,27 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 			StartTime: start,
 			EndTime:   time.Now(),
 			Duration:  time.Since(start),
-			Error:     fmt.Sprintf("parsing SQL template: %v", err),
+			Error:     err.Error(),
 			ExitCode:  -1,
 		}
 	}
-
-	dataset := r.Connection.Properties["dataset"]
-	if asset.Dataset != "" {
-		dataset = asset.Dataset
-	}
-	data := templateData{
-		Project: r.Connection.Properties["project"],
-		Dataset: dataset,
-		Prefix:  asset.Prefix,
-	}
-
-	var rendered []byte
-	buf := new(bytes.Buffer)
-	if err := tmpl.Execute(buf, data); err != nil {
-		return NodeResult{
-			AssetName: asset.Name,
-			Status:    "failed",
-			StartTime: start,
-			EndTime:   time.Now(),
-			Duration:  time.Since(start),
-			Error:     fmt.Sprintf("executing SQL template: %v", err),
-			ExitCode:  -1,
-		}
-	}
-	rendered = buf.Bytes()
-
-	// Second pass: replace @start/@end with interval boundaries
-	rendered = substituteIntervalVars(rendered, asset)
-	rendered = SubstituteTestVars(rendered, asset.TestStart, asset.TestEnd)
 
 	// Prepend DROP TABLE to avoid partition spec conflicts on CREATE OR REPLACE
 	rendered = prependDropForReplace(rendered)
+
+	// Multi-statement scripts (DROP TABLE + CREATE OR REPLACE) don't support BQ
+	// named parameters, so fall back to string substitution for @start/@end.
+	// Single-statement queries use BQ named parameters instead.
+	if isMultiStatementScript(rendered) {
+		rendered = substituteIntervalVarsForDDL(rendered, asset)
+	}
 
 	timeout := effectiveTimeout(asset.Timeout, r.Timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	project := r.Connection.Properties["project"]
-	var opts []option.ClientOption
-	if creds := r.Connection.Properties["credentials"]; creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
-	}
-
-	client, err := bigquery.NewClient(ctx, project, opts...)
+	client, err := newBQClient(ctx, r.Connection)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name,
@@ -130,6 +100,70 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 	defer client.Close()
 
 	q := client.Query(string(rendered))
+	if !isMultiStatementScript(rendered) && asset.IntervalStart != "" {
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "start",
+			Value: asset.IntervalStart,
+		})
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "end",
+			Value: asset.IntervalEnd,
+		})
+	}
+	var estimatedBytes int64
+	if r.ValidateSQL {
+		dryQ := client.Query(string(rendered))
+		dryQ.DryRun = true
+		if !isMultiStatementScript(rendered) && asset.IntervalStart != "" {
+			dryQ.Parameters = append(dryQ.Parameters, bigquery.QueryParameter{
+				Name:  "start",
+				Value: asset.IntervalStart,
+			})
+			dryQ.Parameters = append(dryQ.Parameters, bigquery.QueryParameter{
+				Name:  "end",
+				Value: asset.IntervalEnd,
+			})
+		}
+		dryJob, dryErr := dryQ.Run(ctx)
+		if dryErr != nil {
+			return NodeResult{
+				AssetName: asset.Name,
+				Status:    "failed",
+				StartTime: start,
+				EndTime:   time.Now(),
+				Duration:  time.Since(start),
+				Error:     fmt.Sprintf("dry-run validation failed: %v", dryErr),
+				ExitCode:  1,
+			}
+		}
+		dryStatus, dryErr := dryJob.Wait(ctx)
+		if dryErr != nil {
+			return NodeResult{
+				AssetName: asset.Name,
+				Status:    "failed",
+				StartTime: start,
+				EndTime:   time.Now(),
+				Duration:  time.Since(start),
+				Error:     fmt.Sprintf("dry-run validation failed: %v", dryErr),
+				ExitCode:  1,
+			}
+		}
+		if dryStatus.Err() != nil {
+			return NodeResult{
+				AssetName: asset.Name,
+				Status:    "failed",
+				StartTime: start,
+				EndTime:   time.Now(),
+				Duration:  time.Since(start),
+				Error:     fmt.Sprintf("dry-run validation failed: %v", dryStatus.Err()),
+				ExitCode:  1,
+			}
+		}
+		if dryStatus.Statistics != nil {
+			estimatedBytes = dryStatus.Statistics.TotalBytesProcessed
+		}
+	}
+	LogSQLExecution(asset.Name, r.Connection.Properties["dataset"], r.ValidateSQL, estimatedBytes)
 	job, err := q.Run(ctx)
 	if err != nil {
 		return NodeResult{
@@ -169,22 +203,7 @@ func (r *SQLRunner) Run(asset *Asset, projectRoot string, runID string) NodeResu
 		}
 	}
 
-	metadata := make(map[string]string)
-	if stats := status.Statistics; stats != nil {
-		bytesProcessed := stats.TotalBytesProcessed
-		metadata["total_bytes_processed"] = strconv.FormatInt(bytesProcessed, 10)
-		metadata["estimated_cost_usd"] = fmt.Sprintf("%.6f", estimateBQCostUSD(bytesProcessed))
-		if qStats, ok := stats.Details.(*bigquery.QueryStatistics); ok {
-			metadata["total_slot_ms"] = strconv.FormatInt(qStats.SlotMillis, 10)
-			metadata["cache_hit"] = strconv.FormatBool(qStats.CacheHit)
-			metadata["rows_affected"] = strconv.FormatInt(qStats.NumDMLAffectedRows, 10)
-			if qStats.ReferencedTables != nil {
-				for _, t := range qStats.ReferencedTables {
-					metadata["destination_table"] = t.DatasetID + "." + t.TableID
-				}
-			}
-		}
-	}
+	metadata := collectBQMetadata(status, job)
 
 	return NodeResult{
 		AssetName: asset.Name,
@@ -206,10 +225,12 @@ type SQLCheckRunner struct {
 	FuncMap    template.FuncMap
 }
 
+// NewSQLCheckRunner creates a SQLCheckRunner for the given BigQuery connection.
 func NewSQLCheckRunner(conn *config.ConnectionConfig) *SQLCheckRunner {
 	return &SQLCheckRunner{Connection: conn, Timeout: DefaultTimeout}
 }
 
+// Run executes a SQL check query and fails if any rows are returned.
 func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -229,51 +250,20 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 		}
 	}
 
-	tmpl := template.New("check")
-	if r.FuncMap != nil {
-		tmpl = tmpl.Funcs(r.FuncMap)
-	}
-	tmpl, parseErr := tmpl.Parse(string(rawSQL))
-	if parseErr != nil {
+	checkSQL, err := renderSQL(rawSQL, r.Connection, asset, r.FuncMap)
+	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
 			EndTime: time.Now(), Duration: time.Since(start),
-			Error: fmt.Sprintf("parsing check template: %v", parseErr), ExitCode: -1,
+			Error: err.Error(), ExitCode: -1,
 		}
 	}
-
-	checkDataset := r.Connection.Properties["dataset"]
-	if asset.Dataset != "" {
-		checkDataset = asset.Dataset
-	}
-	data := templateData{
-		Project: r.Connection.Properties["project"],
-		Dataset: checkDataset,
-		Prefix:  asset.Prefix,
-	}
-	buf := new(bytes.Buffer)
-	if err := tmpl.Execute(buf, data); err != nil {
-		return NodeResult{
-			AssetName: asset.Name, Status: "failed", StartTime: start,
-			EndTime: time.Now(), Duration: time.Since(start),
-			Error: fmt.Sprintf("executing check template: %v", err), ExitCode: -1,
-		}
-	}
-
-	checkSQL := substituteIntervalVars(buf.Bytes(), asset)
-	checkSQL = SubstituteTestVars(checkSQL, asset.TestStart, asset.TestEnd)
 
 	timeout := effectiveTimeout(asset.Timeout, r.Timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	project := r.Connection.Properties["project"]
-	var opts []option.ClientOption
-	if creds := r.Connection.Properties["credentials"]; creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
-	}
-
-	client, err := bigquery.NewClient(ctx, project, opts...)
+	client, err := newBQClient(ctx, r.Connection)
 	if err != nil {
 		return NodeResult{
 			AssetName: asset.Name, Status: "failed", StartTime: start,
@@ -283,8 +273,20 @@ func (r *SQLCheckRunner) Run(asset *Asset, projectRoot string, runID string) Nod
 	}
 	defer client.Close()
 
+	// Check queries are always single-statement SELECTs; pass @start/@end as
+	// BQ named parameters rather than substituting into the SQL string.
 	sqlStr := string(checkSQL)
 	q := client.Query(sqlStr)
+	if asset.IntervalStart != "" {
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "start",
+			Value: asset.IntervalStart,
+		})
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  "end",
+			Value: asset.IntervalEnd,
+		})
+	}
 	it, err := q.Read(ctx)
 	if err != nil {
 		return NodeResult{
@@ -389,7 +391,10 @@ func estimateBQCostUSD(bytesProcessed int64) float64 {
 	return float64(bytesProcessed) * 5.0 / 1e12
 }
 
-func substituteIntervalVars(sql []byte, asset *Asset) []byte {
+// substituteIntervalVarsForDDL replaces @start/@end with quoted string literals.
+// Use this only for multi-statement scripts (DDL contexts) where BigQuery named
+// parameters are not supported.
+func substituteIntervalVarsForDDL(sql []byte, asset *Asset) []byte {
 	s := string(sql)
 	if asset.IntervalStart != "" {
 		s = strings.ReplaceAll(s, "@start", "'"+asset.IntervalStart+"'")
@@ -398,6 +403,14 @@ func substituteIntervalVars(sql []byte, asset *Asset) []byte {
 	return []byte(s)
 }
 
+// isMultiStatementScript reports whether sql is a multi-statement script.
+// We detect this via the DROP prefix that prependDropForReplace injects, since
+// that is the only source of multi-statement SQL in this runner.
+func isMultiStatementScript(sql []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(sql), []byte("DROP TABLE IF EXISTS"))
+}
+
+// SubstituteTestVars replaces @test_start and @test_end placeholders with the given date boundaries.
 func SubstituteTestVars(sql []byte, testStart, testEnd string) []byte {
 	if testStart == "" {
 		testStart = "1900-01-01"
@@ -411,6 +424,7 @@ func SubstituteTestVars(sql []byte, testStart, testEnd string) []byte {
 	return []byte(s)
 }
 
+// ParseTestWindow converts a duration string like "7d", "2w", or "3m" into start and end date strings.
 func ParseTestWindow(window string) (startDate, endDate string, err error) {
 	if window == "" {
 		return "1900-01-01", "2099-12-31", nil

@@ -8,6 +8,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// GenerateFKCheckNodes creates check nodes that validate foreign key not-null and referential integrity constraints.
 func GenerateFKCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)

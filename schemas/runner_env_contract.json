@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "runner_env_contract",
+  "title": "Granicus Runner Environment Contract",
+  "description": "Defines environment variables passed from Go runners to Python/Shell subprocesses.",
+  "type": "object",
+  "required": ["GRANICUS_ASSET_NAME", "GRANICUS_RUN_ID", "GRANICUS_PROJECT_ROOT", "GRANICUS_METADATA_PATH"],
+  "properties": {
+    "GRANICUS_ASSET_NAME": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the asset being executed."
+    },
+    "GRANICUS_RUN_ID": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this pipeline run."
+    },
+    "GRANICUS_PROJECT_ROOT": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path to the pipeline project root directory."
+    },
+    "GRANICUS_METADATA_PATH": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the temp JSON file where the subprocess writes metadata back to Go."
+    },
+    "GRANICUS_INTERVAL_START": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 datetime marking the start of the execution interval. Present only for scheduled runs."
+    },
+    "GRANICUS_INTERVAL_END": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 datetime marking the end of the execution interval. Present only for scheduled runs."
+    },
+    "GRANICUS_DEST_CONNECTION": {
+      "type": "string",
+      "description": "JSON-encoded destination connection object. Must parse to a valid connection shape.",
+      "contentMediaType": "application/json",
+      "contentSchema": { "$ref": "#/$defs/connection" }
+    },
+    "GRANICUS_SOURCE_CONNECTION": {
+      "type": "string",
+      "description": "JSON-encoded source connection object. Must parse to a valid connection shape.",
+      "contentMediaType": "application/json",
+      "contentSchema": { "$ref": "#/$defs/connection" }
+    },
+    "GRANICUS_REFS": {
+      "type": "string",
+      "description": "JSON-encoded map of dependency name to resolved BigQuery table reference (project.dataset.table).",
+      "contentMediaType": "application/json",
+      "contentSchema": { "$ref": "#/$defs/refs" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "connection": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Connection name as defined in pipeline.yaml."
+        },
+        "type": {
+          "type": "string",
+          "description": "Connection backend type (e.g. bigquery, postgres, gcs)."
+        },
+        "project": {
+          "type": "string",
+          "description": "GCP project ID (bigquery connections)."
+        },
+        "dataset": {
+          "type": "string",
+          "description": "BigQuery dataset name (bigquery connections)."
+        },
+        "credentials": {
+          "type": "string",
+          "description": "Path to service account JSON credentials file."
+        }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "description": "Additional connection properties passed through from pipeline config."
+      }
+    },
+    "refs": {
+      "type": "object",
+      "description": "Map of dependency asset name to fully-qualified BigQuery table reference.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "metadata_file": {
+      "type": "object",
+      "description": "Shape of the JSON file written by the subprocess back to Go at GRANICUS_METADATA_PATH.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

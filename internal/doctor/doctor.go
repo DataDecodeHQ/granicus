@@ -126,6 +126,7 @@ func checkGCSConfig(connName string, conn *config.ConnectionConfig) CheckResult 
 	return CheckResult{Name: name, Status: StatusPass, Message: fmt.Sprintf("bucket=%s, credentials=%s", bucket, credMethod)}
 }
 
+// dag:boundary
 func checkStateDB(dbPath string) CheckResult {
 	name := "state.db"
 

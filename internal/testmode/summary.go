@@ -21,10 +21,12 @@ type FailedCheck struct {
 	RowCount int
 }
 
+// Passed returns true if no checks failed during the test run.
 func (r *TestResult) Passed() bool {
 	return len(r.FailedChecks) == 0
 }
 
+// FormatSummary returns a human-readable summary of the test run including status, counts, and failures.
 func FormatSummary(r *TestResult) string {
 	var b strings.Builder
 

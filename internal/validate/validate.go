@@ -38,6 +38,7 @@ type CollectedSource struct {
 	TableName  string
 }
 
+// CollectingRefFunc returns a template ref() function that validates references and collects them for later analysis.
 func CollectingRefFunc(assets []string) (func(string) (string, error), *[]CollectedRef) {
 	lookup := make(map[string]bool, len(assets))
 	for _, a := range assets {
@@ -55,6 +56,7 @@ func CollectingRefFunc(assets []string) (func(string) (string, error), *[]Collec
 	return fn, &collected
 }
 
+// CollectingSourceFunc returns a template source() function that validates source references and collects them for later analysis.
 func CollectingSourceFunc(sources map[string]config.SourceConfig) (func(string, string) (string, error), *[]CollectedSource) {
 	var collected []CollectedSource
 
@@ -69,6 +71,92 @@ func CollectingSourceFunc(sources map[string]config.SourceConfig) (func(string, 
 	return fn, &collected
 }
 
+// validateTemplateParse parses and executes all SQL templates in cfg, returning a template_parse ValidationResult.
+func validateTemplateParse(cfg *config.PipelineConfig, projectRoot string, funcMap template.FuncMap, data interface{}) ValidationResult {
+	var parseErrors []string
+	var parsePass []string
+
+	for _, asset := range cfg.Assets {
+		if asset.Type != "sql" {
+			continue
+		}
+		sourcePath := filepath.Join(projectRoot, asset.Source)
+		rawSQL, err := os.ReadFile(sourcePath)
+		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
+			continue
+		}
+
+		tmpl := template.New(asset.Name).Funcs(funcMap)
+		tmpl, err = tmpl.Parse(string(rawSQL))
+		if err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
+			continue
+		}
+
+		var buf strings.Builder
+		if err := tmpl.Execute(&buf, data); err != nil {
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
+			continue
+		}
+
+		parsePass = append(parsePass, asset.Name)
+	}
+
+	if len(parseErrors) > 0 {
+		return ValidationResult{
+			Name:   "template_parse",
+			Status: StatusError,
+			Items:  parseErrors,
+			Details: map[string]string{
+				"passed": fmt.Sprintf("%d", len(parsePass)),
+				"failed": fmt.Sprintf("%d", len(parseErrors)),
+			},
+		}
+	}
+	return ValidationResult{
+		Name:   "template_parse",
+		Status: StatusPass,
+		Details: map[string]string{
+			"checked": fmt.Sprintf("%d", len(parsePass)),
+		},
+	}
+}
+
+// validateRefResolution checks that all collected refs resolve to known asset names, returning a ref_resolution ValidationResult.
+func validateRefResolution(refs []CollectedRef, assetNames []string) ValidationResult {
+	lookup := make(map[string]bool, len(assetNames))
+	for _, a := range assetNames {
+		lookup[a] = true
+	}
+
+	var unresolvedRefs []string
+	for _, r := range refs {
+		if !lookup[r.RefName] {
+			unresolvedRefs = append(unresolvedRefs, fmt.Sprintf("ref(%q): not found", r.RefName))
+		}
+	}
+
+	if len(unresolvedRefs) > 0 {
+		return ValidationResult{
+			Name:   "ref_resolution",
+			Status: StatusError,
+			Items:  unresolvedRefs,
+			Details: map[string]string{
+				"refs_checked": fmt.Sprintf("%d", len(refs)),
+			},
+		}
+	}
+	return ValidationResult{
+		Name:   "ref_resolution",
+		Status: StatusPass,
+		Details: map[string]string{
+			"refs_checked": fmt.Sprintf("%d", len(refs)),
+		},
+	}
+}
+
+// ValidateTemplates parses and executes all SQL templates, checking for parse errors and unresolved ref/source calls.
 func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot string) []ValidationResult {
 	var results []ValidationResult
 
@@ -133,89 +221,8 @@ func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot s
 		Prefix:  cfg.Prefix,
 	}
 
-	var parseErrors []string
-	var parsePass []string
-
-	for _, asset := range cfg.Assets {
-		if asset.Type != "sql" {
-			continue
-		}
-		sourcePath := filepath.Join(projectRoot, asset.Source)
-		rawSQL, err := os.ReadFile(sourcePath)
-		if err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
-			continue
-		}
-
-		tmpl := template.New(asset.Name).Funcs(funcMap)
-		tmpl, err = tmpl.Parse(string(rawSQL))
-		if err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
-			continue
-		}
-
-		var buf strings.Builder
-		if err := tmpl.Execute(&buf, data); err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", asset.Name, err))
-			continue
-		}
-
-		parsePass = append(parsePass, asset.Name)
-	}
-
-	if len(parseErrors) > 0 {
-		results = append(results, ValidationResult{
-			Name:   "template_parse",
-			Status: StatusError,
-			Items:  parseErrors,
-			Details: map[string]string{
-				"passed": fmt.Sprintf("%d", len(parsePass)),
-				"failed": fmt.Sprintf("%d", len(parseErrors)),
-			},
-		})
-	} else {
-		results = append(results, ValidationResult{
-			Name:   "template_parse",
-			Status: StatusPass,
-			Details: map[string]string{
-				"checked": fmt.Sprintf("%d", len(parsePass)),
-			},
-		})
-	}
-
-	// ref() resolution
-	var unresolvedRefs []string
-	for _, r := range *refs {
-		found := false
-		for _, a := range assetNames {
-			if a == r.RefName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			unresolvedRefs = append(unresolvedRefs, fmt.Sprintf("ref(%q): not found", r.RefName))
-		}
-	}
-
-	if len(unresolvedRefs) > 0 {
-		results = append(results, ValidationResult{
-			Name:   "ref_resolution",
-			Status: StatusError,
-			Items:  unresolvedRefs,
-			Details: map[string]string{
-				"refs_checked": fmt.Sprintf("%d", len(*refs)),
-			},
-		})
-	} else {
-		results = append(results, ValidationResult{
-			Name:   "ref_resolution",
-			Status: StatusPass,
-			Details: map[string]string{
-				"refs_checked": fmt.Sprintf("%d", len(*refs)),
-			},
-		})
-	}
+	results = append(results, validateTemplateParse(cfg, projectRoot, funcMap, data))
+	results = append(results, validateRefResolution(*refs, assetNames))
 
 	// source() resolution
 	if len(cfg.Sources) > 0 || len(*sources) > 0 {
@@ -248,6 +255,7 @@ func ValidateTemplates(cfg *config.PipelineConfig, g *graph.Graph, projectRoot s
 	return results
 }
 
+// DetectOrphanFiles finds SQL files in asset directories that are not referenced by any pipeline asset.
 func DetectOrphanFiles(cfg *config.PipelineConfig, projectRoot string) []ValidationResult {
 	referenced := make(map[string]bool)
 	for _, a := range cfg.Assets {
@@ -312,6 +320,7 @@ func DetectOrphanFiles(cfg *config.PipelineConfig, projectRoot string) []Validat
 	}}
 }
 
+// CheckDependsOnConsistency warns when ref() calls and depends_on declarations are mismatched.
 func CheckDependsOnConsistency(cfg *config.PipelineConfig, g *graph.Graph, projectRoot string, collectedRefs []CollectedRef) []ValidationResult {
 	// Build per-asset ref usage map
 	refsByAsset := make(map[string]map[string]bool)
@@ -375,6 +384,7 @@ var layerOrder = map[string]int{
 	"report":       4,
 }
 
+// CheckLayerDirection detects dependencies that violate the expected layer ordering (e.g., staging depending on entity).
 func CheckLayerDirection(g *graph.Graph) []ValidationResult {
 	var violations []string
 
@@ -603,6 +613,7 @@ func CheckOrphanedChecks(cfg *config.PipelineConfig, projectRoot string) []Valid
 // Matches {{.Project}}.LITERAL_DATASET.table (with or without backticks) but NOT {{.Project}}.{{.Dataset}}.table
 var hardcodedRefPattern = regexp.MustCompile(`\{\{\s*\.Project\s*\}\}\.([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)`)
 
+// DetectHardcodedRefs finds SQL templates that reference datasets directly via {{.Project}}.LITERAL instead of using ref().
 func DetectHardcodedRefs(cfg *config.PipelineConfig, projectRoot string) []ValidationResult {
 	var violations []string
 

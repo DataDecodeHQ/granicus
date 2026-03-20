@@ -37,7 +37,7 @@ type RunConfig struct {
 	FromDate     string
 	ToDate       string
 	FullRefresh  bool
-	StateStore   *state.Store
+	StateStore   state.StateBackend
 	TestMode     bool
 	TestStart    string
 	TestEnd      string
@@ -60,6 +60,7 @@ type RunResult struct {
 	Interrupted bool // true if run was stopped by a shutdown signal
 }
 
+// Execute runs all targeted assets in the graph concurrently, respecting dependencies and parallelism limits.
 func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	runResult := &RunResult{
 		StartTime: time.Now(),
@@ -147,17 +148,7 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		return false
 	}
 
-	// Pre-compute blocking checks per asset: asset -> list of blocking check node names.
-	// Critical severity checks are always treated as blocking regardless of the Blocking field.
-	blockingChecks := make(map[string][]string)
-	for name := range nodesToRun {
-		asset := g.Assets[name]
-		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(name, "check:") {
-			for _, parent := range asset.DependsOn {
-				blockingChecks[parent] = append(blockingChecks[parent], name)
-			}
-		}
-	}
+	blockingChecks := precomputeBlockingChecks(g, nodesToRun)
 
 	var mu sync.Mutex
 	results := make(map[string]*NodeResult)
@@ -322,79 +313,8 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 		select {
 		case result := <-done:
 			mu.Lock()
-			// Apply severity-based behavior for check nodes before storing the result.
-			if strings.HasPrefix(result.AssetName, "check:") && result.Status != "success" {
-				result = applySeverityToCheckResult(result, g.Assets[result.AssetName], triggerShutdown)
-			}
-			results[result.AssetName] = &result
-			pending--
-
-			if result.Status == "success" {
-				// Decrement unresolved counts and try dispatching downstream nodes
-				for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
-					if !nodesToRun[downstream] || resolved[downstream] {
-						continue
-					}
-					unresolved[downstream]--
-					tryDispatchDownstream(downstream)
-				}
-
-				// If this is a successful blocking check, its parent's other
-				// downstream nodes may now be unblocked. Re-evaluate them.
-				asset := g.Assets[result.AssetName]
-				if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
-					for _, parentName := range asset.DependsOn {
-						if !allBlockingChecksPassed(parentName) {
-							continue
-						}
-						for _, downstream := range g.Assets[parentName].DependedOnBy {
-							tryDispatchDownstream(downstream)
-						}
-					}
-				}
-			} else {
-				// Skip all direct descendants of the failed/skipped node
-				descendants := g.Descendants(result.AssetName)
-				for _, desc := range descendants {
-					if !nodesToRun[desc] || resolved[desc] {
-						continue
-					}
-					resolved[desc] = true
-					results[desc] = &NodeResult{
-						AssetName: desc,
-						Status:    "skipped",
-						Error:     "skipped: dependency " + result.AssetName + " failed",
-						ExitCode:  -1,
-					}
-					pending--
-				}
-
-				// Blocking check failure: skip descendants of the parent asset.
-				// Critical severity checks always block regardless of the Blocking field.
-				asset := g.Assets[result.AssetName]
-				if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
-					for _, parentName := range asset.DependsOn {
-						parentDescendants := g.Descendants(parentName)
-						for _, desc := range parentDescendants {
-							if desc == result.AssetName {
-								continue
-							}
-							if !nodesToRun[desc] || resolved[desc] {
-								continue
-							}
-							resolved[desc] = true
-							results[desc] = &NodeResult{
-								AssetName: desc,
-								Status:    "skipped",
-								Error:     "skipped: blocked_by_check:" + result.AssetName,
-								ExitCode:  -1,
-								Metadata:  map[string]string{"blocked_by_check": result.AssetName},
-							}
-							pending--
-						}
-					}
-				}
-			}
+			pending -= handleNodeResult(result, g, nodesToRun, results, resolved, unresolved,
+				triggerShutdown, allBlockingChecksPassed, tryDispatchDownstream)
 			mu.Unlock()
 
 		case <-activeShutdownCh:
@@ -433,6 +353,114 @@ func Execute(g *graph.Graph, cfg RunConfig, runner RunnerFunc) *RunResult {
 	}
 
 	return runResult
+}
+
+// precomputeBlockingChecks builds a map from asset name to the list of blocking
+// check node names that must pass before its downstream nodes can be dispatched.
+// Critical severity checks are always treated as blocking regardless of the Blocking field.
+func precomputeBlockingChecks(g *graph.Graph, nodesToRun map[string]bool) map[string][]string {
+	blockingChecks := make(map[string][]string)
+	for name := range nodesToRun {
+		asset := g.Assets[name]
+		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(name, "check:") {
+			for _, parent := range asset.DependsOn {
+				blockingChecks[parent] = append(blockingChecks[parent], name)
+			}
+		}
+	}
+	return blockingChecks
+}
+
+// handleNodeResult processes a completed node result within the event loop.
+// Must be called with mu held. Returns the number of pending nodes consumed
+// (1 for the result itself, plus any nodes skipped as a consequence).
+func handleNodeResult(
+	result NodeResult,
+	g *graph.Graph,
+	nodesToRun map[string]bool,
+	results map[string]*NodeResult,
+	resolved map[string]bool,
+	unresolved map[string]int,
+	triggerShutdown func(),
+	allBlockingChecksPassed func(string) bool,
+	tryDispatchDownstream func(string) bool,
+) int {
+	consumed := 1
+
+	// Apply severity-based behavior for check nodes before storing the result.
+	if strings.HasPrefix(result.AssetName, "check:") && result.Status != "success" {
+		result = applySeverityToCheckResult(result, g.Assets[result.AssetName], triggerShutdown)
+	}
+	results[result.AssetName] = &result
+
+	if result.Status == "success" {
+		// Decrement unresolved counts and try dispatching downstream nodes
+		for _, downstream := range g.Assets[result.AssetName].DependedOnBy {
+			if !nodesToRun[downstream] || resolved[downstream] {
+				continue
+			}
+			unresolved[downstream]--
+			tryDispatchDownstream(downstream)
+		}
+
+		// If this is a successful blocking check, its parent's other
+		// downstream nodes may now be unblocked. Re-evaluate them.
+		asset := g.Assets[result.AssetName]
+		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
+			for _, parentName := range asset.DependsOn {
+				if !allBlockingChecksPassed(parentName) {
+					continue
+				}
+				for _, downstream := range g.Assets[parentName].DependedOnBy {
+					tryDispatchDownstream(downstream)
+				}
+			}
+		}
+	} else {
+		// Skip all direct descendants of the failed/skipped node
+		descendants := g.Descendants(result.AssetName)
+		for _, desc := range descendants {
+			if !nodesToRun[desc] || resolved[desc] {
+				continue
+			}
+			resolved[desc] = true
+			results[desc] = &NodeResult{
+				AssetName: desc,
+				Status:    "skipped",
+				Error:     "skipped: dependency " + result.AssetName + " failed",
+				ExitCode:  -1,
+			}
+			consumed++
+		}
+
+		// Blocking check failure: skip descendants of the parent asset.
+		// Critical severity checks always block regardless of the Blocking field.
+		asset := g.Assets[result.AssetName]
+		if (asset.Blocking || asset.Severity == "critical") && strings.HasPrefix(result.AssetName, "check:") {
+			for _, parentName := range asset.DependsOn {
+				parentDescendants := g.Descendants(parentName)
+				for _, desc := range parentDescendants {
+					if desc == result.AssetName {
+						continue
+					}
+					if !nodesToRun[desc] || resolved[desc] {
+						continue
+					}
+					resolved[desc] = true
+					results[desc] = &NodeResult{
+						AssetName: desc,
+						Status:    "skipped",
+						Error:     "skipped: blocked_by_check:" + result.AssetName,
+						ExitCode:  -1,
+						Metadata:  map[string]string{"blocked_by_check": result.AssetName},
+					}
+					consumed++
+				}
+			}
+		}
+	}
+
+	return consumed
 }
 
 func executeIncremental(asset *graph.Asset, cfg RunConfig, runner RunnerFunc, dedupMu *sync.Mutex, dedupResults map[string]*NodeResult) NodeResult {

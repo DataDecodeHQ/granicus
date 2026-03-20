@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,6 +23,7 @@ type PythonRunner struct {
 	RefFunc               func(string) (string, error)
 }
 
+// NewPythonRunner creates a PythonRunner with the given connections, event store, and pipeline name.
 func NewPythonRunner(destConn, srcConn *config.ConnectionConfig, eventStore *events.Store, pipeline string) *PythonRunner {
 	return &PythonRunner{
 		Timeout:               DefaultTimeout,
@@ -32,6 +34,7 @@ func NewPythonRunner(destConn, srcConn *config.ConnectionConfig, eventStore *eve
 	}
 }
 
+// Run executes a Python script as a subprocess with connection and ref environment variables.
 func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeResult {
 	start := time.Now()
 
@@ -49,18 +52,6 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 	metadataFile.Close()
 	defer os.Remove(metadataPath)
 
-	env := []string{
-		"GRANICUS_ASSET_NAME=" + asset.Name,
-		"GRANICUS_RUN_ID=" + runID,
-		"GRANICUS_PROJECT_ROOT=" + projectRoot,
-		"GRANICUS_METADATA_PATH=" + metadataPath,
-	}
-
-	if asset.IntervalStart != "" {
-		env = append(env, "GRANICUS_INTERVAL_START="+asset.IntervalStart)
-		env = append(env, "GRANICUS_INTERVAL_END="+asset.IntervalEnd)
-	}
-
 	destConn := r.DestinationConnection
 	if destConn == nil {
 		destConn = asset.ResolvedDestConn
@@ -69,25 +60,46 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 	if srcConn == nil {
 		srcConn = asset.ResolvedSourceConn
 	}
-	if destConn != nil {
-		connJSON, _ := json.Marshal(flattenConnection(destConn))
-		env = append(env, "GRANICUS_DEST_CONNECTION="+string(connJSON))
-	}
-	if srcConn != nil {
-		connJSON, _ := json.Marshal(flattenConnection(srcConn))
-		env = append(env, "GRANICUS_SOURCE_CONNECTION="+string(connJSON))
-	}
 
+	var refs map[string]string
 	if r.RefFunc != nil && len(asset.DependsOn) > 0 {
-		refs := make(map[string]string, len(asset.DependsOn))
+		refs = make(map[string]string, len(asset.DependsOn))
 		for _, dep := range asset.DependsOn {
 			resolved, err := r.RefFunc(dep)
 			if err == nil {
 				refs[dep] = strings.ReplaceAll(resolved, "`", "")
 			}
 		}
-		if refsJSON, err := json.Marshal(refs); err == nil {
-			env = append(env, "GRANICUS_REFS="+string(refsJSON))
+	}
+
+	env := buildSubprocessEnv(SubprocessEnvConfig{
+		Asset:        asset,
+		ProjectRoot:  projectRoot,
+		RunID:        runID,
+		MetadataPath: metadataPath,
+		DestConn:     destConn,
+		SrcConn:      srcConn,
+		Refs:         refs,
+	})
+
+	hasCredentials := (destConn != nil && destConn.Properties["credentials"] != "") ||
+		(srcConn != nil && srcConn.Properties["credentials"] != "")
+
+	if destConn != nil && destConn.Properties["credentials"] != "" {
+		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", destConn.Name, "credential_method", "file")
+		LogCredentialCrossing("python_subprocess", destConn.Type, asset.Name, runID)
+	}
+	if srcConn != nil && srcConn.Properties["credentials"] != "" {
+		slog.Info("credential_access", "event", "subprocess_credential_pass", "asset", asset.Name, "run_id", runID, "connection", srcConn.Name, "credential_method", "file")
+		LogCredentialCrossing("python_subprocess", srcConn.Type, asset.Name, runID)
+	}
+	LogSubprocessLaunch(asset.Name, "python", len(env), hasCredentials)
+
+	if err := validateEnv(env, asset.Name, runID); err != nil {
+		return NodeResult{
+			AssetName: asset.Name, Status: "failed", StartTime: start,
+			EndTime: time.Now(), Duration: time.Since(start),
+			Error: fmt.Sprintf("env validation: %v", err), ExitCode: -1,
 		}
 	}
 
@@ -96,6 +108,7 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		go r.monitorProgress(metadataPath, asset.Name, runID, done)
 	}
 
+	// Contract: Go owns this boundary. Schema: contracts/env_contract.json
 	sub := RunSubprocess(SubprocessConfig{
 		Command: []string{pythonBin, asset.Source},
 		Env:     env,
@@ -103,24 +116,8 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 		Timeout: effectiveTimeout(asset.Timeout, r.Timeout),
 	})
 	close(done)
-	end := time.Now()
 
-	result := NodeResult{
-		AssetName: asset.Name,
-		StartTime: start,
-		EndTime:   end,
-		Duration:  sub.Duration,
-		Stdout:    sub.Stdout,
-		Stderr:    sub.Stderr,
-		ExitCode:  sub.ExitCode,
-	}
-
-	if sub.Error != "" {
-		result.Status = "failed"
-		result.Error = sub.Error
-	} else {
-		result.Status = "success"
-	}
+	result := NodeResultFromSubprocess(asset.Name, start, sub)
 
 	// Read metadata file if it exists and has content
 	if data, err := os.ReadFile(metadataPath); err == nil && len(data) > 0 {
@@ -129,6 +126,7 @@ func (r *PythonRunner) Run(asset *Asset, projectRoot string, runID string) NodeR
 			result.Metadata = meta
 		}
 	}
+	LogSubprocessComplete(asset.Name, "python", result.ExitCode, result.Duration, result.Metadata != nil)
 
 	return result
 }
@@ -168,14 +166,74 @@ func (r *PythonRunner) monitorProgress(metadataPath, assetName, runID string, do
 	}
 }
 
-func flattenConnection(conn *config.ConnectionConfig) map[string]string {
-	flat := make(map[string]string, len(conn.Properties)+2)
-	flat["name"] = conn.Name
-	flat["type"] = conn.Type
-	for k, v := range conn.Properties {
-		flat[k] = v
+// validateEnv checks the subprocess env slice against the runner contract.
+// Returns a combined error for any violations.
+func validateEnv(env []string, assetName, runID string) error {
+	vars := make(map[string]string, len(env))
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			vars[k] = v
+		}
 	}
-	return flat
+
+	var errs []error
+
+	required := []string{"GRANICUS_ASSET_NAME", "GRANICUS_RUN_ID", "GRANICUS_PROJECT_ROOT", "GRANICUS_METADATA_PATH"}
+	for _, key := range required {
+		if vars[key] == "" {
+			errs = append(errs, fmt.Errorf("missing required env var %s", key))
+		}
+	}
+
+	for _, key := range []string{"GRANICUS_DEST_CONNECTION", "GRANICUS_SOURCE_CONNECTION"} {
+		if val, ok := vars[key]; ok {
+			var parsed map[string]string
+			if err := json.Unmarshal([]byte(val), &parsed); err != nil {
+				errs = append(errs, fmt.Errorf("invalid JSON in %s: %w", key, err))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// findSDKPath locates the granicus SDK python directory.
+// It checks relative to the running executable, then falls back to GRANICUS_SDK_PATH.
+func findSDKPath() string {
+	if envPath := os.Getenv("GRANICUS_SDK_PATH"); envPath != "" {
+		return envPath
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	// Walk up from the executable looking for sdk/python
+	dir := filepath.Dir(exe)
+	for i := 0; i < 5; i++ {
+		candidate := filepath.Join(dir, "sdk", "python")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
+// appendPythonPath prepends sdkPath to any existing PYTHONPATH entry in env,
+// or appends a new PYTHONPATH entry if none exists.
+func appendPythonPath(env []string, sdkPath string) []string {
+	for i, e := range env {
+		if strings.HasPrefix(e, "PYTHONPATH=") {
+			existing := strings.TrimPrefix(e, "PYTHONPATH=")
+			env[i] = "PYTHONPATH=" + sdkPath + ":" + existing
+			return env
+		}
+	}
+	// No existing PYTHONPATH in env slice; also check the process environment.
+	if existing := os.Getenv("PYTHONPATH"); existing != "" {
+		return append(env, "PYTHONPATH="+sdkPath+":"+existing)
+	}
+	return append(env, "PYTHONPATH="+sdkPath)
 }
 
 func findPython(projectRoot string) string {

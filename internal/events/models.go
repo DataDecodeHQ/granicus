@@ -19,6 +19,7 @@ type ModelVersion struct {
 	ReplacedAt     string `json:"replaced_at,omitempty"`
 }
 
+// HashFile returns the hex-encoded SHA-256 hash of the file at the given path.
 func HashFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -27,11 +28,13 @@ func HashFile(path string) (string, error) {
 	return HashBytes(data), nil
 }
 
+// HashBytes returns the hex-encoded SHA-256 hash of the given byte slice.
 func HashBytes(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
 }
 
+// dag:boundary
 func (s *Store) RecordModelVersion(asset, sourceFile, sourceHash, runID string) (changed bool, version int, err error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
@@ -144,6 +147,7 @@ func (s *Store) RecordModelVersion(asset, sourceFile, sourceHash, runID string) 
 	return true, newVersion, nil
 }
 
+// dag:boundary
 func (s *Store) emitUnlocked(event Event) error {
 	details, _ := json.Marshal(event.Details)
 	_, err := s.db.Exec(`
@@ -154,6 +158,7 @@ func (s *Store) emitUnlocked(event Event) error {
 	return err
 }
 
+// GetModelVersion returns the current version number and source hash for the given asset.
 func (s *Store) GetModelVersion(asset string) (int, string, error) {
 	var version int
 	var hash string
@@ -164,6 +169,7 @@ func (s *Store) GetModelVersion(asset string) (int, string, error) {
 	return version, hash, nil
 }
 
+// GetModelHistory returns all version history entries for the given asset, ordered newest first.
 func (s *Store) GetModelHistory(asset string) ([]ModelVersion, error) {
 	rows, err := s.db.Query(`
 		SELECT asset_name, version, source_hash, source_snapshot, activated_at, activated_run, replaced_at
@@ -185,6 +191,7 @@ func (s *Store) GetModelHistory(asset string) ([]ModelVersion, error) {
 	return versions, rows.Err()
 }
 
+// dag:boundary
 func (s *Store) ListModels() ([]ModelVersion, error) {
 	rows, err := s.db.Query(`
 		SELECT asset_name, version, source_hash, '', last_run_at, last_run_id, ''

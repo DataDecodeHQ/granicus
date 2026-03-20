@@ -17,21 +17,15 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/DataDecodeHQ/granicus/internal/logging"
-	"github.com/DataDecodeHQ/granicus/internal/checker"
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
 	"github.com/DataDecodeHQ/granicus/internal/executor"
-	"github.com/DataDecodeHQ/granicus/internal/graph"
 	"github.com/DataDecodeHQ/granicus/internal/pool"
 	"github.com/DataDecodeHQ/granicus/internal/runner"
 	"github.com/DataDecodeHQ/granicus/internal/scheduler"
 	"github.com/DataDecodeHQ/granicus/internal/server"
-	"github.com/DataDecodeHQ/granicus/internal/state"
+	"github.com/DataDecodeHQ/granicus/internal/source"
 )
-
-func init() {
-	// serve command is added in main
-}
 
 func newServeCmd() *cobra.Command {
 	serveCmd := &cobra.Command{
@@ -39,14 +33,25 @@ func newServeCmd() *cobra.Command {
 		Short: "Start scheduler and HTTP trigger server",
 		RunE:  runServe,
 	}
-	serveCmd.Flags().String("config-dir", "", "Directory containing pipeline YAML configs (required)")
+	serveCmd.Flags().String("config-dir", "", "Directory containing pipeline YAML configs (required for local source)")
 	serveCmd.Flags().String("server-config", "", "Path to granicus-server.yaml")
 	serveCmd.Flags().String("env-config", "", "Path to granicus-env.yaml")
 	serveCmd.Flags().String("env", "dev", "Environment name (default: dev)")
 	serveCmd.Flags().String("project-root", ".", "Project root directory")
 	serveCmd.Flags().Duration("orphan-timeout", 2*time.Hour, "Timeout before an in_progress interval is considered orphaned and recovered")
-	serveCmd.MarkFlagRequired("config-dir")
 	return serveCmd
+}
+
+// PipelineExecContext bundles the shared dependencies needed to execute a pipeline run.
+type PipelineExecContext struct {
+	cfg         *config.PipelineConfig
+	projectRoot string
+	runID       string
+	eventStore  *events.Store
+	dispatch    runner.RunnerDispatch
+	ctx         context.Context
+	poolMgr     *pool.PoolManager
+	assetPools  map[string]string
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -69,6 +74,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		serverCfg = &config.ServerConfig{Server: config.ServerSettings{Port: 8080}}
+	}
+
+	var apiKeys []server.APIKey
+	for _, k := range serverCfg.Server.APIKeys {
+		apiKeys = append(apiKeys, server.APIKey{Name: k.Name, Key: k.Key})
+	}
+	if err := server.ValidateAuth(apiKeys); err != nil {
+		slog.Error("auth validation failed", "env", envName, "error", err)
+		return fmt.Errorf("auth validation: %w", err)
 	}
 
 	// Load environment config (optional)
@@ -110,36 +124,46 @@ func runServe(cmd *cobra.Command, args []string) error {
 		slog.Error("stale lock recovery error", "error", err)
 	} else if recovered > 0 {
 		slog.Info("recovered stale locks", "count", recovered)
-		_ = eventStore.Emit(events.Event{
+		if err := eventStore.Emit(events.Event{
 			EventType: "stale_lock_recovered", Severity: "warning",
 			Summary: fmt.Sprintf("Recovered %d stale locks on startup", recovered),
 			Details: map[string]any{"recovered_count": recovered},
-		})
+		}); err != nil {
+			slog.Warn("event emission failed", "event_type", "stale_lock_recovered", "error", err)
+		}
+	}
+
+	// Initialize all backends
+	backends, err := initBackends(projectRoot, configDir, envName)
+	if err != nil {
+		return fmt.Errorf("backends: %w", err)
+	}
+	defer backends.State.Close()
+	if backends.Dispatch != nil {
+		if closer, ok := backends.Dispatch.(interface{ Close() error }); ok {
+			defer closer.Close()
+		}
 	}
 
 	// Recover orphaned intervals (in_progress longer than orphan_timeout)
-	intervalStateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
-	if stateStore, serr := state.New(intervalStateDBPath); serr != nil {
-		slog.Error("orphan recovery: could not open state db", "error", serr)
-	} else {
-		orphans, rerr := stateStore.RecoverOrphans(orphanTimeout)
-		stateStore.Close()
-		if rerr != nil {
-			slog.Error("orphan interval recovery error", "error", rerr)
-		} else if len(orphans) > 0 {
-			slog.Info("recovered orphaned intervals", "count", len(orphans))
-			for _, iv := range orphans {
-				_ = eventStore.Emit(events.Event{
-					EventType: "interval_recovered", Severity: "warning",
-					Summary: fmt.Sprintf("Recovered orphaned interval %s/%s (was in_progress since %s)", iv.AssetName, iv.IntervalStart, iv.StartedAt),
-					Details: map[string]any{
-						"asset_name":     iv.AssetName,
-						"interval_start": iv.IntervalStart,
-						"interval_end":   iv.IntervalEnd,
-						"run_id":         iv.RunID,
-						"started_at":     iv.StartedAt,
-					},
-				})
+	orphans, rerr := backends.State.RecoverOrphans(orphanTimeout)
+	if rerr != nil {
+		slog.Error("orphan interval recovery error", "error", rerr)
+	} else if len(orphans) > 0 {
+		slog.Info("recovered orphaned intervals", "count", len(orphans))
+		for _, iv := range orphans {
+			if err := eventStore.Emit(events.Event{
+				EventType: "interval_recovered", Severity: "warning",
+				Summary: fmt.Sprintf("Recovered orphaned interval %s/%s (was in_progress since %s)", iv.AssetName, iv.IntervalStart, iv.StartedAt),
+				Details: map[string]any{
+					"asset_name":     iv.AssetName,
+					"interval_start": iv.IntervalStart,
+					"interval_end":   iv.IntervalEnd,
+					"run_id":         iv.RunID,
+					"started_at":     iv.StartedAt,
+				},
+			}); err != nil {
+				slog.Warn("event emission failed", "event_type", "interval_recovered", "error", err)
 			}
 		}
 	}
@@ -149,12 +173,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer shutdownCancel()
 
 	// Build run function
+	dispatch := backends.Dispatch
 	runFunc := func(cfg *config.PipelineConfig, pr string) {
-		runPipelineForScheduler(cfg, pr, envName, envCfg, eventStore, shutdownCtx)
+		pec := PipelineExecContext{
+			cfg:         cfg,
+			projectRoot: pr,
+			eventStore:  eventStore,
+			dispatch:    dispatch,
+			ctx:         shutdownCtx,
+		}
+		runPipelineForScheduler(pec, envName, envCfg)
 	}
 
+	pipeSrc := backends.Source
+
 	// Create scheduler
-	sched, err := scheduler.NewScheduler(configDir, projectRoot, db, runFunc, eventStore)
+	sched, err := scheduler.NewScheduler(pipeSrc, projectRoot, db, runFunc, eventStore)
 	if err != nil {
 		return fmt.Errorf("scheduler: %w", err)
 	}
@@ -163,13 +197,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	sched.RegisterAssetPolls()
 
-	// Start file watcher
-	watcher, err := scheduler.NewWatcher(sched)
-	if err != nil {
-		slog.Warn("file watcher not started", "error", err)
-	} else {
-		watcher.Start()
-		defer watcher.Stop()
+	// Start file watcher (only for local sources)
+	if _, isLocal := pipeSrc.(*source.LocalSource); isLocal {
+		watcher, err := scheduler.NewWatcher(sched)
+		if err != nil {
+			slog.Warn("file watcher not started", "error", err)
+		} else {
+			watcher.Start()
+			defer watcher.Stop()
+		}
 	}
 
 	// Start scheduler
@@ -186,14 +222,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build HTTP server
-	var apiKeys []server.APIKey
-	for _, k := range serverCfg.Server.APIKeys {
-		apiKeys = append(apiKeys, server.APIKey{Name: k.Name, Key: k.Key})
-	}
-
 	srv := server.NewServer(serverCfg.Server.Port, projectRoot, lockStore, eventStore,
 		func(cfg *config.PipelineConfig, pr string, runID string, req server.TriggerRequest) {
-			runPipelineForTrigger(cfg, pr, runID, envName, envCfg, eventStore, req, shutdownCtx)
+			pec := PipelineExecContext{
+				cfg:         cfg,
+				projectRoot: pr,
+				runID:       runID,
+				eventStore:  eventStore,
+				dispatch:    dispatch,
+				ctx:         shutdownCtx,
+			}
+			runPipelineForTrigger(pec, envName, envCfg, req)
 		},
 	)
 	srv.SetShutdownCtx(shutdownCtx)
@@ -253,258 +292,96 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runPipelineForScheduler(cfg *config.PipelineConfig, projectRoot, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, ctx context.Context) {
+func runPipelineForScheduler(pec PipelineExecContext, envName string, envCfg *config.EnvironmentConfig) {
 	if envCfg != nil {
-		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
+		merged, err := config.MergeEnvironment(pec.cfg, envCfg, envName)
 		if err == nil {
-			cfg = merged
+			pec.cfg = merged
 		}
 	}
 
-	runID := events.GenerateRunID()
-	slog.Info("scheduled run", "pipeline", cfg.Pipeline, "run_id", runID)
-	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, nil, "", "", "scheduled", poolMgr, assetPools, ctx)
+	pec.runID = events.GenerateRunID()
+	slog.Info("scheduled run", "pipeline", pec.cfg.Pipeline, "run_id", pec.runID)
+	pec.poolMgr, pec.assetPools = buildPoolManager(pec.cfg)
+	executePipeline(pec, nil, "", "", "scheduled")
 }
 
-func runPipelineForTrigger(cfg *config.PipelineConfig, projectRoot, runID, envName string, envCfg *config.EnvironmentConfig, eventStore *events.Store, req server.TriggerRequest, ctx context.Context) {
+func runPipelineForTrigger(pec PipelineExecContext, envName string, envCfg *config.EnvironmentConfig, req server.TriggerRequest) {
 	if envCfg != nil {
-		merged, err := config.MergeEnvironment(cfg, envCfg, envName)
+		merged, err := config.MergeEnvironment(pec.cfg, envCfg, envName)
 		if err == nil {
-			cfg = merged
+			pec.cfg = merged
 		}
 	}
 
-	slog.Info("triggered run", "pipeline", cfg.Pipeline, "run_id", runID)
+	slog.Info("triggered run", "pipeline", pec.cfg.Pipeline, "run_id", pec.runID)
 
-	_ = eventStore.Emit(events.Event{
-		RunID: runID, Pipeline: cfg.Pipeline, EventType: "pipeline_triggered",
+	if err := pec.eventStore.Emit(events.Event{
+		RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "pipeline_triggered",
 		Severity: "info",
-		Summary:  fmt.Sprintf("Pipeline %s triggered via webhook", cfg.Pipeline),
+		Summary:  fmt.Sprintf("Pipeline %s triggered via webhook", pec.cfg.Pipeline),
 		Details:  map[string]any{"assets": req.Assets, "from_date": req.FromDate, "to_date": req.ToDate},
-	})
+	}); err != nil {
+		slog.Warn("event emission failed", "event_type", "pipeline_triggered", "error", err)
+	}
 
-	poolMgr, assetPools := buildPoolManager(cfg)
-	executePipeline(cfg, projectRoot, runID, eventStore, req.Assets, req.FromDate, req.ToDate, "webhook", poolMgr, assetPools, ctx)
+	pec.poolMgr, pec.assetPools = buildPoolManager(pec.cfg)
+	executePipeline(pec, req.Assets, req.FromDate, req.ToDate, "webhook")
 }
 
-func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, eventStore *events.Store, assetFilter []string, fromDate, toDate, trigger string, poolMgr *pool.PoolManager, assetPools map[string]string, ctx context.Context) {
+func executePipeline(pec PipelineExecContext, assetFilter []string, fromDate, toDate, trigger string) {
 	start := time.Now()
 
-	_ = eventStore.Emit(events.Event{
-		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_started", Severity: "info",
-		Summary: fmt.Sprintf("Pipeline %s started", cfg.Pipeline),
+	if err := pec.eventStore.Emit(events.Event{
+		RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "run_started", Severity: "info",
+		Summary: fmt.Sprintf("Pipeline %s started", pec.cfg.Pipeline),
 		Details: map[string]any{
-			"asset_count":  len(cfg.Assets),
-			"max_parallel": cfg.MaxParallel,
+			"asset_count":  len(pec.cfg.Assets),
+			"max_parallel": pec.cfg.MaxParallel,
 			"asset_filter": assetFilter,
 			"trigger":      trigger,
 		},
-	})
+	}); err != nil {
+		slog.Warn("event emission failed", "event_type", "run_started", "error", err)
+	}
 
-	deps, directives, err := graph.ParseAllDirectives(cfg, projectRoot)
+	// Use config dir for source resolution when pipeline was fetched from GCS
+	parseRoot := pec.projectRoot
+	if pec.cfg.ConfigDir != "" {
+		parseRoot = pec.cfg.ConfigDir
+	}
+	g, _, err := buildPipelineGraph(pec.cfg, parseRoot)
 	if err != nil {
-		slog.Error("dependency parse error", "run_id", runID, "error", err)
+		slog.Error("graph build error", "run_id", pec.runID, "error", err)
 		return
 	}
 
-	inputs := graph.ConfigToAssetInputs(cfg)
-	for i := range inputs {
-		if d, ok := directives[inputs[i].Name]; ok {
-			inputs[i].TimeColumn = d.TimeColumn
-			inputs[i].IntervalUnit = d.IntervalUnit
-			inputs[i].Lookback = d.Lookback
-			inputs[i].StartDate = d.StartDate
-			inputs[i].BatchSize = d.BatchSize
-			if d.Layer != "" {
-				inputs[i].Layer = d.Layer
-			}
-			if d.Grain != "" {
-				inputs[i].Grain = d.Grain
-			}
-			if d.DefaultChecks != nil {
-				inputs[i].DefaultChecks = d.DefaultChecks
-			}
-		}
-	}
-
-	checkNodes, checkDeps := checker.GenerateCheckNodes(cfg)
-	inputs = append(inputs, checkNodes...)
-	for k, v := range checkDeps {
-		deps[k] = v
-	}
-
-	defaultNodes, defaultDeps := checker.GenerateDefaultCheckNodes(cfg)
-	inputs = append(inputs, defaultNodes...)
-	for k, v := range defaultDeps {
-		deps[k] = v
-	}
-
-	// Add source phantom nodes
-	sourceNodes := graph.SourcePhantomNodes(cfg)
-	inputs = append(inputs, sourceNodes...)
-
-	// Generate source check nodes
-	sourceCheckNodes, sourceCheckDeps := checker.GenerateSourceCheckNodes(cfg)
-	inputs = append(inputs, sourceCheckNodes...)
-	for k, v := range sourceCheckDeps {
-		deps[k] = v
-	}
-
-	// Wire source checks to gate staging assets
-	if len(sourceCheckNodes) > 0 {
-		var sourceCheckNames []string
-		for _, sc := range sourceCheckNodes {
-			sourceCheckNames = append(sourceCheckNames, sc.Name)
-		}
-		for i := range inputs {
-			if inputs[i].Layer == "staging" {
-				if deps[inputs[i].Name] == nil {
-					deps[inputs[i].Name] = sourceCheckNames
-				} else {
-					deps[inputs[i].Name] = append(deps[inputs[i].Name], sourceCheckNames...)
-				}
-			}
-		}
-	}
-
-	g, err := graph.BuildGraph(inputs, deps)
+	stateStore, err := initStateBackend(pec.projectRoot, pec.cfg.Pipeline, "")
 	if err != nil {
-		slog.Error("graph build error", "run_id", runID, "error", err)
-		return
-	}
-
-	stateDBPath := filepath.Join(projectRoot, ".granicus", "state.db")
-	stateStore, err := state.New(stateDBPath)
-	if err != nil {
-		slog.Error("state store error", "run_id", runID, "error", err)
+		slog.Error("state store error", "run_id", pec.runID, "error", err)
 		return
 	}
 	defer stateStore.Close()
 
-	registry := buildRegistry(cfg, projectRoot)
+	registry := buildRegistry(pec.cfg, parseRoot)
 
-	runnerFunc := func(asset *graph.Asset, pr string, rid string) executor.NodeResult {
-		_ = eventStore.Emit(events.Event{
-			RunID: runID, Pipeline: cfg.Pipeline, Asset: asset.Name,
-			EventType: "node_started", Severity: "info",
-			Summary: fmt.Sprintf("Node %s started", asset.Name),
-		})
-
-		if asset.Source != "" {
-			srcPath := filepath.Join(pr, asset.Source)
-			if hash, herr := events.HashFile(srcPath); herr == nil {
-				eventStore.RecordModelVersion(asset.Name, srcPath, hash, runID)
-			}
-		}
-
-		assetCfg := findAssetConfig(cfg, asset.Name)
-		resolvedDataset := ""
-		if assetCfg != nil {
-			defaultDS := ""
-			if conn := connectionForAsset(cfg, assetCfg); conn != nil {
-				defaultDS = conn.Properties["dataset"]
-			}
-			resolvedDataset = cfg.DatasetForAsset(*assetCfg, defaultDS)
-		}
-
-		var resolvedDestConn, resolvedSourceConn *config.ConnectionConfig
-		if assetCfg != nil {
-			if assetCfg.DestinationConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.DestinationConnection]; ok {
-					resolvedDestConn = conn
-				}
-			}
-			if assetCfg.SourceConnection != "" {
-				if conn, ok := cfg.Connections[assetCfg.SourceConnection]; ok {
-					resolvedSourceConn = conn
-				}
-			}
-		}
-
-		ra := &runner.Asset{
-			Name:                  asset.Name,
-			Type:                  asset.Type,
-			Source:                asset.Source,
-			DestinationConnection: asset.DestinationConnection,
-			SourceConnection:      asset.SourceConnection,
-			IntervalStart:         asset.IntervalStart,
-			IntervalEnd:           asset.IntervalEnd,
-			Prefix:                cfg.Prefix,
-			InlineSQL:             asset.InlineSQL,
-			DependsOn:             asset.DependsOn,
-			Timeout:               asset.Timeout,
-			Dataset:               resolvedDataset,
-			Layer:                 asset.Layer,
-			ResolvedDestConn:      resolvedDestConn,
-			ResolvedSourceConn:    resolvedSourceConn,
-		}
-
-		r := registry.Run(ra, pr, rid)
-
-		if r.Status == "success" {
-			_ = eventStore.Emit(events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_succeeded", Severity: "info",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s succeeded (%.1fs)", r.AssetName, r.Duration.Seconds()),
-				Details: map[string]any{
-					"exit_code":    r.ExitCode,
-					"metadata":     r.Metadata,
-					"stdout_lines": events.CountLines(r.Stdout),
-					"stderr_lines": events.CountLines(r.Stderr),
-				},
-			})
-		} else {
-			stdout := r.Stdout
-			if len(stdout) > 10*1024 {
-				stdout = stdout[:10*1024] + "[truncated]"
-			}
-			stderr := r.Stderr
-			if len(stderr) > 10*1024 {
-				stderr = stderr[:10*1024] + "[truncated]"
-			}
-			_ = eventStore.Emit(events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
-				EventType: "node_failed", Severity: "error",
-				DurationMs: r.Duration.Milliseconds(),
-				Summary:    fmt.Sprintf("Node %s failed: %s", r.AssetName, r.Error),
-				Details: map[string]any{
-					"error_message": r.Error,
-					"exit_code":     r.ExitCode,
-					"source_file":   asset.Source,
-					"metadata":      r.Metadata,
-					"stdout":        stdout,
-					"stderr":        stderr,
-				},
-			})
-		}
-
-		return executor.NodeResult{
-			AssetName: r.AssetName,
-			Status:    r.Status,
-			StartTime: r.StartTime,
-			EndTime:   r.EndTime,
-			Duration:  r.Duration,
-			Error:     r.Error,
-			Stdout:    r.Stdout,
-			Stderr:    r.Stderr,
-			ExitCode:  r.ExitCode,
-			Metadata:  r.Metadata,
-		}
-	}
+	runnerFunc := buildNodeRunner(pec.cfg, pec.runID, pec.eventStore, registry, nodeRunnerOptions{
+		Dispatch:    pec.dispatch,
+		DispatchCtx: pec.ctx,
+		ConfigDir:   pec.cfg.ConfigDir,
+	})
 
 	runCfg := executor.RunConfig{
-		MaxParallel: cfg.MaxParallel,
+		MaxParallel: pec.cfg.MaxParallel,
 		Assets:      assetFilter,
-		ProjectRoot: projectRoot,
-		RunID:       runID,
+		ProjectRoot: pec.projectRoot,
+		RunID:       pec.runID,
 		FromDate:    fromDate,
 		ToDate:      toDate,
 		StateStore:  stateStore,
-		PoolManager: poolMgr,
-		AssetPools:  assetPools,
-		Ctx:         ctx,
+		PoolManager: pec.poolMgr,
+		AssetPools:  pec.assetPools,
+		Ctx:         pec.ctx,
 	}
 
 	rr := executor.Execute(g, runCfg, runnerFunc)
@@ -518,11 +395,13 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			failed++
 		case "skipped":
 			skipped++
-			_ = eventStore.Emit(events.Event{
-				RunID: runID, Pipeline: cfg.Pipeline, Asset: r.AssetName,
+			if err := pec.eventStore.Emit(events.Event{
+				RunID: pec.runID, Pipeline: pec.cfg.Pipeline, Asset: r.AssetName,
 				EventType: "node_skipped", Severity: "warning",
 				Summary: fmt.Sprintf("Node %s skipped", r.AssetName),
-			})
+			}); err != nil {
+				slog.Warn("event emission failed", "event_type", "node_skipped", "error", err)
+			}
 		}
 	}
 
@@ -532,8 +411,8 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 	}
 
 	totalDuration := rr.EndTime.Sub(start)
-	_ = eventStore.Emit(events.Event{
-		RunID: runID, Pipeline: cfg.Pipeline, EventType: "run_completed", Severity: "info",
+	if err := pec.eventStore.Emit(events.Event{
+		RunID: pec.runID, Pipeline: pec.cfg.Pipeline, EventType: "run_completed", Severity: "info",
 		DurationMs: totalDuration.Milliseconds(),
 		Summary:    fmt.Sprintf("Run %s: %d succeeded, %d failed, %d skipped", status, succeeded, failed, skipped),
 		Details: map[string]any{
@@ -544,58 +423,23 @@ func executePipeline(cfg *config.PipelineConfig, projectRoot, runID string, even
 			"total_nodes":      len(rr.Results),
 			"duration_seconds": totalDuration.Seconds(),
 		},
-	})
+	}); err != nil {
+		slog.Warn("event emission failed", "event_type", "run_completed", "error", err)
+	}
 
 	// Record metrics
-	server.RunsTotal.WithLabelValues(cfg.Pipeline, status).Inc()
-	server.RunDuration.WithLabelValues(cfg.Pipeline).Observe(totalDuration.Seconds())
+	server.RunsTotal.WithLabelValues(pec.cfg.Pipeline, status).Inc()
+	server.RunDuration.WithLabelValues(pec.cfg.Pipeline).Observe(totalDuration.Seconds())
 	for _, r := range rr.Results {
-		server.NodesTotal.WithLabelValues(cfg.Pipeline, r.Status).Inc()
-		server.NodeDuration.WithLabelValues(cfg.Pipeline, r.AssetName, r.Status).Observe(r.Duration.Seconds())
+		server.NodesTotal.WithLabelValues(pec.cfg.Pipeline, r.Status).Inc()
+		server.NodeDuration.WithLabelValues(pec.cfg.Pipeline, r.AssetName, r.Status).Observe(r.Duration.Seconds())
 	}
 
-	slog.Info("run completed", "run_id", runID, "pipeline", cfg.Pipeline, "succeeded", succeeded, "failed", failed, "skipped", skipped, "duration_s", totalDuration.Seconds())
+	slog.Info("run completed", "run_id", pec.runID, "pipeline", pec.cfg.Pipeline, "succeeded", succeeded, "failed", failed, "skipped", skipped, "duration_s", totalDuration.Seconds())
 
 	// Send run summary notification
-	if cfg.Alerts != nil {
-		alertMgr := server.NewAlertManager(cfg.Alerts, eventStore)
-		var summaryResults []struct {
-			AssetName string
-			Status    string
-			Error     string
-			Duration  float64
-			Cost      float64
-		}
-		for _, r := range rr.Results {
-			cost := 0.0
-			if r.Metadata != nil {
-				if c, ok := r.Metadata["bq_total_bytes_billed"]; ok {
-					if v, err := fmt.Sscanf(c, "%f", &cost); v == 1 && err == nil {
-						cost = cost / 1e12 * 5.0
-					}
-				}
-			}
-			summaryResults = append(summaryResults, struct {
-				AssetName string
-				Status    string
-				Error     string
-				Duration  float64
-				Cost      float64
-			}{r.AssetName, r.Status, r.Error, r.Duration.Seconds(), cost})
-		}
-		alertData := server.BuildRunSummary(cfg.Pipeline, runID, summaryResults, totalDuration.Seconds())
-		alertMgr.SendRunSummary(alertData)
-	}
+	sendRunAlerts(pec.cfg, pec.runID, pec.eventStore, rr, totalDuration)
 
 	// Post-run hooks: context.db + monitor.db
-	bqClient := newBQClientForContext(cfg)
-	if bqClient != nil {
-		defer bqClient.Close()
-	}
-	hooks := []executor.PostRunHook{
-		executor.WriteContextHook(bqClient),
-		monitorHook(bqClient),
-		executor.DuckDBAssemblyHook(),
-	}
-	executor.RunPostHooks(hooks, g, cfg, projectRoot, rr)
+	runPostRunHooks(pec.cfg, g, pec.projectRoot, rr)
 }

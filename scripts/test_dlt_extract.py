@@ -3,26 +3,34 @@
 Falls back to mock mode if dlt or duckdb aren't installed."""
 import os
 import json
+import logging
+from collections.abc import Iterator
+
+logger = logging.getLogger(__name__)
 
 
-def write_metadata(data):
+# dag:boundary
+def write_metadata(data: dict) -> None:
+    """Write pipeline metadata to the path specified by GRANICUS_METADATA_PATH."""
     metadata_path = os.environ.get("GRANICUS_METADATA_PATH")
     if metadata_path:
         with open(metadata_path, "w") as f:
             json.dump(data, f)
 
 
-def mock_run():
+def mock_run() -> None:
     """Mock dlt execution when dependencies aren't available."""
     write_metadata({"rows_loaded": "10", "tables_created": "1", "load_duration": "0.1s"})
-    print("mock dlt complete: 10 rows loaded")
+    logger.info("mock dlt complete: 10 rows loaded")
 
 
-def real_run():
+def real_run() -> None:
+    """Run the dlt pipeline with DuckDB as the destination."""
     import dlt
 
     @dlt.resource
-    def sample_data():
+    def sample_data() -> Iterator[dict]:
+        """Yield 10 sample rows for testing the pipeline."""
         for i in range(10):
             yield {"id": i, "name": f"item_{i}", "value": i * 10.5}
 
@@ -32,7 +40,7 @@ def real_run():
         dataset_name="test_data",
     )
     load_info = pipeline.run(sample_data())
-    print(f"Load complete: {load_info}")
+    logger.info(f"Load complete: {load_info}")
     write_metadata({"rows_loaded": "10", "tables_created": "1", "load_duration": "0.5s"})
 
 

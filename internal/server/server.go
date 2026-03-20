@@ -44,6 +44,7 @@ type Server struct {
 	shutdownCtx context.Context
 }
 
+// NewServer creates an API server for triggering and monitoring pipeline runs.
 func NewServer(port int, projectRoot string, lockStore *scheduler.LockStore, eventStore *events.Store, runFunc RunFunc) *Server {
 	return &Server{
 		port:        port,
@@ -55,12 +56,14 @@ func NewServer(port int, projectRoot string, lockStore *scheduler.LockStore, eve
 	}
 }
 
+// SetConfigs replaces the server's pipeline configuration map.
 func (s *Server) SetConfigs(configs map[string]*config.PipelineConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.configs = configs
 }
 
+// Handler returns the HTTP handler with all API routes registered.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
@@ -69,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// ListenAndServe starts the HTTP server on the configured port.
 func (s *Server) ListenAndServe() error {
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -77,6 +81,7 @@ func (s *Server) ListenAndServe() error {
 	return s.httpServer.ListenAndServe()
 }
 
+// Close immediately shuts down the HTTP server.
 func (s *Server) Close() error {
 	if s.httpServer != nil {
 		return s.httpServer.Close()

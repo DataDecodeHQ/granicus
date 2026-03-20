@@ -13,6 +13,7 @@ type HealthResponse struct {
 	PipelinesLoaded int     `json:"pipelines_loaded"`
 }
 
+// HealthHandler writes a JSON health check response including uptime and pipeline count.
 func HealthHandler(w http.ResponseWriter, r *http.Request, startedAt time.Time, pipelinesLoaded int) {
 	activeRuns := 0.0
 	// Read from prometheus gauge if available

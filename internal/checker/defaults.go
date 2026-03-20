@@ -7,10 +7,12 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// GenerateDefaultCheckNodes creates layer-appropriate default check nodes for all eligible assets.
 func GenerateDefaultCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	return GenerateDefaultCheckNodesWithDirectives(cfg, nil)
 }
 
+// GenerateDefaultCheckNodesWithDirectives creates default checks using SQL directives for source completeness hints.
 func GenerateDefaultCheckNodesWithDirectives(cfg *config.PipelineConfig, directives map[string]graph.Directives) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)

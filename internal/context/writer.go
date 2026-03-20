@@ -39,6 +39,7 @@ CREATE TABLE assets (
 );
 `
 
+// CreateOrReplace atomically writes a new context SQLite database with the given schemas, lineage, and assets.
 func CreateOrReplace(dbPath string, schemas []Schema, lineage []Lineage, assets []Asset) error {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {

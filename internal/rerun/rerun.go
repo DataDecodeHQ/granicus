@@ -7,6 +7,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// ComputeRerunSet determines which nodes to re-execute by collecting failed nodes and all their descendants.
 func ComputeRerunSet(store *events.Store, runID string, g *graph.Graph) ([]string, []string, error) {
 	failedNames, err := store.GetFailedNodes(runID)
 	if err != nil {

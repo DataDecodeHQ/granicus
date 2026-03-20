@@ -23,6 +23,7 @@ type SubprocessConfig struct {
 	Timeout time.Duration
 }
 
+// RunSubprocess executes a command as a child process with timeout, capturing stdout and stderr.
 func RunSubprocess(cfg SubprocessConfig) SubprocessResult {
 	timeout := cfg.Timeout
 	if timeout == 0 {

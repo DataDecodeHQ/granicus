@@ -8,6 +8,7 @@ import (
 	"text/template"
 )
 
+// BuiltinFuncMap returns the default template function map with built-in SQL helpers.
 func BuiltinFuncMap() template.FuncMap {
 	return template.FuncMap{
 		"cast_to_currency": func(col string) string {
@@ -29,6 +30,7 @@ type RefAsset struct {
 	Dataset string
 }
 
+// BuildRefFunc returns a closure that resolves asset names to fully-qualified BigQuery table references.
 func BuildRefFunc(ctx RefContext) func(string) (string, error) {
 	lookup := make(map[string]RefAsset, len(ctx.Assets))
 	for _, a := range ctx.Assets {
@@ -69,6 +71,7 @@ type SourceContext struct {
 	Sources map[string]ResolvedSource
 }
 
+// BuildSourceFunc returns a closure that resolves source and table names to fully-qualified references.
 func BuildSourceFunc(ctx SourceContext) func(string, string) (string, error) {
 	return func(sourceName, tableName string) (string, error) {
 		src, ok := ctx.Sources[sourceName]
@@ -96,6 +99,7 @@ func formatSourceRef(src ResolvedSource, tableName string) string {
 	}
 }
 
+// LoadFunctions reads SQL files from a directory and returns them as template functions with positional arg substitution.
 func LoadFunctions(dir string) (template.FuncMap, error) {
 	funcs := make(template.FuncMap)
 
@@ -144,6 +148,7 @@ func LoadFunctions(dir string) (template.FuncMap, error) {
 	return funcs, nil
 }
 
+// MergeFuncMaps combines multiple template function maps into one, with later maps taking precedence.
 func MergeFuncMaps(maps ...template.FuncMap) template.FuncMap {
 	merged := make(template.FuncMap)
 	for _, m := range maps {

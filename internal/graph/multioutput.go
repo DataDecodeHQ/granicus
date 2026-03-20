@@ -1,5 +1,6 @@
 package graph
 
+// ExpandMultiOutput replaces assets that have a "produces" directive with one node per output name.
 func ExpandMultiOutput(inputs []AssetInput, directives map[string]*Directives) []AssetInput {
 	var result []AssetInput
 

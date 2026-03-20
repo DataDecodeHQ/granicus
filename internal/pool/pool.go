@@ -17,6 +17,7 @@ type Pool struct {
 	sem     chan struct{}
 }
 
+// NewPool creates a concurrency pool with the given name, slot count, and acquisition timeout.
 func NewPool(name string, slots int, timeout time.Duration) *Pool {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -29,6 +30,7 @@ func NewPool(name string, slots int, timeout time.Duration) *Pool {
 	}
 }
 
+// Acquire blocks until a pool slot is available, the context is cancelled, or the timeout expires.
 func (p *Pool) Acquire(ctx context.Context) error {
 	slog.Debug("pool acquiring slot", "pool", p.Name, "in_use", len(p.sem), "slots", p.Slots)
 
@@ -46,11 +48,13 @@ func (p *Pool) Acquire(ctx context.Context) error {
 	}
 }
 
+// Release returns a slot back to the pool.
 func (p *Pool) Release() {
 	<-p.sem
 	slog.Debug("pool slot released", "pool", p.Name, "in_use", len(p.sem), "slots", p.Slots)
 }
 
+// InUse returns the number of currently acquired slots.
 func (p *Pool) InUse() int {
 	return len(p.sem)
 }
@@ -60,6 +64,7 @@ type PoolManager struct {
 	pools map[string]*Pool
 }
 
+// NewPoolManager creates a PoolManager with pools initialized from the given configs.
 func NewPoolManager(configs map[string]PoolConfig) *PoolManager {
 	pm := &PoolManager{
 		pools: make(map[string]*Pool, len(configs)),
@@ -80,6 +85,7 @@ type PoolConfig struct {
 	DefaultFor    string
 }
 
+// Acquire acquires a slot from the named pool, returning an error if the pool is not found.
 func (pm *PoolManager) Acquire(ctx context.Context, poolName string) error {
 	pm.mu.RLock()
 	p, ok := pm.pools[poolName]
@@ -90,6 +96,7 @@ func (pm *PoolManager) Acquire(ctx context.Context, poolName string) error {
 	return p.Acquire(ctx)
 }
 
+// Release returns a slot to the named pool.
 func (pm *PoolManager) Release(poolName string) {
 	pm.mu.RLock()
 	p, ok := pm.pools[poolName]
@@ -100,6 +107,7 @@ func (pm *PoolManager) Release(poolName string) {
 	p.Release()
 }
 
+// Pool returns the pool with the given name, or nil if not found.
 func (pm *PoolManager) Pool(name string) *Pool {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()

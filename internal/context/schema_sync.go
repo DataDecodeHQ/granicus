@@ -45,6 +45,7 @@ func queryDatasetSchema(client *bigquery.Client, dataset string) ([]Schema, erro
 	ctx, cancel := context.WithTimeout(context.Background(), schemaQueryTimeout)
 	defer cancel()
 
+	// Contract: Go owns this boundary. Read-only INFORMATION_SCHEMA query; no template variables.
 	sql := fmt.Sprintf(schemaQuery, dataset)
 	q := client.Query(sql)
 	it, err := q.Read(ctx)

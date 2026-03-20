@@ -21,6 +21,7 @@ type ServerAPIKey struct {
 	Key  string `yaml:"key"`
 }
 
+// LoadServerConfig reads and parses a server YAML config file, defaulting the port to 8080 if unset.
 func LoadServerConfig(path string) (*ServerConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

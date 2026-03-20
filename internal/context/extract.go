@@ -9,6 +9,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// ExtractLineage derives parent-child lineage records from the dependency graph, excluding checks and sources.
 func ExtractLineage(g *graph.Graph, cfg *config.PipelineConfig) []Lineage {
 	var result []Lineage
 	for _, asset := range g.Assets {
@@ -39,6 +40,7 @@ func ExtractLineage(g *graph.Graph, cfg *config.PipelineConfig) []Lineage {
 	return result
 }
 
+// ExtractAssets builds asset metadata records from the graph, including layer, grain, and parsed SQL directives.
 func ExtractAssets(g *graph.Graph, cfg *config.PipelineConfig, projectRoot string) []Asset {
 	var result []Asset
 	for _, asset := range g.Assets {

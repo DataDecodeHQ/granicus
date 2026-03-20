@@ -46,10 +46,12 @@ var (
 	)
 )
 
+// init registers Prometheus metrics collectors -- required for promhttp.Handler() to expose them.
 func init() {
 	prometheus.MustRegister(RunsTotal, RunDuration, NodeDuration, NodesTotal, ActiveRuns)
 }
 
+// MetricsHandler returns an HTTP handler that exposes Prometheus metrics.
 func MetricsHandler() http.Handler {
 	return promhttp.Handler()
 }

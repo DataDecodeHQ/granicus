@@ -104,6 +104,7 @@ func openDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
+// WriteCurrentErrors replaces all current_errors rows with the provided errors in a single transaction.
 func WriteCurrentErrors(dbPath string, errors []CurrentError) error {
 	db, err := openDB(dbPath)
 	if err != nil {
@@ -128,6 +129,7 @@ func WriteCurrentErrors(dbPath string, errors []CurrentError) error {
 	return tx.Commit()
 }
 
+// AppendSnapshots inserts metric snapshot rows into the monitor database.
 func AppendSnapshots(dbPath string, snapshots []MetricSnapshot) error {
 	db, err := openDB(dbPath)
 	if err != nil {
@@ -148,6 +150,7 @@ func AppendSnapshots(dbPath string, snapshots []MetricSnapshot) error {
 	return tx.Commit()
 }
 
+// AppendFlags inserts distribution flag rows and their corresponding error entries into the monitor database.
 func AppendFlags(dbPath string, flags []DistributionFlag) error {
 	db, err := openDB(dbPath)
 	if err != nil {

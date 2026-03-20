@@ -91,6 +91,7 @@ type SegmentConfig struct {
 	Windows          []string `yaml:"windows,omitempty"`
 }
 
+// ResolvedWarningThreshold returns the warning threshold, falling back to defaults then the package default.
 func (cm *ColumnMetric) ResolvedWarningThreshold(defaults DefaultsConfig) float64 {
 	if cm.WarningThreshold != nil {
 		return *cm.WarningThreshold
@@ -101,6 +102,7 @@ func (cm *ColumnMetric) ResolvedWarningThreshold(defaults DefaultsConfig) float6
 	return DefaultWarningThreshold
 }
 
+// ResolvedErrorThreshold returns the error threshold, falling back to defaults then the package default.
 func (cm *ColumnMetric) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	if cm.ErrorThreshold != nil {
 		return *cm.ErrorThreshold
@@ -111,6 +113,7 @@ func (cm *ColumnMetric) ResolvedErrorThreshold(defaults DefaultsConfig) float64 
 	return DefaultErrorThreshold
 }
 
+// ResolvedWindows returns the comparison windows, falling back to defaults.
 func (cm *ColumnMetric) ResolvedWindows(defaults DefaultsConfig) []string {
 	if len(cm.Windows) > 0 {
 		return cm.Windows
@@ -118,6 +121,7 @@ func (cm *ColumnMetric) ResolvedWindows(defaults DefaultsConfig) []string {
 	return resolvedDefaultWindows(defaults)
 }
 
+// ResolvedWarningThreshold returns the warning threshold, falling back to defaults then the package default.
 func (rc *RateConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float64 {
 	if rc.WarningThreshold != nil {
 		return *rc.WarningThreshold
@@ -128,6 +132,7 @@ func (rc *RateConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float64 
 	return DefaultWarningThreshold
 }
 
+// ResolvedErrorThreshold returns the error threshold, falling back to defaults then the package default.
 func (rc *RateConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	if rc.ErrorThreshold != nil {
 		return *rc.ErrorThreshold
@@ -138,6 +143,7 @@ func (rc *RateConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	return DefaultErrorThreshold
 }
 
+// ResolvedWindows returns the comparison windows, falling back to defaults.
 func (rc *RateConfig) ResolvedWindows(defaults DefaultsConfig) []string {
 	if len(rc.Windows) > 0 {
 		return rc.Windows
@@ -145,6 +151,7 @@ func (rc *RateConfig) ResolvedWindows(defaults DefaultsConfig) []string {
 	return resolvedDefaultWindows(defaults)
 }
 
+// ResolvedWarningThreshold returns the warning threshold, falling back to defaults then the package default.
 func (sc *SegmentConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float64 {
 	if sc.WarningThreshold != nil {
 		return *sc.WarningThreshold
@@ -155,6 +162,7 @@ func (sc *SegmentConfig) ResolvedWarningThreshold(defaults DefaultsConfig) float
 	return DefaultWarningThreshold
 }
 
+// ResolvedErrorThreshold returns the error threshold, falling back to defaults then the package default.
 func (sc *SegmentConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64 {
 	if sc.ErrorThreshold != nil {
 		return *sc.ErrorThreshold
@@ -165,6 +173,7 @@ func (sc *SegmentConfig) ResolvedErrorThreshold(defaults DefaultsConfig) float64
 	return DefaultErrorThreshold
 }
 
+// ResolvedWindows returns the comparison windows, falling back to defaults.
 func (sc *SegmentConfig) ResolvedWindows(defaults DefaultsConfig) []string {
 	if len(sc.Windows) > 0 {
 		return sc.Windows
@@ -202,31 +211,36 @@ func LoadMonitorConfig(path string) (*MonitorConfig, error) {
 	return &cfg, nil
 }
 
-func validateConfig(cfg *MonitorConfig) error {
-	m := &cfg.Monitoring
-
-	for _, w := range m.Defaults.Windows {
+func validateDefaults(defaults DefaultsConfig) error {
+	for _, w := range defaults.Windows {
 		if !validWindows[w] {
 			return fmt.Errorf("defaults: invalid window %q (must be day, week, month, or year)", w)
 		}
 	}
 
-	if m.Defaults.WarningThreshold != nil && *m.Defaults.WarningThreshold < 0 {
+	if defaults.WarningThreshold != nil && *defaults.WarningThreshold < 0 {
 		return fmt.Errorf("defaults: warning_threshold must be >= 0")
 	}
-	if m.Defaults.ErrorThreshold != nil && *m.Defaults.ErrorThreshold < 0 {
+	if defaults.ErrorThreshold != nil && *defaults.ErrorThreshold < 0 {
 		return fmt.Errorf("defaults: error_threshold must be >= 0")
 	}
 
-	if m.Structural != nil {
-		for _, nr := range m.Structural.NullRates {
+	return nil
+}
+
+func validateStructural(structural *StructuralConfig) error {
+	if structural != nil {
+		for _, nr := range structural.NullRates {
 			if !strings.Contains(nr, ".") {
 				return fmt.Errorf("structural.null_rates: %q must be in table.column format", nr)
 			}
 		}
 	}
+	return nil
+}
 
-	for i, mc := range m.Metrics {
+func validateMetrics(metrics []MetricConfig) error {
+	for i, mc := range metrics {
 		if mc.Table == "" {
 			return fmt.Errorf("metrics[%d]: table is required", i)
 		}
@@ -250,8 +264,11 @@ func validateConfig(cfg *MonitorConfig) error {
 			}
 		}
 	}
+	return nil
+}
 
-	for i, rc := range m.Rates {
+func validateRates(rates []RateConfig) error {
+	for i, rc := range rates {
 		if rc.Name == "" {
 			return fmt.Errorf("rates[%d]: name is required", i)
 		}
@@ -279,8 +296,11 @@ func validateConfig(cfg *MonitorConfig) error {
 			}
 		}
 	}
+	return nil
+}
 
-	for i, sc := range m.Segments {
+func validateSegments(segments []SegmentConfig) error {
+	for i, sc := range segments {
 		if sc.Table == "" {
 			return fmt.Errorf("segments[%d]: table is required", i)
 		}
@@ -298,6 +318,31 @@ func validateConfig(cfg *MonitorConfig) error {
 				return fmt.Errorf("segments[%d] (%s): invalid window %q", i, sc.Table, w)
 			}
 		}
+	}
+	return nil
+}
+
+func validateConfig(cfg *MonitorConfig) error {
+	m := &cfg.Monitoring
+
+	if err := validateDefaults(m.Defaults); err != nil {
+		return err
+	}
+
+	if err := validateStructural(m.Structural); err != nil {
+		return err
+	}
+
+	if err := validateMetrics(m.Metrics); err != nil {
+		return err
+	}
+
+	if err := validateRates(m.Rates); err != nil {
+		return err
+	}
+
+	if err := validateSegments(m.Segments); err != nil {
+		return err
 	}
 
 	return nil

@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"cloud.google.com/go/bigquery"
-	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -29,6 +28,7 @@ type TestRunMetadata struct {
 	Tables     []TableMetadata `json:"tables"`
 }
 
+// dag:boundary
 func CaptureMetadata(ctx context.Context, project, dataset string, opts ...option.ClientOption) (*TestRunMetadata, error) {
 	client, err := bigquery.NewClient(ctx, project, opts...)
 	if err != nil {
@@ -58,6 +58,7 @@ func CaptureMetadata(ctx context.Context, project, dataset string, opts ...optio
 	return meta, nil
 }
 
+// dag:boundary
 func captureTableMetadata(ctx context.Context, client *bigquery.Client, project, dataset, tableName string) (*TableMetadata, error) {
 	tm := &TableMetadata{
 		Name:       tableName,
@@ -113,6 +114,7 @@ func captureTableMetadata(ctx context.Context, client *bigquery.Client, project,
 	return tm, nil
 }
 
+// WriteMetadata serializes test run metadata to a JSON file at the given path.
 func WriteMetadata(meta *TestRunMetadata, path string) error {
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -120,6 +122,3 @@ func WriteMetadata(meta *TestRunMetadata, path string) error {
 	}
 	return os.WriteFile(path, data, 0644)
 }
-
-// Ensure iterator import is used
-var _ = iterator.Done

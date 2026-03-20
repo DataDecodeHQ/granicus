@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/DataDecodeHQ/granicus/internal/config"
 	"github.com/DataDecodeHQ/granicus/internal/events"
+	"github.com/DataDecodeHQ/granicus/internal/source"
 )
 
 type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
@@ -20,7 +22,8 @@ type RunFunc func(cfg *config.PipelineConfig, projectRoot string)
 type Scheduler struct {
 	mu          sync.Mutex
 	cron        *cron.Cron
-	configDir   string
+	configDir   string // kept for watcher compatibility
+	source      source.PipelineSource
 	projectRoot string
 	runFunc     RunFunc
 	lockStore   *LockStore
@@ -29,15 +32,27 @@ type Scheduler struct {
 	configs     map[string]*config.PipelineConfig
 }
 
-func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
+// NewScheduler creates a scheduler that loads pipeline configs from the given source and registers cron jobs.
+func NewScheduler(src source.PipelineSource, projectRoot string, db *sql.DB, runFunc RunFunc, eventStore *events.Store) (*Scheduler, error) {
 	lockStore, err := NewLockStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("lock store: %w", err)
 	}
 
+	// Resolve the config directory from the source
+	dir, cleanup, err := src.Fetch(context.Background(), "", "")
+	if err != nil {
+		return nil, fmt.Errorf("fetching pipeline source: %w", err)
+	}
+	// For LocalSource cleanup is a no-op; for GCS we need the dir to persist
+	// for the scheduler's lifetime, so we skip cleanup here (the dir is
+	// re-fetched on each LoadAndRegister/Reload for GCS).
+	_ = cleanup
+
 	return &Scheduler{
 		cron:        cron.New(),
-		configDir:   configDir,
+		configDir:   dir,
+		source:      src,
 		projectRoot: projectRoot,
 		runFunc:     runFunc,
 		lockStore:   lockStore,
@@ -47,10 +62,22 @@ func NewScheduler(configDir, projectRoot string, db *sql.DB, runFunc RunFunc, ev
 	}, nil
 }
 
+// ConfigDir returns the resolved config directory path.
+func (s *Scheduler) ConfigDir() string {
+	return s.configDir
+}
+
+// Source returns the pipeline source backing this scheduler.
+func (s *Scheduler) Source() source.PipelineSource {
+	return s.source
+}
+
+// LockStore returns the scheduler's pipeline lock store.
 func (s *Scheduler) LockStore() *LockStore {
 	return s.lockStore
 }
 
+// LoadAndRegister scans the config directory and registers all pipeline schedules, replacing any existing entries.
 func (s *Scheduler) LoadAndRegister() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -80,6 +107,7 @@ func (s *Scheduler) LoadAndRegister() error {
 	return nil
 }
 
+// Reload re-scans configs and incrementally updates cron entries, returning added, removed, and updated pipeline names.
 func (s *Scheduler) Reload() (added, removed, updated []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -200,14 +228,17 @@ func (s *Scheduler) EventStore() *events.Store {
 	return s.eventStore
 }
 
+// Start begins the cron scheduler.
 func (s *Scheduler) Start() {
 	s.cron.Start()
 }
 
+// Stop halts the cron scheduler.
 func (s *Scheduler) Stop() {
 	s.cron.Stop()
 }
 
+// Pipelines returns the names of all registered pipeline entries.
 func (s *Scheduler) Pipelines() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -218,6 +249,7 @@ func (s *Scheduler) Pipelines() []string {
 	return names
 }
 
+// Config returns the pipeline configuration for the given pipeline name, or nil if not found.
 func (s *Scheduler) Config(name string) *config.PipelineConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,6 +265,16 @@ func scanConfigDir(dir string) (map[string]*config.PipelineConfig, error) {
 	configs := make(map[string]*config.PipelineConfig)
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// Check subdirectory for pipeline.yaml (supports multi-pipeline dirs)
+			subPath := filepath.Join(dir, entry.Name(), "pipeline.yaml")
+			if _, serr := os.Stat(subPath); serr == nil {
+				cfg, cerr := config.LoadConfig(subPath)
+				if cerr != nil {
+					slog.Warn("scheduler skipping config", "file", subPath, "error", cerr)
+					continue
+				}
+				configs[cfg.Pipeline] = cfg
+			}
 			continue
 		}
 		name := entry.Name()

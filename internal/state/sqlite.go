@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS interval_state (
 CREATE INDEX IF NOT EXISTS idx_interval_state_status_started ON interval_state(status, started_at);
 `
 
+// New opens or creates a SQLite state store at the given path, initializing the schema if needed.
 func New(dbPath string) (*Store, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -63,10 +64,12 @@ func New(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Close closes the underlying SQLite database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// dag:boundary
 func (s *Store) MarkInProgress(asset, start, end, runID string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.Exec(`
@@ -82,6 +85,7 @@ func (s *Store) MarkInProgress(asset, start, end, runID string) error {
 	return err
 }
 
+// dag:boundary
 func (s *Store) MarkComplete(asset, start, end string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.Exec(`
@@ -91,6 +95,7 @@ func (s *Store) MarkComplete(asset, start, end string) error {
 	return err
 }
 
+// dag:boundary
 func (s *Store) MarkFailed(asset, start, end string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.Exec(`
@@ -100,6 +105,7 @@ func (s *Store) MarkFailed(asset, start, end string) error {
 	return err
 }
 
+// GetIntervals returns all interval states for the given asset, ordered by start time.
 func (s *Store) GetIntervals(asset string) ([]IntervalState, error) {
 	rows, err := s.db.Query(`
 		SELECT asset_name, interval_start, interval_end, status, run_id, started_at, completed_at
@@ -123,6 +129,7 @@ func (s *Store) GetIntervals(asset string) ([]IntervalState, error) {
 	return result, rows.Err()
 }
 
+// dag:boundary
 func (s *Store) InvalidateAll(asset string) error {
 	_, err := s.db.Exec(`DELETE FROM interval_state WHERE asset_name = ?`, asset)
 	return err

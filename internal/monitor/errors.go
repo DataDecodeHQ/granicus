@@ -8,6 +8,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/executor"
 )
 
+// CollectCheckErrors extracts failed and skipped check nodes from a run result and writes them as current errors.
 func CollectCheckErrors(dbPath, pipeline string, run *executor.RunResult) error {
 	var errors []CurrentError
 	runAt := run.EndTime.UTC().Format(time.RFC3339)

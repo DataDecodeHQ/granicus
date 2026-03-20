@@ -29,6 +29,7 @@ var directoryLayerMap = map[string]string{
 	"report":       "report",
 }
 
+// DiscoverAssets walks the configured discovery paths and returns asset configs inferred from file extensions and directory structure.
 func DiscoverAssets(pipelineDir string, discoveryPaths []DiscoveryPath) ([]AssetConfig, error) {
 	var discovered []AssetConfig
 
@@ -97,6 +98,7 @@ func DiscoverAssets(pipelineDir string, discoveryPaths []DiscoveryPath) ([]Asset
 	return discovered, nil
 }
 
+// MergeDiscoveredAssets combines explicit and discovered assets, skipping discovered assets whose names already exist.
 func MergeDiscoveredAssets(explicit []AssetConfig, discovered []AssetConfig) []AssetConfig {
 	seen := make(map[string]bool)
 	for _, a := range explicit {

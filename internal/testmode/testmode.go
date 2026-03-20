@@ -3,6 +3,7 @@ package testmode
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,15 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/events"
 )
 
+// TestConfig bundles the shared dependencies for test dataset operations.
+type TestConfig struct {
+	Ctx        context.Context
+	Project    string
+	EventStore *events.Store
+	ClientOpts []option.ClientOption
+}
+
+// TestDatasetName returns the BigQuery dataset name for a test run.
 func TestDatasetName(baseDataset string, runID string) string {
 	short := runID
 	if len(runID) > 4 {
@@ -20,8 +30,9 @@ func TestDatasetName(baseDataset string, runID string) string {
 	return fmt.Sprintf("%s__test_%s", baseDataset, short)
 }
 
-func CreateTestDataset(ctx context.Context, project, baseDataset, runID string, eventStore *events.Store, opts ...option.ClientOption) (string, error) {
-	client, err := bigquery.NewClient(ctx, project, opts...)
+// CreateTestDataset creates an isolated BigQuery dataset for a test run.
+func CreateTestDataset(cfg TestConfig, baseDataset, runID string) (string, error) {
+	client, err := bigquery.NewClient(cfg.Ctx, cfg.Project, cfg.ClientOpts...)
 	if err != nil {
 		return "", fmt.Errorf("creating BQ client: %w", err)
 	}
@@ -35,38 +46,44 @@ func CreateTestDataset(ctx context.Context, project, baseDataset, runID string, 
 		},
 	}
 
-	if err := client.Dataset(name).Create(ctx, meta); err != nil {
+	// Contract: Go owns this boundary. Dataset lifecycle management; isolated per run ID.
+	if err := client.Dataset(name).Create(cfg.Ctx, meta); err != nil {
 		return "", fmt.Errorf("creating test dataset %q: %w", name, err)
 	}
 
-	if eventStore != nil {
-		_ = eventStore.Emit(events.Event{
+	if cfg.EventStore != nil {
+		if err := cfg.EventStore.Emit(events.Event{
 			RunID: runID, EventType: "test_dataset_created", Severity: "info",
 			Summary: fmt.Sprintf("Test dataset %s created", name),
-			Details: map[string]any{"dataset_name": name, "base_dataset": baseDataset, "project": project},
-		})
+			Details: map[string]any{"dataset_name": name, "base_dataset": baseDataset, "project": cfg.Project},
+		}); err != nil {
+			slog.Warn("failed to emit event", "event_type", "test_dataset_created", "error", err)
+		}
 	}
 
 	return name, nil
 }
 
-func DropTestDataset(ctx context.Context, project, datasetName, runID string, eventStore *events.Store, opts ...option.ClientOption) error {
-	client, err := bigquery.NewClient(ctx, project, opts...)
+// dag:boundary
+func DropTestDataset(cfg TestConfig, datasetName, runID string) error {
+	client, err := bigquery.NewClient(cfg.Ctx, cfg.Project, cfg.ClientOpts...)
 	if err != nil {
 		return fmt.Errorf("creating BQ client: %w", err)
 	}
 	defer client.Close()
 
-	if err := client.Dataset(datasetName).DeleteWithContents(ctx); err != nil {
+	if err := client.Dataset(datasetName).DeleteWithContents(cfg.Ctx); err != nil {
 		return fmt.Errorf("dropping test dataset %q: %w", datasetName, err)
 	}
 
-	if eventStore != nil {
-		_ = eventStore.Emit(events.Event{
+	if cfg.EventStore != nil {
+		if err := cfg.EventStore.Emit(events.Event{
 			RunID: runID, EventType: "test_dataset_dropped", Severity: "info",
 			Summary: fmt.Sprintf("Test dataset %s dropped", datasetName),
-			Details: map[string]any{"dataset_name": datasetName, "project": project},
-		})
+			Details: map[string]any{"dataset_name": datasetName, "project": cfg.Project},
+		}); err != nil {
+			slog.Warn("failed to emit event", "event_type", "test_dataset_dropped", "error", err)
+		}
 	}
 
 	return nil
@@ -78,8 +95,9 @@ type TestDatasetInfo struct {
 	CreatedAt time.Time
 }
 
-func ListTestDatasets(ctx context.Context, project, baseDataset string, opts ...option.ClientOption) ([]TestDatasetInfo, error) {
-	client, err := bigquery.NewClient(ctx, project, opts...)
+// dag:boundary
+func ListTestDatasets(cfg TestConfig, baseDataset string) ([]TestDatasetInfo, error) {
+	client, err := bigquery.NewClient(cfg.Ctx, cfg.Project, cfg.ClientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("creating BQ client: %w", err)
 	}
@@ -88,7 +106,7 @@ func ListTestDatasets(ctx context.Context, project, baseDataset string, opts ...
 	prefix := baseDataset + "__test_"
 	var results []TestDatasetInfo
 
-	it := client.Datasets(ctx)
+	it := client.Datasets(cfg.Ctx)
 	for {
 		ds, err := it.Next()
 		if err != nil {
@@ -97,7 +115,7 @@ func ListTestDatasets(ctx context.Context, project, baseDataset string, opts ...
 		if !strings.HasPrefix(ds.DatasetID, prefix) {
 			continue
 		}
-		meta, err := ds.Metadata(ctx)
+		meta, err := ds.Metadata(cfg.Ctx)
 		if err != nil {
 			continue
 		}
@@ -114,8 +132,9 @@ func ListTestDatasets(ctx context.Context, project, baseDataset string, opts ...
 	return results, nil
 }
 
-func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, maxAge time.Duration, eventStore *events.Store, opts ...option.ClientOption) ([]string, error) {
-	datasets, err := ListTestDatasets(ctx, project, baseDataset, opts...)
+// CleanupOldTestDatasets drops test datasets older than maxAge.
+func CleanupOldTestDatasets(cfg TestConfig, baseDataset string, maxAge time.Duration) ([]string, error) {
+	datasets, err := ListTestDatasets(cfg, baseDataset)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +144,7 @@ func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, ma
 
 	for _, ds := range datasets {
 		if ds.CreatedAt.Before(cutoff) {
-			if err := DropTestDataset(ctx, project, ds.Name, ds.RunID, eventStore, opts...); err != nil {
+			if err := DropTestDataset(cfg, ds.Name, ds.RunID); err != nil {
 				return dropped, fmt.Errorf("cleaning up %s: %w", ds.Name, err)
 			}
 			dropped = append(dropped, ds.Name)
@@ -135,16 +154,19 @@ func CleanupOldTestDatasets(ctx context.Context, project, baseDataset string, ma
 	return dropped, nil
 }
 
+// EmitTestMetadata records test metadata as an event.
 func EmitTestMetadata(eventStore *events.Store, runID, pipeline string, metadata map[string]any) {
 	if eventStore == nil {
 		return
 	}
-	_ = eventStore.Emit(events.Event{
+	if err := eventStore.Emit(events.Event{
 		RunID: runID, Pipeline: pipeline,
 		EventType: "test_metadata_captured", Severity: "info",
 		Summary: fmt.Sprintf("Test metadata captured for %s", pipeline),
 		Details: metadata,
-	})
+	}); err != nil {
+		slog.Warn("failed to emit event", "event_type", "test_metadata_captured", "error", err)
+	}
 }
 
 func sanitizeLabel(s string) string {

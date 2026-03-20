@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -14,6 +13,7 @@ type Result struct {
 	TestCleanup int
 }
 
+// dag:boundary
 func Collect(projectRoot string, retentionDays int) (*Result, error) {
 	result := &Result{}
 
@@ -88,6 +88,7 @@ func dirSize(path string) int64 {
 	return total
 }
 
+// FormatBytes formats a byte count as a human-readable string (B, KB, or MB).
 func FormatBytes(b int64) string {
 	if b < 1024 {
 		return fmt.Sprintf("%d B", b)
@@ -97,5 +98,3 @@ func FormatBytes(b int64) string {
 	}
 	return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
 }
-
-var _ = strings.Contains // keep import for future use

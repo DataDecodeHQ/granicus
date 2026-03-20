@@ -9,6 +9,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// GenerateSourceCheckNodes creates check nodes for source existence, freshness, primary key, and expected columns.
 func GenerateSourceCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)

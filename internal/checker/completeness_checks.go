@@ -8,6 +8,7 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// GenerateCompletenessCheckNodes creates check nodes that verify entity completeness against configured source tables.
 func GenerateCompletenessCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)

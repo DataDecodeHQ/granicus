@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// BackupStateDB creates a consistent backup of the SQLite state database using VACUUM INTO.
 func BackupStateDB(stateDBPath, outputPath string) (string, error) {
 	if _, err := os.Stat(stateDBPath); os.IsNotExist(err) {
 		return "", fmt.Errorf("state db not found: %s", stateDBPath)
@@ -41,6 +42,7 @@ func BackupStateDB(stateDBPath, outputPath string) (string, error) {
 	return outputPath, nil
 }
 
+// PruneBackups removes old state database backups from dir, keeping the most recent count specified by keep.
 func PruneBackups(dir string, keep int) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

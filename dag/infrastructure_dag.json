@@ -1,0 +1,1187 @@
+{
+  "version": "44",
+  "generated_at": "2026-03-19T21:45:00Z",
+  "ingress_points": [],
+  "egress_points": [],
+  "external_services": [
+    {
+      "id": "external_bq_analytehealth",
+      "gcp_service": "BigQuery",
+      "project": "api-project-178709533099",
+      "description": "AnalyteHealth BigQuery project — pipeline target for analyte_health and legacy_dbt pipelines",
+      "auth_mechanism": "SA credential file via Secret Manager (granicus-sa-analytehealth)"
+    },
+    {
+      "id": "external_bq_paternitylabs",
+      "gcp_service": "BigQuery",
+      "project": "paternitylab",
+      "description": "PaternityLabs BigQuery project — pipeline target for paternity_labs pipeline",
+      "auth_mechanism": "SA credential file via Secret Manager (granicus-sa-paternitylabs)"
+    },
+    {
+      "id": "external_github_actions",
+      "gcp_service": "GitHub Actions",
+      "project": "DataDecodeHQ/granicus",
+      "description": "CI/CD pipeline — deploys images and infrastructure via WIF",
+      "auth_mechanism": "Workload Identity Federation"
+    }
+  ],
+  "resources": {
+    "google_cloud_run_v2_service.engine": {
+      "type": "compute",
+      "gcp_service": "Cloud Run",
+      "terraform_address": "google_cloud_run_v2_service.engine",
+      "description": "Granicus pipeline engine — receives triggers, orchestrates BigQuery pipelines",
+      "exposes": "HTTPS on port 8080 (API: /api/v1/pipelines/{name}/trigger, /api/v1/admin/prune)",
+      "auth_mechanism": "OIDC token via Cloud Scheduler SA; ingress restricted to internal traffic only",
+      "region": "us-central1",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with description, env vars, SA, and internal-only ingress policy",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/run.invoker (scheduler SA)"],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_firestore_database.default": {
+      "type": "internal_store",
+      "gcp_service": "Firestore",
+      "terraform_address": "google_firestore_database.default",
+      "description": "Firestore Native database for Granicus run state and events",
+      "exposes": "Firestore Native API (gRPC)",
+      "auth_mechanism": "IAM — roles/datastore.user via engine SA",
+      "region": "us-central1",
+      "confidence": 0.90,
+      "confidence_reason": "Fully declared with description, indexes, and IAM bindings",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/datastore.user (engine SA)", "roles/datastore.user (deploy SA)"],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_firestore_index.runs_pipeline_status_started": {
+      "type": "internal_store",
+      "gcp_service": "Firestore",
+      "terraform_address": "google_firestore_index.runs_pipeline_status_started",
+      "description": "Composite index for querying runs by pipeline, status, and recency",
+      "exposes": null,
+      "auth_mechanism": "Inherits from parent database",
+      "region": "us-central1",
+      "confidence": 0.92,
+      "confidence_reason": "Fully declared with field definitions and description",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_firestore_index.runs_pipeline_status": {
+      "type": "internal_store",
+      "gcp_service": "Firestore",
+      "terraform_address": "google_firestore_index.runs_pipeline_status",
+      "description": "Composite index for filtering runs by pipeline and status",
+      "exposes": null,
+      "auth_mechanism": "Inherits from parent database",
+      "region": "us-central1",
+      "confidence": 0.92,
+      "confidence_reason": "Fully declared with field definitions and description",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_firestore_index.events_type_timestamp": {
+      "type": "internal_store",
+      "gcp_service": "Firestore",
+      "terraform_address": "google_firestore_index.events_type_timestamp",
+      "description": "Collection group index for querying events by type and recency",
+      "exposes": null,
+      "auth_mechanism": "Inherits from parent database",
+      "region": "us-central1",
+      "confidence": 0.92,
+      "confidence_reason": "Fully declared with field definitions and description",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_storage_bucket.pipelines": {
+      "type": "internal_store",
+      "gcp_service": "GCS",
+      "terraform_address": "google_storage_bucket.pipelines",
+      "description": "GCS bucket for Granicus pipeline definitions and configuration archives",
+      "exposes": "GCS Object API",
+      "auth_mechanism": "IAM — roles/storage.objectAdmin via engine SA; uniform bucket level access enforced",
+      "region": "US (multi-region)",
+      "confidence": 0.90,
+      "confidence_reason": "Fully declared with description and access controls",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/storage.objectAdmin (engine SA)", "roles/storage.admin (deploy SA)"],
+        "excess_permissions": false,
+        "data_residency": "US (multi-region)"
+      }
+    },
+    "google_artifact_registry_repository.granicus": {
+      "type": "internal_store",
+      "gcp_service": "Artifact Registry",
+      "terraform_address": "google_artifact_registry_repository.granicus",
+      "description": "Docker image repository for Granicus engine builds",
+      "exposes": "Docker Registry API",
+      "auth_mechanism": "IAM — roles/artifactregistry.writer via deploy SA",
+      "region": "us-central1",
+      "confidence": 0.80,
+      "confidence_reason": "No description attribute set on resource, but purpose clear from .tf comment",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/artifactregistry.writer (deploy SA)"],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_secret_manager_secret.client_sa[analytehealth-analytehealth]": {
+      "type": "auth",
+      "gcp_service": "Secret Manager",
+      "terraform_address": "google_secret_manager_secret.client_sa[\"analytehealth-analytehealth\"]",
+      "description": "SA key for AnalyteHealth BigQuery project (api-project-178709533099)",
+      "exposes": "Secret Manager API (secretAccessor)",
+      "auth_mechanism": "IAM — roles/secretmanager.secretAccessor scoped to engine SA and deploy SA (resource-level)",
+      "region": "auto-replicated",
+      "confidence": 0.88,
+      "confidence_reason": "Labels identify purpose; secret content not inspectable but role is clear from .tf",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor (engine SA)", "roles/secretmanager.secretAccessor (deploy SA)"],
+        "excess_permissions": false,
+        "data_residency": "auto-replicated"
+      }
+    },
+    "google_secret_manager_secret.client_sa[analytehealth-paternitylabs]": {
+      "type": "auth",
+      "gcp_service": "Secret Manager",
+      "terraform_address": "google_secret_manager_secret.client_sa[\"analytehealth-paternitylabs\"]",
+      "description": "SA key for PaternityLabs BigQuery project (paternitylab)",
+      "exposes": "Secret Manager API (secretAccessor)",
+      "auth_mechanism": "IAM — roles/secretmanager.secretAccessor scoped to engine SA and deploy SA (resource-level)",
+      "region": "auto-replicated",
+      "confidence": 0.88,
+      "confidence_reason": "Labels identify purpose; secret content not inspectable but role is clear from .tf",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor (engine SA)", "roles/secretmanager.secretAccessor (deploy SA)"],
+        "excess_permissions": false,
+        "data_residency": "auto-replicated"
+      }
+    },
+    "google_service_account.engine": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_service_account.engine",
+      "description": "Granicus engine Cloud Run service account — attached to Cloud Run, needs Firestore/GCS/Secret Manager access",
+      "exposes": "Service account identity",
+      "auth_mechanism": "GCP managed identity (attached to Cloud Run via Workload Identity)",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with display name, comment description, and clear IAM bindings",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [
+          "roles/datastore.user (on datadecode-platform)",
+          "roles/storage.objectAdmin (on datadecode-platform)",
+          "roles/secretmanager.secretAccessor (on client secrets, resource-scoped)"
+        ],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_service_account.deploy": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_service_account.deploy",
+      "description": "Granicus deploy service account for GitHub Actions CI/CD",
+      "exposes": "Service account identity (impersonated via WIF)",
+      "auth_mechanism": "Workload Identity Federation from GitHub Actions",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Fully declared with display name; roles scoped appropriately after hardening",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [
+          "roles/artifactregistry.writer (on datadecode-platform)",
+          "roles/run.developer (on datadecode-platform)",
+          "roles/iam.serviceAccountUser (on engine SA only, resource-scoped)",
+          "roles/storage.admin (on datadecode-platform)",
+          "roles/secretmanager.secretAccessor (on client secrets, resource-scoped)",
+          "roles/datastore.user (on datadecode-platform)",
+          "roles/cloudscheduler.admin (on datadecode-platform)"
+        ],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_service_account.scheduler": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_service_account.scheduler",
+      "description": "Granicus Cloud Scheduler service account for invoking Cloud Run",
+      "exposes": "Service account identity (used by Cloud Scheduler OIDC token)",
+      "auth_mechanism": "GCP managed identity",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Fully declared with display name and single-purpose IAM binding",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/run.invoker (on granicus-engine Cloud Run)"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_cloud_scheduler_job.pipeline[analyte_health]": {
+      "type": "transit",
+      "gcp_service": "Cloud Scheduler",
+      "terraform_address": "google_cloud_scheduler_job.pipeline[\"analyte_health\"]",
+      "description": "Triggers Granicus pipeline analyte_health on schedule (15 7 * * *)",
+      "exposes": "Cron trigger (HTTP POST to Cloud Run)",
+      "auth_mechanism": "OIDC token via scheduler SA",
+      "region": "us-central1",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with schedule, target URI, OIDC auth, and description",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_cloud_scheduler_job.pipeline[legacy_dbt]": {
+      "type": "transit",
+      "gcp_service": "Cloud Scheduler",
+      "terraform_address": "google_cloud_scheduler_job.pipeline[\"legacy_dbt\"]",
+      "description": "Triggers Granicus pipeline legacy_dbt on schedule (0 7 * * *)",
+      "exposes": "Cron trigger (HTTP POST to Cloud Run)",
+      "auth_mechanism": "OIDC token via scheduler SA",
+      "region": "us-central1",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with schedule, target URI, OIDC auth, and description",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_cloud_scheduler_job.pipeline[paternity_labs]": {
+      "type": "transit",
+      "gcp_service": "Cloud Scheduler",
+      "terraform_address": "google_cloud_scheduler_job.pipeline[\"paternity_labs\"]",
+      "description": "Triggers Granicus pipeline paternity_labs on schedule (0 6 * * *)",
+      "exposes": "Cron trigger (HTTP POST to Cloud Run)",
+      "auth_mechanism": "OIDC token via scheduler SA",
+      "region": "us-central1",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with schedule, target URI, OIDC auth, and description",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_cloud_scheduler_job.prune": {
+      "type": "transit",
+      "gcp_service": "Cloud Scheduler",
+      "terraform_address": "google_cloud_scheduler_job.prune",
+      "description": "Nightly cleanup of stale Firestore runs and old data (0 2 * * *)",
+      "exposes": "Cron trigger (HTTP POST to Cloud Run /api/v1/admin/prune)",
+      "auth_mechanism": "OIDC token via scheduler SA",
+      "region": "us-central1",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with schedule, target URI, OIDC auth, and description attribute",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": [],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_cloud_run_v2_service_iam_member.scheduler_invoker": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_cloud_run_v2_service_iam_member.scheduler_invoker",
+      "description": "Scheduler SA can invoke the granicus-engine Cloud Run service",
+      "exposes": null,
+      "auth_mechanism": "IAM binding — roles/run.invoker",
+      "region": "us-central1",
+      "confidence": 0.95,
+      "confidence_reason": "Explicit IAM binding with specific role and member",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/run.invoker"],
+        "excess_permissions": false,
+        "data_residency": "us-central1"
+      }
+    },
+    "google_service_account_iam_member.wif_deploy_binding": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_service_account_iam_member.wif_deploy_binding",
+      "description": "WIF binding lets GitHub Actions impersonate deploy SA for CI/CD",
+      "exposes": null,
+      "auth_mechanism": "Workload Identity Federation — principalSet from GitHub Actions pool",
+      "region": "global",
+      "confidence": 0.90,
+      "confidence_reason": "Fully declared with specific principal and role",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/iam.workloadIdentityUser"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_service_account_iam_member.deploy_sa_user": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_service_account_iam_member.deploy_sa_user",
+      "description": "Deploy SA can act as engine SA (needed to attach engine SA to Cloud Run)",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on engine service account",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Scoped to engine SA only — least-privilege for Cloud Run SA attachment",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/iam.serviceAccountUser"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.engine_firestore": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.engine_firestore",
+      "description": "Engine SA Firestore access in platform project",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Specific role with clear purpose from .tf comment",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/datastore.user"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.engine_storage": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.engine_storage",
+      "description": "Engine SA GCS access in platform project",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.85,
+      "confidence_reason": "roles/storage.objectAdmin is broader than objectViewer+objectCreator; may exceed need",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/storage.objectAdmin"],
+        "excess_permissions": true,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.deploy_artifact_registry": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.deploy_artifact_registry",
+      "description": "Deploy SA Artifact Registry writer for pushing images",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Appropriate role for CI/CD image push — writer, not admin",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/artifactregistry.writer"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.deploy_cloud_run": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.deploy_cloud_run",
+      "description": "Deploy SA Cloud Run developer for deploying services",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Appropriate role for CI/CD deployment",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/run.developer"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.deploy_storage": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.deploy_storage",
+      "description": "Deploy SA storage admin for managing GCS buckets",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.75,
+      "confidence_reason": "roles/storage.admin at project level grants broad storage access beyond pipeline bucket",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/storage.admin"],
+        "excess_permissions": true,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.deploy_firestore": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.deploy_firestore",
+      "description": "Deploy SA Firestore access for provisioning",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Appropriate role for deploy-time Firestore operations",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/datastore.user"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_project_iam_member.deploy_scheduler": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_project_iam_member.deploy_scheduler",
+      "description": "Deploy SA Cloud Scheduler admin for provisioning jobs",
+      "exposes": null,
+      "auth_mechanism": "Project-level IAM binding",
+      "region": "global",
+      "confidence": 0.92,
+      "confidence_reason": "Appropriate role for CI/CD scheduler management",
+      "security": {
+        "data_sensitivity": "internal",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/cloudscheduler.admin"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_secret_manager_secret_iam_member.engine_client_sa[analytehealth-analytehealth]": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_secret_manager_secret_iam_member.engine_client_sa[\"analytehealth-analytehealth\"]",
+      "description": "Grants engine SA read access to analytehealth client secret",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on Secret Manager secret",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Specific, scoped IAM binding with least-privilege role",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_secret_manager_secret_iam_member.engine_client_sa[analytehealth-paternitylabs]": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_secret_manager_secret_iam_member.engine_client_sa[\"analytehealth-paternitylabs\"]",
+      "description": "Grants engine SA read access to paternitylabs client secret",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on Secret Manager secret",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Specific, scoped IAM binding with least-privilege role",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-analytehealth]": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_secret_manager_secret_iam_member.deploy_client_sa[\"analytehealth-analytehealth\"]",
+      "description": "Grants deploy SA read access to analytehealth client secret for CI/CD",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on Secret Manager secret",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Specific, scoped IAM binding — replaces project-wide secretAccessor",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    },
+    "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-paternitylabs]": {
+      "type": "auth",
+      "gcp_service": "IAM",
+      "terraform_address": "google_secret_manager_secret_iam_member.deploy_client_sa[\"analytehealth-paternitylabs\"]",
+      "description": "Grants deploy SA read access to paternitylabs client secret for CI/CD",
+      "exposes": null,
+      "auth_mechanism": "Resource-level IAM binding on Secret Manager secret",
+      "region": "global",
+      "confidence": 0.95,
+      "confidence_reason": "Specific, scoped IAM binding — replaces project-wide secretAccessor",
+      "security": {
+        "data_sensitivity": "credentials",
+        "publicly_accessible": false,
+        "auth_enforced": true,
+        "encryption_at_rest": true,
+        "encryption_in_transit": true,
+        "iam_bindings": ["roles/secretmanager.secretAccessor"],
+        "excess_permissions": false,
+        "data_residency": "global"
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "infra_edge_001",
+      "from": "google_cloud_scheduler_job.pipeline[analyte_health]",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "trigger",
+      "data_shape": "HTTP POST with JSON body {\"pipeline\": \"analyte_health\"} to /api/v1/pipelines/analyte_health/trigger",
+      "auth_mechanism": "OIDC token from scheduler SA, verified by Cloud Run IAM",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with URI, body, OIDC token, and target",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_002",
+      "from": "google_cloud_scheduler_job.pipeline[legacy_dbt]",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "trigger",
+      "data_shape": "HTTP POST with JSON body {\"pipeline\": \"legacy_dbt\"} to /api/v1/pipelines/legacy_dbt/trigger",
+      "auth_mechanism": "OIDC token from scheduler SA, verified by Cloud Run IAM",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with URI, body, OIDC token, and target",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_003",
+      "from": "google_cloud_scheduler_job.pipeline[paternity_labs]",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "trigger",
+      "data_shape": "HTTP POST with JSON body {\"pipeline\": \"paternity_labs\"} to /api/v1/pipelines/paternity_labs/trigger",
+      "auth_mechanism": "OIDC token from scheduler SA, verified by Cloud Run IAM",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with URI, body, OIDC token, and target",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_004",
+      "from": "google_cloud_scheduler_job.prune",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "trigger",
+      "data_shape": "HTTP POST to /api/v1/admin/prune (no body)",
+      "auth_mechanism": "OIDC token from scheduler SA, verified by Cloud Run IAM",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared with URI and OIDC token",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_005",
+      "from": "google_cloud_run_v2_service.engine",
+      "to": "google_firestore_database.default",
+      "transfer_type": "data_flow",
+      "data_shape": "Firestore documents: runs (pipeline state), events (lifecycle events), intervals (incremental state)",
+      "auth_mechanism": "Engine SA with roles/datastore.user via Workload Identity",
+      "direction": "bidirectional",
+      "confidence": 0.92,
+      "confidence_reason": "GRANICUS_FIRESTORE_PROJECT and GRANICUS_STATE_BACKEND=firestore env vars confirm connection",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_006",
+      "from": "google_cloud_run_v2_service.engine",
+      "to": "google_storage_bucket.pipelines",
+      "transfer_type": "data_flow",
+      "data_shape": "Pipeline definitions (SQL files, pipeline.yaml) read from GCS; archives written back",
+      "auth_mechanism": "Engine SA with roles/storage.objectAdmin via Workload Identity",
+      "direction": "bidirectional",
+      "confidence": 0.92,
+      "confidence_reason": "GRANICUS_PIPELINES_BUCKET=granicus-analytehealth and GRANICUS_PIPELINE_SOURCE=gcs env vars confirm",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": false,
+        "notes": "objectAdmin grants delete permissions; objectCreator+objectViewer may suffice if no deletes needed"
+      }
+    },
+    {
+      "id": "infra_edge_007",
+      "from": "google_cloud_run_v2_service.engine",
+      "to": "google_secret_manager_secret.client_sa[analytehealth-analytehealth]",
+      "transfer_type": "secret_read",
+      "data_shape": "JSON SA key file for BigQuery authentication to api-project-178709533099",
+      "auth_mechanism": "Engine SA with roles/secretmanager.secretAccessor (resource-level)",
+      "direction": "unidirectional",
+      "confidence": 0.90,
+      "confidence_reason": "IAM binding declared; actual read happens in Go code at runtime",
+      "security": {
+        "carries_sensitive_data": true,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": "Secret is read at runtime to authenticate BigQuery operations on client project"
+      }
+    },
+    {
+      "id": "infra_edge_008",
+      "from": "google_cloud_run_v2_service.engine",
+      "to": "google_secret_manager_secret.client_sa[analytehealth-paternitylabs]",
+      "transfer_type": "secret_read",
+      "data_shape": "JSON SA key file for BigQuery authentication to paternitylab project",
+      "auth_mechanism": "Engine SA with roles/secretmanager.secretAccessor (resource-level)",
+      "direction": "unidirectional",
+      "confidence": 0.90,
+      "confidence_reason": "IAM binding declared; actual read happens in Go code at runtime",
+      "security": {
+        "carries_sensitive_data": true,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": "Secret is read at runtime to authenticate BigQuery operations on client project"
+      }
+    },
+    {
+      "id": "infra_edge_009",
+      "from": "google_cloud_run_v2_service.engine",
+      "to": "external_bq_analytehealth",
+      "transfer_type": "data_flow",
+      "data_shape": "BigQuery SQL queries and DML: creates/populates tables in dev and production datasets",
+      "auth_mechanism": "SA credential file read from Secret Manager (granicus-sa-analytehealth)",
+      "direction": "bidirectional",
+      "confidence": 0.85,
+      "confidence_reason": "Inferred from secret purpose labels and pipeline configuration; no direct TF resource for cross-project BQ",
+      "security": {
+        "carries_sensitive_data": true,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": false,
+        "notes": "Cross-project BQ access via credential files; no Terraform-declared IAM — planned migration to cross-project IAM noted in clients.tf"
+      }
+    },
+    {
+      "id": "infra_edge_010",
+      "from": "google_cloud_run_v2_service.engine",
+      "to": "external_bq_paternitylabs",
+      "transfer_type": "data_flow",
+      "data_shape": "BigQuery SQL queries and DML: creates/populates tables in dev and production datasets",
+      "auth_mechanism": "SA credential file read from Secret Manager (granicus-sa-paternitylabs)",
+      "direction": "bidirectional",
+      "confidence": 0.85,
+      "confidence_reason": "Inferred from secret purpose labels and pipeline configuration; no direct TF resource for cross-project BQ",
+      "security": {
+        "carries_sensitive_data": true,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": false,
+        "notes": "Cross-project BQ access via credential files; no Terraform-declared IAM"
+      }
+    },
+    {
+      "id": "infra_edge_011",
+      "from": "google_service_account.engine",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "iam_binding",
+      "data_shape": "Service account identity attached to Cloud Run service",
+      "auth_mechanism": "Cloud Run service_account field",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Explicit service_account reference in Cloud Run template",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_012",
+      "from": "google_cloud_run_v2_service_iam_member.scheduler_invoker",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "iam_binding",
+      "data_shape": "roles/run.invoker granted to scheduler SA on engine service",
+      "auth_mechanism": "IAM policy binding",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Explicit IAM member with specific resource and role",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    },
+    {
+      "id": "infra_edge_013",
+      "from": "google_service_account_iam_member.wif_deploy_binding",
+      "to": "google_service_account.deploy",
+      "transfer_type": "iam_binding",
+      "data_shape": "roles/iam.workloadIdentityUser — GitHub Actions can impersonate deploy SA",
+      "auth_mechanism": "Workload Identity Federation principal binding",
+      "direction": "unidirectional",
+      "confidence": 0.92,
+      "confidence_reason": "Explicit WIF binding with specific repository scope",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": "Scoped to DataDecodeHQ/granicus repository only"
+      }
+    },
+    {
+      "id": "infra_edge_014",
+      "from": "external_github_actions",
+      "to": "google_artifact_registry_repository.granicus",
+      "transfer_type": "data_flow",
+      "data_shape": "Docker images pushed during CI/CD (engine:latest, engine:sha-xxx)",
+      "auth_mechanism": "Deploy SA via WIF, roles/artifactregistry.writer",
+      "direction": "unidirectional",
+      "confidence": 0.90,
+      "confidence_reason": "Inferred from WIF binding + AR writer role; actual push is in GitHub Actions workflow",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": "Writer role grants push without delete/admin — appropriate for CI/CD"
+      }
+    },
+    {
+      "id": "infra_edge_015",
+      "from": "google_artifact_registry_repository.granicus",
+      "to": "google_cloud_run_v2_service.engine",
+      "transfer_type": "config_reference",
+      "data_shape": "Container image URI: us-central1-docker.pkg.dev/datadecode-platform/granicus/engine:latest",
+      "auth_mechanism": "Cloud Run pulls from same-project AR automatically",
+      "direction": "unidirectional",
+      "confidence": 0.95,
+      "confidence_reason": "Image URI in Cloud Run template directly references this AR repository",
+      "security": {
+        "carries_sensitive_data": false,
+        "encrypted_in_transit": true,
+        "auth_verified": true,
+        "least_privilege": true,
+        "notes": null
+      }
+    }
+  ],
+  "service_boundaries": [
+    {
+      "id": "svc_boundary_001",
+      "from_service": "Cloud Scheduler",
+      "to_service": "Cloud Run",
+      "from_resource": "google_cloud_scheduler_job.pipeline[*]",
+      "to_resource": "google_cloud_run_v2_service.engine",
+      "protocol": "HTTPS POST (internal traffic only)",
+      "auth_mechanism": "OIDC token (scheduler SA) verified by Cloud Run IAM",
+      "data_shape": "JSON trigger payload {\"pipeline\": \"<name>\"} or empty body (prune)",
+      "declared_in": "clients.tf (pipeline triggers), scheduler.tf (prune)",
+      "confidence": 0.95,
+      "confidence_reason": "Fully declared: URI, OIDC token, IAM invoker binding, HTTP method, internal ingress"
+    },
+    {
+      "id": "svc_boundary_002",
+      "from_service": "Cloud Run",
+      "to_service": "Firestore",
+      "from_resource": "google_cloud_run_v2_service.engine",
+      "to_resource": "google_firestore_database.default",
+      "protocol": "gRPC (Firestore Native API)",
+      "auth_mechanism": "Workload Identity (engine SA with roles/datastore.user)",
+      "data_shape": "Firestore documents: runs (status, pipeline, started_at), events (event_type, timestamp), intervals",
+      "declared_in": "cloud_run.tf (GRANICUS_FIRESTORE_PROJECT env), firestore.tf (database + indexes), service_account.tf (IAM)",
+      "confidence": 0.92,
+      "confidence_reason": "Environment variable, IAM binding, and Firestore indexes all align"
+    },
+    {
+      "id": "svc_boundary_003",
+      "from_service": "Cloud Run",
+      "to_service": "GCS",
+      "from_resource": "google_cloud_run_v2_service.engine",
+      "to_resource": "google_storage_bucket.pipelines",
+      "protocol": "REST API (GCS JSON/XML API)",
+      "auth_mechanism": "Workload Identity (engine SA with roles/storage.objectAdmin)",
+      "data_shape": "Pipeline definition archives: SQL files, pipeline.yaml, monitoring.yaml",
+      "declared_in": "cloud_run.tf (GRANICUS_PIPELINES_BUCKET env), gcs.tf (bucket), service_account.tf (IAM)",
+      "confidence": 0.92,
+      "confidence_reason": "Environment variable, IAM binding, and bucket declaration all align"
+    },
+    {
+      "id": "svc_boundary_004",
+      "from_service": "Cloud Run",
+      "to_service": "Secret Manager",
+      "from_resource": "google_cloud_run_v2_service.engine",
+      "to_resource": "google_secret_manager_secret.client_sa[*]",
+      "protocol": "REST API (Secret Manager v1)",
+      "auth_mechanism": "Workload Identity (engine SA with roles/secretmanager.secretAccessor, resource-scoped)",
+      "data_shape": "JSON SA key files (service account credentials for BigQuery client projects)",
+      "declared_in": "clients.tf (secrets + IAM), service_account.tf (engine SA)",
+      "confidence": 0.90,
+      "confidence_reason": "IAM bindings are resource-scoped (best practice); actual runtime read inferred from code"
+    },
+    {
+      "id": "svc_boundary_005",
+      "from_service": "Cloud Run",
+      "to_service": "BigQuery",
+      "from_resource": "google_cloud_run_v2_service.engine",
+      "to_resource": "external_bq_analytehealth",
+      "protocol": "REST API (BigQuery v2)",
+      "auth_mechanism": "SA credential file loaded from Secret Manager at runtime",
+      "data_shape": "SQL queries: DDL (CREATE TABLE), DML (INSERT/MERGE), DQL (SELECT) against client datasets",
+      "declared_in": "clients.tf (secret for SA key), variables.tf (client access_points definition)",
+      "confidence": 0.80,
+      "confidence_reason": "Cross-project access via credential files; no Terraform-managed IAM on target project"
+    },
+    {
+      "id": "svc_boundary_006",
+      "from_service": "Cloud Run",
+      "to_service": "BigQuery",
+      "from_resource": "google_cloud_run_v2_service.engine",
+      "to_resource": "external_bq_paternitylabs",
+      "protocol": "REST API (BigQuery v2)",
+      "auth_mechanism": "SA credential file loaded from Secret Manager at runtime",
+      "data_shape": "SQL queries: DDL (CREATE TABLE), DML (INSERT/MERGE), DQL (SELECT) against client datasets",
+      "declared_in": "clients.tf (secret for SA key), variables.tf (client access_points definition)",
+      "confidence": 0.80,
+      "confidence_reason": "Cross-project access via credential files; no Terraform-managed IAM on target project"
+    },
+    {
+      "id": "svc_boundary_007",
+      "from_service": "GitHub Actions",
+      "to_service": "Artifact Registry",
+      "from_resource": "external_github_actions",
+      "to_resource": "google_artifact_registry_repository.granicus",
+      "protocol": "Docker Registry API v2 (HTTPS)",
+      "auth_mechanism": "WIF -> deploy SA with roles/artifactregistry.writer",
+      "data_shape": "Docker images (multi-stage Alpine Go build)",
+      "declared_in": "wif.tf (WIF binding), service_account.tf (deploy_artifact_registry IAM), artifact_registry.tf",
+      "confidence": 0.90,
+      "confidence_reason": "WIF + IAM fully declared; writer role is least-privilege for push"
+    },
+    {
+      "id": "svc_boundary_008",
+      "from_service": "Artifact Registry",
+      "to_service": "Cloud Run",
+      "from_resource": "google_artifact_registry_repository.granicus",
+      "to_resource": "google_cloud_run_v2_service.engine",
+      "protocol": "Docker image pull (internal GCP)",
+      "auth_mechanism": "Same-project automatic access (Cloud Run pulls from same-project AR)",
+      "data_shape": "Container image: us-central1-docker.pkg.dev/datadecode-platform/granicus/engine:latest",
+      "declared_in": "cloud_run.tf (image URI), artifact_registry.tf (repository)",
+      "confidence": 0.95,
+      "confidence_reason": "Image URI in Cloud Run template directly references the AR repository"
+    }
+  ],
+  "bridge_to_code": [
+    {
+      "infra_edge_id": "infra_edge_005",
+      "expected_code_patterns": [
+        "Firestore client initialization using GRANICUS_FIRESTORE_PROJECT env var",
+        "Document reads/writes to 'runs' and 'events' collections",
+        "Interval state persistence (start/end timestamps per asset)"
+      ],
+      "known_call_sites": [],
+      "gap_type": null,
+      "gap_description": null
+    },
+    {
+      "infra_edge_id": "infra_edge_006",
+      "expected_code_patterns": [
+        "GCS client reading pipeline archives from GRANICUS_PIPELINES_BUCKET",
+        "Archive extraction (tar.gz of pipeline SQL/config)",
+        "Source file resolution for pipeline execution"
+      ],
+      "known_call_sites": [],
+      "gap_type": null,
+      "gap_description": null
+    },
+    {
+      "infra_edge_id": "infra_edge_007",
+      "expected_code_patterns": [
+        "Secret Manager API call to read secret version for granicus-sa-analytehealth",
+        "JSON credential parsing and BigQuery client construction"
+      ],
+      "known_call_sites": [],
+      "gap_type": null,
+      "gap_description": null
+    },
+    {
+      "infra_edge_id": "infra_edge_008",
+      "expected_code_patterns": [
+        "Secret Manager API call to read secret version for granicus-sa-paternitylabs",
+        "JSON credential parsing and BigQuery client construction"
+      ],
+      "known_call_sites": [],
+      "gap_type": null,
+      "gap_description": null
+    },
+    {
+      "infra_edge_id": "infra_edge_009",
+      "expected_code_patterns": [
+        "BigQuery client executing SQL queries against api-project-178709533099 datasets",
+        "Table creation, data insertion/merge operations"
+      ],
+      "known_call_sites": [],
+      "gap_type": null,
+      "gap_description": null
+    },
+    {
+      "infra_edge_id": "infra_edge_010",
+      "expected_code_patterns": [
+        "BigQuery client executing SQL queries against paternitylab datasets",
+        "Table creation, data insertion/merge operations"
+      ],
+      "known_call_sites": [],
+      "gap_type": null,
+      "gap_description": null
+    }
+  ],
+  "flags": [
+    {
+      "type": "review_required",
+      "target": "google_project_iam_member.deploy_storage",
+      "reason": "Deploy SA has roles/storage.admin at project level, granting full control over all GCS buckets in the project.",
+      "suggested_fix": "Scope to roles/storage.objectAdmin on specific buckets if deploy only needs to upload pipeline archives."
+    },
+    {
+      "type": "low_confidence",
+      "target": "infra_edge_009",
+      "reason": "Cross-project BigQuery access to api-project-178709533099 is via credential files in Secret Manager, not Terraform-managed IAM. The actual permissions granted by the SA key are not visible in the Terraform state.",
+      "suggested_fix": "Migrate to cross-project IAM (commented-out resources in clients.tf) to bring BQ access under Terraform management and make permissions auditable."
+    },
+    {
+      "type": "low_confidence",
+      "target": "infra_edge_010",
+      "reason": "Cross-project BigQuery access to paternitylab is via credential files in Secret Manager, not Terraform-managed IAM.",
+      "suggested_fix": "Migrate to cross-project IAM (commented-out resources in clients.tf) to bring BQ access under Terraform management."
+    },
+    {
+      "type": "review_required",
+      "target": "google_project_iam_member.engine_storage",
+      "reason": "Engine SA has roles/storage.objectAdmin which includes delete permissions. If the engine only reads pipeline archives and writes backups, objectCreator+objectViewer may suffice.",
+      "suggested_fix": "Evaluate whether the engine deletes objects from GCS. If not, downgrade to roles/storage.objectViewer + roles/storage.objectCreator."
+    }
+  ],
+  "change_summary": {
+    "resources_added": [
+      "google_service_account_iam_member.deploy_sa_user",
+      "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-analytehealth]",
+      "google_secret_manager_secret_iam_member.deploy_client_sa[analytehealth-paternitylabs]"
+    ],
+    "resources_removed": [
+      "google_project_iam_member.engine_pubsub",
+      "google_project_iam_member.deploy_pubsub",
+      "google_project_iam_member.deploy_secrets",
+      "google_project_iam_member.deploy_sa_user"
+    ],
+    "resources_modified": [
+      "google_cloud_run_v2_service.engine (ingress: ALL -> INTERNAL_ONLY, removed GRANICUS_OPS_BUCKET env)",
+      "google_cloud_scheduler_job.prune (added description)",
+      "google_project_iam_member.deploy_artifact_registry (role: admin -> writer)"
+    ],
+    "edges_added": [],
+    "edges_removed": [
+      "infra_edge_016 (ops bucket — env var and edge removed)"
+    ],
+    "new_service_boundaries": [],
+    "new_code_bridge_gaps": [],
+    "resolved_code_bridge_gaps": [
+      "infra_edge_016 code_no_infra gap — resolved by removing the env var"
+    ],
+    "confidence_changes": [
+      "google_cloud_run_v2_service.engine: 0.92 -> 0.95 (internal-only ingress)",
+      "google_cloud_scheduler_job.prune: 0.80 -> 0.95 (description added)",
+      "google_project_iam_member.deploy_artifact_registry: 0.80 -> 0.92 (writer, not admin)",
+      "google_service_account.engine: 0.92 -> 0.95 (pubsub binding removed, description updated)",
+      "google_service_account.deploy: 0.90 -> 0.92 (permissions scoped down)"
+    ],
+    "new_flags": [],
+    "resolved_flags": [
+      "Cloud Run INGRESS_TRAFFIC_ALL (now INTERNAL_ONLY)",
+      "granicus-ops bucket env var (removed)",
+      "engine_pubsub IAM without Pub/Sub resources (removed)",
+      "deploy_pubsub IAM without Pub/Sub resources (removed)",
+      "deploy_artifact_registry admin role (downgraded to writer)",
+      "deploy_secrets project-wide secretAccessor (replaced with resource-scoped)",
+      "deploy_sa_user project-wide serviceAccountUser (replaced with resource-scoped)",
+      "deploy SA over-permissioned (8 roles reduced to 7, scoped down)",
+      "prune job missing description (added)"
+    ]
+  }
+}

@@ -7,6 +7,14 @@ import (
 	"github.com/DataDecodeHQ/granicus/internal/graph"
 )
 
+// standardsCheckType defines a parameterized check type for standards validation.
+type standardsCheckType struct {
+	name       string
+	columns    []string
+	sqlBuilder func(assetName, col string) string
+}
+
+// GenerateStandardsCheckNodes creates check nodes that validate email, phone, and currency format standards.
 func GenerateStandardsCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput, map[string][]string) {
 	var nodes []graph.AssetInput
 	deps := make(map[string][]string)
@@ -18,49 +26,39 @@ func GenerateStandardsCheckNodes(cfg *config.PipelineConfig) ([]graph.AssetInput
 
 		blocking := asset.StandardsBlocking
 
-		for _, col := range asset.Standards.Email {
-			checkName := fmt.Sprintf("standards_email_%s", col)
-			nodeName := fmt.Sprintf("check:%s:default:%s", asset.Name, checkName)
-			sql := emailStandardSQL(asset.Name, col)
-			nodes = append(nodes, graph.AssetInput{
-				Name:                  nodeName,
-				Type:                  "sql_check",
-				DestinationConnection: asset.DestinationConnection,
-				SourceAsset:           asset.Name,
-				InlineSQL:             sql,
-				Blocking:              blocking,
-			})
-			deps[nodeName] = []string{asset.Name}
+		checkTypes := []standardsCheckType{
+			{
+				name:       "email",
+				columns:    asset.Standards.Email,
+				sqlBuilder: emailStandardSQL,
+			},
+			{
+				name:       "phone",
+				columns:    asset.Standards.Phone,
+				sqlBuilder: phoneStandardSQL,
+			},
+			{
+				name:       "currency",
+				columns:    asset.Standards.Currency,
+				sqlBuilder: currencyStandardSQL,
+			},
 		}
 
-		for _, col := range asset.Standards.Phone {
-			checkName := fmt.Sprintf("standards_phone_%s", col)
-			nodeName := fmt.Sprintf("check:%s:default:%s", asset.Name, checkName)
-			sql := phoneStandardSQL(asset.Name, col)
-			nodes = append(nodes, graph.AssetInput{
-				Name:                  nodeName,
-				Type:                  "sql_check",
-				DestinationConnection: asset.DestinationConnection,
-				SourceAsset:           asset.Name,
-				InlineSQL:             sql,
-				Blocking:              blocking,
-			})
-			deps[nodeName] = []string{asset.Name}
-		}
-
-		for _, col := range asset.Standards.Currency {
-			checkName := fmt.Sprintf("standards_currency_%s", col)
-			nodeName := fmt.Sprintf("check:%s:default:%s", asset.Name, checkName)
-			sql := currencyStandardSQL(asset.Name, col)
-			nodes = append(nodes, graph.AssetInput{
-				Name:                  nodeName,
-				Type:                  "sql_check",
-				DestinationConnection: asset.DestinationConnection,
-				SourceAsset:           asset.Name,
-				InlineSQL:             sql,
-				Blocking:              blocking,
-			})
-			deps[nodeName] = []string{asset.Name}
+		for _, checkType := range checkTypes {
+			for _, col := range checkType.columns {
+				checkName := fmt.Sprintf("standards_%s_%s", checkType.name, col)
+				nodeName := fmt.Sprintf("check:%s:default:%s", asset.Name, checkName)
+				sql := checkType.sqlBuilder(asset.Name, col)
+				nodes = append(nodes, graph.AssetInput{
+					Name:                  nodeName,
+					Type:                  "sql_check",
+					DestinationConnection: asset.DestinationConnection,
+					SourceAsset:           asset.Name,
+					InlineSQL:             sql,
+					Blocking:              blocking,
+				})
+				deps[nodeName] = []string{asset.Name}
+			}
 		}
 	}
 
