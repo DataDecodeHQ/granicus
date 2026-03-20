@@ -144,12 +144,16 @@ jobs:
             --min-instances 0 \
             --max-instances 3 \
             --timeout 3600 \
+            --command granicus \
+            --args serve,--env,${{ inputs.environment || 'dev' }} \
             --set-env-vars "\
               GRANICUS_FIRESTORE_PROJECT=${{ env.GCP_PROJECT_ID }},\
               GRANICUS_PIPELINES_BUCKET=granicus-pipelines,\
               GRANICUS_OPS_BUCKET=granicus-ops,\
               GRANICUS_PIPELINE_SOURCE=gcs,\
-              GRANICUS_STATE_BACKEND=firestore"
+              GRANICUS_STATE_BACKEND=firestore" \
+            --startup-cpu-boost \
+            --revision-suffix ${{ github.sha }}
 
       - name: Get service URL
         id: url
