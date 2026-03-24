@@ -95,3 +95,48 @@ Intentional design patterns for this codebase.
 **Example:** `check:A:validate` is a SQL check (data layer). It returns `severity: error, blocking: true` (signal). The executor skips B and C which depend on A, and the alert manager fires a webhook (response).
 
 **Exception:** None. `critical` always blocks and halts regardless of the `Blocking` field -- this is intentional and not configurable.
+
+---
+
+## Pipeline Check Organization
+
+**Rule:** Place check SQL files in `checks/` alongside the pipeline's SQL directory. Reference each check in `pipeline.yaml` under the asset's `checks` key. Each check returns rows that violate the condition -- zero rows means the check passes.
+
+**Why:** Checks are the primary quality gate for pipeline assets. Colocating them with the pipeline definition (not scattered in external systems) makes them discoverable, version-controlled, and tied to the asset lifecycle. The "return violating rows" convention means every check is also a diagnostic query -- when it fails, the output tells you which rows broke the rule.
+
+**pipeline.yaml syntax:**
+```yaml
+assets:
+  - name: stg_stdlocal__orders
+    sql: sql/staging/stg_stdlocal__orders.sql
+    checks:
+      - checks/check_orders_no_orphans.sql
+```
+
+**Check categories:**
+
+| Category | Purpose |
+|----------|---------|
+| Contract | Schema validation, column types, required fields |
+| Incremental | No duplicate PKs after incremental load |
+| Source | Source table availability and freshness |
+| Business rules | Domain-specific invariants |
+| Enrichment | Join completeness, null rates post-enrichment |
+| Event | Event-specific referential integrity |
+
+**Referential integrity pattern:**
+1. LEFT JOIN child to parent on FK
+2. SELECT rows where parent is NULL (orphans)
+3. Zero rows returned = pass
+
+**Example:**
+```sql
+-- check_order_lines_no_orphans.sql
+SELECT ol.order_line_id, ol.order_activity_id
+FROM dev_entities.ent_order_line ol
+LEFT JOIN dev_entities.ent_order_activity oa
+  ON ol.order_activity_id = oa.order_activity_id
+WHERE oa.order_activity_id IS NULL
+```
+
+**Exception:** None. All checks follow this convention.
