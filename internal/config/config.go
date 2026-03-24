@@ -415,8 +415,8 @@ func validateResourceRefs(cfg *PipelineConfig) error {
 
 func validateSourceDefs(cfg *PipelineConfig) error {
 	for name, src := range cfg.Sources {
-		if src.Identifier == "" {
-			return fmt.Errorf("source %q: identifier is required", name)
+		if src.Identifier == "" && src.Resource == "" {
+			return fmt.Errorf("source %q: identifier is required when no resource is set", name)
 		}
 		if src.Resource != "" {
 			if _, ok := cfg.Resources[src.Resource]; !ok {

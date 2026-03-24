@@ -362,6 +362,9 @@ func buildRegistry(cfg *config.PipelineConfig, projectRoot string) *runner.Runne
 				if res, ok := cfg.Resources[src.Resource]; ok {
 					rs.ResourceType = res.Type
 					rs.Project = res.Properties["project"]
+					if rs.Identifier == "" {
+						rs.Identifier = res.Properties["dataset"]
+					}
 				}
 			} else {
 				// Default to first bigquery resource
