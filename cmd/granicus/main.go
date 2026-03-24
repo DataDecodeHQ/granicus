@@ -154,6 +154,9 @@ func main() {
 	runCmd.Flags().String("output", "", "Output format (json) [deprecated: use --json]")
 	addJSONFlag(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running (assets, intervals, checks)")
+	runCmd.Flags().String("env-config", "", "Path to granicus-env.yaml for local credential overrides")
+	runCmd.Flags().String("env", "dev", "Environment name from env-config (default: dev)")
+	runCmd.Flags().Int("max-parallel", 0, "Override max_parallel from config")
 
 	validateCmd := &cobra.Command{
 		Use:   "validate <config.yaml>",
@@ -607,6 +610,34 @@ func runRun(cmd *cobra.Command, args []string) error {
 			printJSONError("CONFIG_ERROR", err.Error(), "Check your pipeline configuration file", nil)
 		}
 		return err
+	}
+
+	// Apply environment config overlay (local credential paths, prefix, etc.)
+	envConfigPath, _ := cmd.Flags().GetString("env-config")
+	envName, _ := cmd.Flags().GetString("env")
+	if envConfigPath == "" {
+		// Auto-discover granicus-env.yaml next to the pipeline config
+		candidate := filepath.Join(filepath.Dir(args[0]), "granicus-env.yaml")
+		if _, serr := os.Stat(candidate); serr == nil {
+			envConfigPath = candidate
+		}
+	}
+	if envConfigPath != "" {
+		envCfg, eerr := config.LoadEnvironmentConfig(envConfigPath)
+		if eerr != nil {
+			return fmt.Errorf("env config: %w", eerr)
+		}
+		merged, merr := config.MergeEnvironment(cfg, envCfg, envName)
+		if merr != nil {
+			return fmt.Errorf("env merge: %w", merr)
+		}
+		cfg = merged
+		// Rebuild graph with merged config
+		g, _, err = buildPipelineGraph(cfg, projectRoot)
+		if err != nil {
+			return fmt.Errorf("rebuilding graph after env merge: %w", err)
+		}
+		slog.Info("env_config_applied", "env", envName, "config", envConfigPath)
 	}
 
 	if downstreamOnly && assetsFlag == "" {
@@ -1872,10 +1903,14 @@ func ensureDatasets(cfg *config.PipelineConfig, eventStore *events.Store, runID 
 		if res.Type != "bigquery" {
 			continue
 		}
+		credPath, err := config.ResolveConnectionCredentials(res)
+		if err != nil {
+			return fmt.Errorf("resolving credentials for resource %s: %w", res.Name, err)
+		}
 		key := dsKey{
 			project: res.Properties["project"],
 			dataset: res.Properties["dataset"],
-			creds:   res.Properties["credentials"],
+			creds:   credPath,
 		}
 		if key.dataset == "" || seen[key] {
 			continue

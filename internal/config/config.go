@@ -126,6 +126,7 @@ var validSchemaCheckValues = map[string]bool{
 
 var validLayers = map[string]bool{
 	"":             true,
+	"config":       true,
 	"source":       true,
 	"staging":      true,
 	"intermediate": true,
@@ -340,7 +341,7 @@ func validateAssetFields(cfg *PipelineConfig) error {
 		}
 
 		if !validLayers[a.Layer] {
-			return fmt.Errorf("asset %q: invalid layer %q (must be staging, intermediate, entity, report, or publish)", a.Name, a.Layer)
+			return fmt.Errorf("asset %q: invalid layer %q (must be config, staging, intermediate, entity, report, or publish)", a.Name, a.Layer)
 		}
 
 		if !validPartitionTypes[a.PartitionType] {
